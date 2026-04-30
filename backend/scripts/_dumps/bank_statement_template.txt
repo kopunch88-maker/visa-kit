@@ -1,0 +1,32 @@
+=== bank_statement_template.docx ===
+Paragraphs: 35, Tables: 2
+
+=== PARAGRAPHS ===
+[P0] Выписка по счету
+[P3] За период с {{ bank.period_start_formatted }} по {{ bank.period_end_formatted }}
+[P5] Входящий остаток                                                               {{ bank.opening_balance_formatted }}
+[P7] Поступления	   {{ bank.total_income_formatted }}
+[P9] Расходы	1 171 778,54 RUR
+[P11] Исходящий остаток                                                           {{ bank.closing_balance_formatted }} 
+[P16] Операции по счету
+
+=== TABLES ===
+
+--- Table 0: 2 rows, 5 cols ---
+  [T0/R0/C0] Дата проводки
+  [T0/R0/C1] Код операции
+  [T0/R0/C2] Описание
+  [T0/R0/C3] Сумма
+в валюте счета
+  [T0/R1/C0] `{%tr for transaction in bank.transactions %}{{ transaction.date_formatted }}`
+  [T0/R1/C1] `{{ transaction.code }}`
+  [T0/R1/C2] `{{ transaction.description }}`
+  [T0/R1/C3] `{{ transaction.amount_formatted }}`
+  [T0/R1/C4] `{{ transaction.amount_formatted }}`
+
+--- Table 1: 2 rows, 4 cols ---
+  [T1/R0/C3] Т.Т. Трофимова Уполномоченное лицо
+  [T1/R1/C0] (подпись сотрудника АО «АЛЬФА-БАНК»)	(
+  [T1/R1/C1] (подпись сотрудника АО «АЛЬФА-БАНК»)	(
+  [T1/R1/C2] (подпись сотрудника АО «АЛЬФА-БАНК»)	(
+  [T1/R1/C3] Ф.И.О. сотрудника АО «АЛЬФА-БАНК»)

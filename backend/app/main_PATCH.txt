@@ -1,0 +1,54 @@
+"""
+ИНТЕГРАЦИЯ Pack 10 миграции в main.py.
+
+Pack 10 добавляет 2 колонки в таблицу `application` (is_archived, archived_at).
+SQLite не поддерживает ALTER TABLE IF NOT EXISTS, поэтому нужна разовая миграция
+при старте сервера.
+
+В файле backend/app/main.py найдите секцию где создаются таблицы — обычно
+там есть SQLModel.metadata.create_all() или подобное в startup-событии.
+
+ДОБАВЬТЕ вызов apply_pack10_migration() ПОСЛЕ create_all() (или там же на старте).
+
+Пример:
+
+```python
+# backend/app/main.py
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from sqlmodel import SQLModel
+from app.db.session import engine
+from app.db.migrations import apply_pack10_migration  # ← НОВЫЙ ИМПОРТ
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Создаём таблицы (как было)
+    SQLModel.metadata.create_all(engine)
+
+    # Pack 10: применяем миграцию архива (идемпотентно)
+    apply_pack10_migration()  # ← НОВАЯ СТРОКА
+
+    print(f"📦 Database ready at {engine.url}")
+    yield
+
+app = FastAPI(lifespan=lifespan)
+# ...
+```
+
+ИЛИ если у вас старый стиль с @app.on_event("startup"):
+
+```python
+@app.on_event("startup")
+def on_startup():
+    SQLModel.metadata.create_all(engine)
+    apply_pack10_migration()  # ← НОВАЯ СТРОКА
+```
+
+Проверка что миграция сработала — в логах при старте должно быть:
+
+    [migration:pack10] Added column application.is_archived
+    [migration:pack10] Added column application.archived_at
+
+При повторных запусках этих сообщений уже не будет — миграция идемпотентна.
+"""

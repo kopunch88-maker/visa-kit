@@ -1,0 +1,16 @@
+**/__pycache__
+**/*.pyc
+**/.venv
+**/node_modules
+**/.next
+**/.env
+**/.env.local
+**/dev.db
+**/*.sqlite3
+**/storage/
+**/.git
+**/.gitignore
+**/Dockerfile
+**/.dockerignore
+**/README.md
+**/PACK*.md
