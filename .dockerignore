@@ -7,7 +7,8 @@
 **/.env.local
 **/dev.db
 **/*.sqlite3
-**/storage/
+/storage/
+/backend/storage/
 **/.git
 **/.gitignore
 **/Dockerfile
