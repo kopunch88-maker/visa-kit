@@ -15,7 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import init_db
-from app.db.migrations import apply_pack10_migration, apply_pack11_migration
+from app.db.migrations import (
+    apply_pack10_migration,
+    apply_pack11_migration,
+    apply_pack11_2_migration,
+)
 
 
 @asynccontextmanager
@@ -32,6 +36,8 @@ async def lifespan(app: FastAPI):
     apply_pack10_migration()
     # Pack 11: поле password_hash в user (для bcrypt auth)
     apply_pack11_migration()
+    # Pack 11.2: снять NOT NULL с applicant полей (для пошагового сохранения)
+    apply_pack11_2_migration()
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
