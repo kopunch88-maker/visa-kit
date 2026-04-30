@@ -87,3 +87,4 @@ def root():
 @app.get("/health", tags=["meta"])
 def health():
     return {"status": "ok"}
+# Force rebuild after storage fix
