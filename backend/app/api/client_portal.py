@@ -3,14 +3,13 @@ Client portal — эндпоинты для самого клиента.
 
 Авторизация — по токену в URL.
 
-Pack 13: добавлены endpoints для загрузки документов клиента (паспорт/диплом)
-и для последующего OCR через LLM Vision.
+Pack 13.1: реальный OCR через LLM Vision + endpoint apply-to-applicant.
 """
 
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path as PathLib
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -27,6 +26,7 @@ from app.models.applicant_document import (
     ApplicantDocumentStatus,
 )
 from app.services.storage import get_storage
+from app.services.ocr import recognize_document, OCRError
 
 log = logging.getLogger(__name__)
 
@@ -37,13 +37,9 @@ router = APIRouter(prefix="/client", tags=["client-portal"])
 # Helpers
 # ============================================================================
 
-# Максимальный размер файла — 10 МБ
-MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 МБ
+MIN_FILE_SIZE = 100 * 1024  # 100 КБ
 
-# Минимальный размер для качества — 100 КБ
-MIN_FILE_SIZE = 100 * 1024
-
-# Разрешённые форматы
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/jpg",
@@ -94,7 +90,6 @@ def _enrich_application(application: Application) -> dict:
 
 
 def _enrich_document(doc: ApplicantDocument) -> dict:
-    """Готовит документ для возврата клиенту, включая URL для скачивания."""
     storage = get_storage()
     download_url = None
     try:
@@ -119,18 +114,14 @@ def _enrich_document(doc: ApplicantDocument) -> dict:
 
 
 # ============================================================================
-# Profile (Applicant) — без изменений
+# Profile (Applicant)
 # ============================================================================
 
 @router.get("/{token}/me")
-def get_my_profile(
-    token: str,
-    session: Session = Depends(get_session),
-):
+def get_my_profile(token: str, session: Session = Depends(get_session)):
     application = _get_application_by_token(token, session)
     if not application.applicant_id:
         return None
-
     applicant = session.get(Applicant, application.applicant_id)
     if not applicant:
         return None
@@ -164,10 +155,7 @@ def update_my_profile(
         except Exception as e:
             raise HTTPException(
                 422,
-                detail={
-                    "message": "Cannot create profile",
-                    "error": str(e),
-                },
+                detail={"message": "Cannot create profile", "error": str(e)},
             )
         session.add(applicant)
         session.flush()
@@ -195,15 +183,8 @@ def update_my_profile(
     return _enrich_applicant(applicant)
 
 
-# ============================================================================
-# Application status — без изменений
-# ============================================================================
-
 @router.get("/{token}/application")
-def get_my_application(
-    token: str,
-    session: Session = Depends(get_session),
-):
+def get_my_application(token: str, session: Session = Depends(get_session)):
     application = _get_application_by_token(token, session)
     return _enrich_application(application)
 
@@ -213,11 +194,7 @@ def get_my_application(
 # ============================================================================
 
 @router.get("/{token}/documents")
-def list_my_documents(
-    token: str,
-    session: Session = Depends(get_session),
-):
-    """Список загруженных документов клиента."""
+def list_my_documents(token: str, session: Session = Depends(get_session)):
     application = _get_application_by_token(token, session)
 
     docs = session.exec(
@@ -232,52 +209,34 @@ def list_my_documents(
 @router.post("/{token}/documents/upload")
 async def upload_document(
     token: str,
-    doc_type: str = Form(..., description="Тип документа (passport_internal_main и т.д.)"),
+    doc_type: str = Form(...),
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ):
-    """
-    Загрузка документа клиентом.
-
-    Если документ такого типа уже есть — заменяется (старый удаляется из R2).
-    """
     application = _get_application_by_token(token, session)
 
-    # === Валидация типа ===
     try:
         doc_type_enum = ApplicantDocumentType(doc_type)
     except ValueError:
         raise HTTPException(422, f"Invalid doc_type: {doc_type}")
 
-    # === Чтение и проверка размера ===
     contents = await file.read()
     file_size = len(contents)
 
     if file_size == 0:
         raise HTTPException(422, "Empty file")
-
     if file_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            413,
-            f"File too large: {file_size} bytes (max {MAX_FILE_SIZE} bytes / 10 MB)"
-        )
-
+        raise HTTPException(413, f"File too large: {file_size} bytes (max 10 MB)")
     if file_size < MIN_FILE_SIZE:
         raise HTTPException(
             422,
             "File too small (less than 100 KB). Please use a higher quality photo."
         )
 
-    # === Content type ===
     content_type = file.content_type or "application/octet-stream"
     if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            415,
-            f"Unsupported file type: {content_type}. "
-            f"Allowed: JPEG, PNG, WebP, HEIC, PDF"
-        )
+        raise HTTPException(415, f"Unsupported file type: {content_type}")
 
-    # === Удаляем существующий документ того же типа ===
     existing = session.exec(
         select(ApplicantDocument)
         .where(ApplicantDocument.application_id == application.id)
@@ -290,11 +249,10 @@ async def upload_document(
         try:
             storage.delete(existing.storage_key)
         except Exception as e:
-            log.warning(f"Failed to delete old file {existing.storage_key}: {e}")
+            log.warning(f"Failed to delete old file: {e}")
         session.delete(existing)
         session.flush()
 
-    # === Сохраняем новый файл ===
     timestamp = int(time.time())
     original_name = file.filename or f"{doc_type}.bin"
     extension = PathLib(original_name).suffix.lower() or ".bin"
@@ -309,7 +267,6 @@ async def upload_document(
         log.error(f"Failed to save to storage: {e}")
         raise HTTPException(500, f"Failed to save file: {e}")
 
-    # === Создаём запись в БД ===
     doc = ApplicantDocument(
         application_id=application.id,
         doc_type=doc_type_enum,
@@ -326,7 +283,7 @@ async def upload_document(
 
     log.info(
         f"Uploaded document: app={application.id} "
-        f"type={doc_type} size={file_size} key={storage_key}"
+        f"type={doc_type} size={file_size}"
     )
 
     return _enrich_document(doc)
@@ -338,13 +295,11 @@ def delete_document(
     doc_id: int,
     session: Session = Depends(get_session),
 ):
-    """Удаление документа клиентом."""
     application = _get_application_by_token(token, session)
 
     doc = session.get(ApplicantDocument, doc_id)
     if not doc:
         raise HTTPException(404, "Document not found")
-
     if doc.application_id != application.id:
         raise HTTPException(403, "Document does not belong to this application")
 
@@ -357,21 +312,23 @@ def delete_document(
     session.delete(doc)
     session.commit()
 
-    log.info(f"Deleted document: app={application.id} doc_id={doc_id}")
     return {"deleted": True, "id": doc_id}
 
 
+# ============================================================================
+# Pack 13.1: Real OCR
+# ============================================================================
+
 @router.post("/{token}/documents/{doc_id}/recognize")
-async def recognize_document(
+async def recognize_one_document(
     token: str,
     doc_id: int,
     session: Session = Depends(get_session),
 ):
     """
-    Запустить OCR для документа.
+    Запустить OCR для одного документа.
 
-    Pack 13.0: ЗАГЛУШКА.
-    Pack 13.1: реальный OCR через LLM Vision.
+    Возвращает обновлённый документ с parsed_data или с ocr_error.
     """
     application = _get_application_by_token(token, session)
 
@@ -379,7 +336,238 @@ async def recognize_document(
     if not doc or doc.application_id != application.id:
         raise HTTPException(404, "Document not found")
 
-    raise HTTPException(
-        501,
-        "OCR not implemented yet. Coming in Pack 13.1."
-    )
+    # Для diploma_apostille — OCR не нужен, но мы возвращаем 200 с пустым parsed_data
+    if doc.doc_type == ApplicantDocumentType.DIPLOMA_APOSTILLE:
+        doc.status = ApplicantDocumentStatus.OCR_DONE
+        doc.parsed_data = {}
+        doc.ocr_error = None
+        doc.ocr_completed_at = datetime.utcnow()
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        return _enrich_document(doc)
+
+    # Помечаем что OCR в процессе (на случай если клиент сразу обновит список)
+    doc.status = ApplicantDocumentStatus.OCR_PENDING
+    doc.ocr_error = None
+    session.add(doc)
+    session.commit()
+
+    # Загружаем файл из storage
+    storage = get_storage()
+    try:
+        image_bytes = storage.read(doc.storage_key)
+    except Exception as e:
+        log.error(f"Failed to read from storage: {e}")
+        doc.status = ApplicantDocumentStatus.OCR_FAILED
+        doc.ocr_error = f"Failed to read file: {e}"
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        return _enrich_document(doc)
+
+    # Вызываем OCR
+    try:
+        parsed = await recognize_document(
+            doc_type=doc.doc_type.value,
+            image_bytes=image_bytes,
+            content_type=doc.content_type,
+        )
+        doc.status = ApplicantDocumentStatus.OCR_DONE
+        doc.parsed_data = parsed
+        doc.ocr_error = None
+        doc.ocr_completed_at = datetime.utcnow()
+    except OCRError as e:
+        log.warning(f"OCR failed for doc {doc_id}: {e}")
+        doc.status = ApplicantDocumentStatus.OCR_FAILED
+        doc.ocr_error = str(e)[:500]
+        doc.parsed_data = {}
+    except Exception as e:
+        log.error(f"Unexpected OCR error for doc {doc_id}: {e}", exc_info=True)
+        doc.status = ApplicantDocumentStatus.OCR_FAILED
+        doc.ocr_error = f"Unexpected error: {str(e)[:200]}"
+        doc.parsed_data = {}
+
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    return _enrich_document(doc)
+
+
+def _merge_parsed_to_applicant_data(
+    documents: List[ApplicantDocument],
+    existing: Optional[Applicant],
+) -> dict:
+    """
+    Объединяет parsed_data из всех документов в единый dict для ApplicantData.
+
+    Логика приоритета:
+    - Поле уже заполнено в existing (НЕ пустое) → НЕ перезаписываем
+    - Поле пустое → берём из parsed_data
+    - Если несколько документов дают одно поле → приоритет:
+      passport_internal_main > passport_foreign > passport_internal_address > diploma
+      (ФИО кириллицей лучше извлекать из российского паспорта)
+
+    Возвращает dict для подачи в ApplicantUpdate.
+    """
+    # Сортируем документы по приоритету
+    priority = {
+        ApplicantDocumentType.PASSPORT_INTERNAL_MAIN: 1,
+        ApplicantDocumentType.PASSPORT_FOREIGN: 2,
+        ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS: 3,
+        ApplicantDocumentType.DIPLOMA_MAIN: 4,
+        ApplicantDocumentType.DIPLOMA_APOSTILLE: 99,
+        ApplicantDocumentType.OTHER: 99,
+    }
+    sorted_docs = sorted(documents, key=lambda d: priority.get(d.doc_type, 99))
+
+    # Собираем результат
+    result = {}
+
+    def _set_if_empty(field: str, value):
+        """Устанавливает поле если его ещё нет в result И в existing оно пустое."""
+        if value is None or value == "":
+            return
+        if field in result:
+            return  # уже взяли из более приоритетного документа
+        # Проверка existing
+        if existing is not None:
+            existing_value = getattr(existing, field, None)
+            if existing_value:  # уже заполнено клиентом — не трогаем
+                return
+        result[field] = value
+
+    # Education — отдельно (это список, а не плоское поле)
+    education_record = None
+
+    for doc in sorted_docs:
+        if doc.status != ApplicantDocumentStatus.OCR_DONE:
+            continue
+        p = doc.parsed_data or {}
+        if not p:
+            continue
+
+        # Российский паспорт — главная
+        if doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_MAIN:
+            _set_if_empty("last_name_native", p.get("last_name_native"))
+            _set_if_empty("first_name_native", p.get("first_name_native"))
+            _set_if_empty("middle_name_native", p.get("middle_name_native"))
+            _set_if_empty("birth_date", p.get("birth_date"))
+            _set_if_empty("sex", p.get("sex"))
+            # nationality — для РФ паспорта по умолчанию RUS
+            if not result.get("nationality") and (existing is None or not existing.nationality):
+                result["nationality"] = "RUS"
+            if not result.get("home_country") and (existing is None or not existing.home_country):
+                result["home_country"] = "RUS"
+
+        # Российский паспорт — прописка
+        elif doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS:
+            _set_if_empty("home_address", p.get("registration_address"))
+
+        # Загранпаспорт
+        elif doc.doc_type == ApplicantDocumentType.PASSPORT_FOREIGN:
+            _set_if_empty("last_name_latin", p.get("last_name_latin"))
+            _set_if_empty("first_name_latin", p.get("first_name_latin"))
+            _set_if_empty("birth_place_latin", p.get("birth_place_latin"))
+            _set_if_empty("passport_number", p.get("passport_number"))
+            _set_if_empty("passport_issue_date", p.get("passport_issue_date"))
+            _set_if_empty("passport_issuer", p.get("passport_issuer"))
+            _set_if_empty("nationality", p.get("nationality"))
+            # ФИО кириллицей — из загранпаспорта если ещё нет (на всякий случай)
+            _set_if_empty("last_name_native", p.get("last_name_native"))
+            _set_if_empty("first_name_native", p.get("first_name_native"))
+            _set_if_empty("birth_date", p.get("birth_date"))
+            _set_if_empty("sex", p.get("sex"))
+
+        # Диплом
+        elif doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN:
+            if education_record is None:
+                education_record = {
+                    "institution": p.get("institution"),
+                    "graduation_year": p.get("graduation_year"),
+                    "degree": p.get("degree"),
+                    "specialty": p.get("specialty"),
+                }
+                # Только если в existing нет education — добавляем
+                if existing is None or not existing.education:
+                    # Очистим None-поля
+                    cleaned = {k: v for k, v in education_record.items() if v}
+                    if cleaned:
+                        result["education"] = [cleaned]
+
+    return result
+
+
+@router.post("/{token}/documents/apply-to-applicant")
+def apply_documents_to_applicant(
+    token: str,
+    session: Session = Depends(get_session),
+):
+    """
+    Применить распознанные данные из всех документов к Applicant.
+
+    Только пустые поля заполняются. Уже заполненные клиентом — не трогаются.
+    """
+    application = _get_application_by_token(token, session)
+
+    docs = session.exec(
+        select(ApplicantDocument)
+        .where(ApplicantDocument.application_id == application.id)
+        .where(ApplicantDocument.status == ApplicantDocumentStatus.OCR_DONE)
+    ).all()
+
+    if not docs:
+        raise HTTPException(
+            422,
+            "No recognized documents to apply. Run /recognize first."
+        )
+
+    # Получить существующий applicant если есть
+    existing = None
+    if application.applicant_id:
+        existing = session.get(Applicant, application.applicant_id)
+
+    # Собрать data из распознанных документов
+    update_data = _merge_parsed_to_applicant_data(docs, existing)
+
+    if not update_data:
+        return {
+            "applied_fields": [],
+            "message": "Nothing to apply (all fields already filled or no new data)",
+        }
+
+    log.info(f"Applying OCR data to applicant: {list(update_data.keys())}")
+
+    # Применить
+    if not application.applicant_id:
+        try:
+            applicant = Applicant(**update_data)
+        except Exception as e:
+            raise HTTPException(
+                422,
+                detail={"message": "Cannot create applicant from OCR data", "error": str(e)},
+            )
+        session.add(applicant)
+        session.flush()
+        session.refresh(applicant)
+        application.applicant_id = applicant.id
+        session.add(application)
+    else:
+        applicant = existing
+        for key, value in update_data.items():
+            setattr(applicant, key, value)
+        session.add(applicant)
+
+    # Помечаем документы как применённые
+    for d in docs:
+        d.applied_to_applicant = True
+        session.add(d)
+
+    session.commit()
+    session.refresh(applicant)
+
+    return {
+        "applied_fields": list(update_data.keys()),
+        "applicant": _enrich_applicant(applicant),
+    }

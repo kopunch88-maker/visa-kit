@@ -16,7 +16,6 @@ import {
   STATUS_LABELS,
 } from "@/lib/api";
 
-// Pack 13.0b: новый Шаг 0 «Документы» в начале
 const STEPS = [
   { id: "docs", title: "Документы", subtitle: "Сканы паспортов и диплома (опционально)" },
   { id: "personal", title: "Личные данные", subtitle: "ФИО, дата рождения" },
@@ -60,9 +59,6 @@ export function ClientWizard({ token }: Props) {
         if (!mounted) return;
         if (profile) {
           setData(profile);
-          // Восстанавливаем какие шаги были пройдены раньше
-          // Pack 13: Шаг 0 — Документы, отдельная логика (проверка не через profile, опускаем для простоты)
-          // Шаги 1-5 — обычные данные
           const completed = new Set<number>();
           if (profile.last_name_native && profile.first_name_native) completed.add(1);
           if (profile.passport_number) completed.add(2);
@@ -94,7 +90,6 @@ export function ClientWizard({ token }: Props) {
   }
 
   async function saveProgress() {
-    // Шаг 0 — Документы — нет данных Applicant'а для сохранения
     if (currentStep === 0) {
       setCompletedSteps((prev) => new Set([...prev, 0]));
       return true;
@@ -148,10 +143,30 @@ export function ClientWizard({ token }: Props) {
     scrollToStep(nextStep);
   }
 
-  // Из StepDocuments — переход к Шагу 1 (пропуск или после загрузки)
-  function handleDocumentsContinue() {
+  // Pack 13.1: после применения OCR данных нужно перезагрузить профиль
+  async function handleDocumentsContinue() {
     setCompletedSteps((prev) => new Set([...prev, 0]));
     setMaxReachedStep((prev) => Math.max(prev, 1));
+
+    // Перезагружаем профиль чтобы подтянуть OCR-данные если они применились
+    try {
+      const profile = await getMyProfile(token);
+      if (profile) {
+        setData(profile);
+        const completed = new Set<number>([0]);
+        if (profile.last_name_native && profile.first_name_native) completed.add(1);
+        if (profile.passport_number) completed.add(2);
+        if (profile.home_address && profile.email) completed.add(3);
+        if (profile.education && profile.education.length > 0) completed.add(4);
+        if (profile.work_history && profile.work_history.length > 0) completed.add(5);
+        setCompletedSteps(completed);
+        const maxCompleted = Math.max(...Array.from(completed));
+        setMaxReachedStep(Math.min(maxCompleted + 1, STEPS.length - 1));
+      }
+    } catch (e) {
+      console.error("Failed to reload profile:", e);
+    }
+
     setCurrentStep(1);
     scrollToStep(1);
   }
@@ -175,7 +190,6 @@ export function ClientWizard({ token }: Props) {
   }
 
   function renderNavButtons() {
-    // Шаг 0 — Документы — у него СВОИ кнопки (Пропустить / Распознать) внутри компонента
     if (currentStep === 0) return null;
 
     return (
@@ -232,7 +246,6 @@ export function ClientWizard({ token }: Props) {
   return (
     <div className="min-h-screen bg-tertiary py-4 px-3 md:py-6 md:px-4">
       <div className="max-w-5xl mx-auto">
-        {/* Шапка */}
         <div
           className="bg-primary rounded-xl border border-tertiary px-4 py-3 md:px-5 md:py-4 mb-4 flex items-center justify-between gap-3"
           style={{ borderWidth: 0.5 }}
@@ -267,7 +280,6 @@ export function ClientWizard({ token }: Props) {
           </button>
         </div>
 
-        {/* Статус сохранения — на мобильном тут */}
         <div className="md:hidden mb-3 px-1 min-h-[18px]">
           {saving && (
             <div className="text-xs text-tertiary flex items-center gap-2">
@@ -283,7 +295,6 @@ export function ClientWizard({ token }: Props) {
           {error && <div className="text-xs text-danger">{error}</div>}
         </div>
 
-        {/* === DESKTOP === */}
         <div
           className="hidden md:flex bg-primary rounded-xl border border-tertiary overflow-hidden"
           style={{ borderWidth: 0.5, minHeight: "70vh" }}
@@ -403,7 +414,6 @@ export function ClientWizard({ token }: Props) {
           </main>
         </div>
 
-        {/* === MOBILE — аккордеон === */}
         <div className="md:hidden space-y-3">
           {STEPS.map((step, idx) => {
             const isActive = idx === currentStep;

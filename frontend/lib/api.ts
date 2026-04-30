@@ -4,9 +4,8 @@
  * - CRUD endpoints для справочников
  * - Расширенные типы CompanyResponse / PositionResponse и т.д.
  *
- * Pack 13.0b — добавлены:
- * - Типы ClientDocument / ClientDocumentType / ClientDocumentStatus
- * - uploadDocument / getMyDocuments / deleteDocument / recognizeDocument
+ * Pack 13.0b — добавлены типы и функции для документов клиента
+ * Pack 13.1 — улучшен recognizeDocument + новая applyDocumentsToApplicant
  */
 
 export const API_BASE_URL =
@@ -71,11 +70,9 @@ export type ApplicationResponse = {
   recommendation_snapshot?: any;
   tasa_nrc?: string;
   created_at?: string;
-  // Pack 10
   is_archived?: boolean;
   archived_at?: string;
   can_be_archived?: boolean;
-  // Pack 10.1
   applicant_name_native?: string;
   applicant_name_latin?: string;
 };
@@ -110,7 +107,6 @@ export type ClientDocument = {
   download_url?: string;
 };
 
-// Полный тип Company
 export type CompanyResponse = {
   id: number;
   short_name: string;
@@ -285,12 +281,9 @@ export async function getMyApplication(token: string): Promise<ApplicationRespon
 }
 
 // ============================================================================
-// Pack 13.0b: Client documents
+// Pack 13: Client documents
 // ============================================================================
 
-/**
- * Получить список загруженных клиентом документов.
- */
 export async function getMyDocuments(token: string): Promise<ClientDocument[]> {
   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents`);
   if (!res.ok) {
@@ -299,13 +292,6 @@ export async function getMyDocuments(token: string): Promise<ClientDocument[]> {
   return res.json();
 }
 
-/**
- * Загрузить документ. Если такого типа уже есть — заменяется.
- *
- * @param token - токен клиентского доступа
- * @param docType - тип документа (passport_internal_main и т.д.)
- * @param file - File объект из <input type="file">
- */
 export async function uploadDocument(
   token: string,
   docType: ClientDocumentType,
@@ -318,7 +304,6 @@ export async function uploadDocument(
   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents/upload`, {
     method: "POST",
     body: formData,
-    // Note: НЕ ставим Content-Type — браузер сам выставит multipart/form-data с boundary
   });
 
   if (!res.ok) {
@@ -327,18 +312,13 @@ export async function uploadDocument(
     try {
       const errJson = JSON.parse(errText);
       errMessage = errJson.detail || errMessage;
-    } catch {
-      // оставляем дефолт
-    }
+    } catch {}
     throw new Error(errMessage);
   }
 
   return res.json();
 }
 
-/**
- * Удалить загруженный документ.
- */
 export async function deleteDocument(
   token: string,
   docId: number,
@@ -353,10 +333,10 @@ export async function deleteDocument(
 }
 
 /**
- * Запустить OCR для документа.
+ * Pack 13.1: реальный OCR через LLM Vision.
  *
- * Pack 13.0b: возвращает 501 (заглушка).
- * Pack 13.1: реальное распознавание.
+ * Возвращает обновлённый документ. Endpoint может вернуть документ со статусом
+ * "ocr_failed" — это НЕ ошибка функции, проверяй doc.status в результате.
  */
 export async function recognizeDocument(
   token: string,
@@ -367,7 +347,45 @@ export async function recognizeDocument(
     { method: "POST" },
   );
   if (!res.ok) {
-    throw new Error(`Не удалось распознать: ${res.status}`);
+    const errText = await res.text();
+    let errMessage = `Не удалось распознать (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
+  }
+  return res.json();
+}
+
+/**
+ * Pack 13.1: применить распознанные данные из всех документов к анкете.
+ *
+ * Только пустые поля заполняются — уже введённые клиентом не перезаписываются.
+ *
+ * Возвращает:
+ *   - applied_fields: какие поля были заполнены
+ *   - applicant: обновлённый профиль
+ */
+export async function applyDocumentsToApplicant(
+  token: string,
+): Promise<{
+  applied_fields: string[];
+  applicant?: ApplicantResponse;
+  message?: string;
+}> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/client/${token}/documents/apply-to-applicant`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Не удалось применить данные (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
   }
   return res.json();
 }
@@ -717,7 +735,6 @@ export function getClientLink(token: string): string {
   return `/client/${token}`;
 }
 
-// Pack 13: метки типов документов клиента
 export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
   passport_internal_main: "Паспорт РФ — главный разворот",
   passport_internal_address: "Паспорт РФ — страница прописки",
