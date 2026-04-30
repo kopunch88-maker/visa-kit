@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Loader2, X, Upload, Camera, CheckCircle2, AlertCircle, Sparkles, FileSearch, AlertTriangle } from "lucide-react";
+import { Loader2, Upload, Camera, CheckCircle2, AlertCircle, Sparkles, FileSearch, AlertTriangle, ChevronRight } from "lucide-react";
 import {
   ClientDocument,
   ClientDocumentType,
-  DOCUMENT_TYPE_LABELS,
+  ApplyPreview,
+  ApplyOptions,
+  FIELD_LABELS,
   getMyDocuments,
   uploadDocument,
   deleteDocument,
   recognizeDocument,
+  previewApplyDocuments,
   applyDocumentsToApplicant,
 } from "@/lib/api";
 import { StepHeader } from "@/components/ui/Form";
@@ -60,7 +63,7 @@ const SLOTS: Array<{
     title: "Диплом — апостиль",
     description: "Страница с апостилем",
     hint: "Если апостиль на отдельном листе. Сохраняется для подачи в UGE.",
-    ocrEnabled: false, // не распознаём, только хранение
+    ocrEnabled: false,
   },
 ];
 
@@ -71,7 +74,8 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
   const [recognizing, setRecognizing] = useState(false);
   const [recognizingDocId, setRecognizingDocId] = useState<number | null>(null);
   const [showReview, setShowReview] = useState(false);
-  const [appliedFields, setAppliedFields] = useState<string[]>([]);
+  const [preview, setPreview] = useState<ApplyPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,8 +131,6 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
     setRecognizing(true);
     setError(null);
 
-    // Распознаём только те, у кого OCR ещё не делался или провалился
-    // и тип поддерживает OCR
     const ocrEnabledTypes = SLOTS.filter((s) => s.ocrEnabled).map((s) => s.type);
     const docsToRecognize = documents.filter(
       (d) =>
@@ -136,7 +138,6 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
         d.status !== "ocr_done"
     );
 
-    // Запускаем распознавание последовательно (избегаем rate limit)
     for (const doc of docsToRecognize) {
       setRecognizingDocId(doc.id);
       try {
@@ -145,7 +146,6 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
           prev.map((d) => (d.id === doc.id ? updated : d))
         );
       } catch (e) {
-        // не останавливаемся — продолжаем со следующим документом
         console.error(`OCR failed for doc ${doc.id}:`, e);
         setDocuments((prev) =>
           prev.map((d) =>
@@ -160,35 +160,31 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
     setRecognizingDocId(null);
     setRecognizing(false);
 
-    // Проверяем результаты — есть ли успешные распознавания?
     const updated = await getMyDocuments(token);
     setDocuments(updated);
 
     const hasSuccessful = updated.some((d) => d.status === "ocr_done");
-    if (hasSuccessful) {
-      setShowReview(true);
-    } else {
+    if (!hasSuccessful) {
       setError(
         "Ни один документ не удалось распознать. Проверьте качество фотографий и попробуйте снова."
       );
+      return;
     }
-  }
 
-  async function handleApplyAndContinue() {
-    setError(null);
+    // Получаем preview-apply
+    setPreviewLoading(true);
     try {
-      const result = await applyDocumentsToApplicant(token);
-      setAppliedFields(result.applied_fields);
-      // Переход на следующий шаг (Личные данные)
-      onContinue?.();
+      const p = await previewApplyDocuments(token);
+      setPreview(p);
+      setShowReview(true);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
   const uploadedCount = documents.length;
-  const recognizedCount = documents.filter((d) => d.status === "ocr_done").length;
-  const failedCount = documents.filter((d) => d.status === "ocr_failed").length;
 
   if (loading) {
     return (
@@ -198,19 +194,30 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
     );
   }
 
-  // === REVIEW MODE — показываем что распозналось ===
-  if (showReview) {
+  if (showReview && preview) {
     return (
       <ReviewMode
+        token={token}
+        preview={preview}
         documents={documents}
-        onConfirm={handleApplyAndContinue}
-        onBack={() => setShowReview(false)}
+        onConfirm={async (options) => {
+          setError(null);
+          try {
+            await applyDocumentsToApplicant(token, options);
+            onContinue?.();
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }}
+        onBack={() => {
+          setShowReview(false);
+          setPreview(null);
+        }}
         error={error}
       />
     );
   }
 
-  // === UPLOAD MODE ===
   return (
     <div>
       <StepHeader
@@ -272,7 +279,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
       >
         <button
           onClick={onSkip}
-          disabled={recognizing}
+          disabled={recognizing || previewLoading}
           className="px-5 py-2.5 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
           style={{ borderWidth: 0.5 }}
         >
@@ -281,7 +288,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
 
         <button
           onClick={handleRecognizeAll}
-          disabled={uploadedCount === 0 || recognizing}
+          disabled={uploadedCount === 0 || recognizing || previewLoading}
           className="px-5 py-2.5 rounded-md text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           style={{ background: "var(--color-accent)" }}
         >
@@ -290,12 +297,17 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
               <Loader2 className="w-4 h-4 animate-spin" />
               Распознаём...
             </>
+          ) : previewLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Подготовка...
+            </>
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
               {uploadedCount === 0
                 ? "Загрузите хотя бы один документ"
-                : `Распознать всё (${uploadedCount}) и заполнить анкету →`}
+                : `Распознать всё (${uploadedCount}) →`}
             </>
           )}
         </button>
@@ -305,47 +317,17 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
 }
 
 // =============================================================================
-// REVIEW MODE — показ распознанных полей перед применением
+// REVIEW MODE — показ распознанных полей с разрешением конфликтов
 // =============================================================================
 
 interface ReviewProps {
+  token: string;
+  preview: ApplyPreview;
   documents: ClientDocument[];
-  onConfirm: () => void;
+  onConfirm: (options: ApplyOptions) => Promise<void>;
   onBack: () => void;
   error: string | null;
 }
-
-const FIELD_LABELS: Record<string, string> = {
-  // passport_internal_main
-  last_name_native: "Фамилия (рус)",
-  first_name_native: "Имя (рус)",
-  middle_name_native: "Отчество",
-  birth_date: "Дата рождения",
-  birth_place_native: "Место рождения (рус)",
-  sex: "Пол",
-  passport_series: "Серия паспорта РФ",
-  passport_number: "Номер паспорта",
-  passport_issue_date: "Дата выдачи",
-  passport_issuer: "Кем выдан",
-  passport_issuer_code: "Код подразделения",
-  // passport_internal_address
-  registration_address: "Адрес регистрации",
-  registration_date: "Дата регистрации",
-  // passport_foreign
-  last_name_latin: "Фамилия (лат)",
-  first_name_latin: "Имя (лат)",
-  birth_place_latin: "Место рождения (лат)",
-  nationality: "Гражданство",
-  passport_expiry_date: "Срок действия",
-  // diploma
-  institution: "Учебное заведение",
-  graduation_year: "Год выпуска",
-  degree: "Степень",
-  specialty: "Специальность",
-  diploma_number: "Номер диплома",
-  diploma_series: "Серия диплома",
-  issue_date: "Дата выдачи",
-};
 
 const SEX_LABELS: Record<string, string> = {
   H: "Мужской",
@@ -356,35 +338,67 @@ const DEGREE_LABELS: Record<string, string> = {
   bachelor: "Бакалавр",
   specialist: "Специалист",
   master: "Магистр",
-  phd: "Кандидат наук / Доктор наук",
+  phd: "Кандидат / Доктор наук",
   secondary: "Среднее специальное",
-};
-
-const DOC_SECTION_TITLES: Record<ClientDocumentType, string> = {
-  passport_internal_main: "Паспорт РФ — главная",
-  passport_internal_address: "Паспорт РФ — прописка",
-  passport_foreign: "Загранпаспорт",
-  diploma_main: "Диплом",
-  diploma_apostille: "Апостиль",
-  other: "Другое",
 };
 
 function formatValue(field: string, value: any): string {
   if (value === null || value === undefined || value === "") return "—";
-  if (field === "sex" && SEX_LABELS[value]) return SEX_LABELS[value];
-  if (field === "degree" && DEGREE_LABELS[value]) return DEGREE_LABELS[value];
+  if (field === "sex" && SEX_LABELS[value as string]) return SEX_LABELS[value as string];
+  if (field === "degree" && DEGREE_LABELS[value as string]) return DEGREE_LABELS[value as string];
   return String(value);
 }
 
-function ReviewMode({ documents, onConfirm, onBack, error }: ReviewProps) {
-  const ocrDoneDocs = documents.filter((d) => d.status === "ocr_done");
+function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: ReviewProps) {
+  // Состояние выбора для каждого конфликта: true = использовать OCR, false = оставить текущее
+  const [conflictChoices, setConflictChoices] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    preview.conflicts.forEach((c) => {
+      initial[c.field] = false; // по умолчанию ОСТАВИТЬ текущее (безопасный выбор)
+    });
+    return initial;
+  });
+
+  // Education action
+  const [educationAction, setEducationAction] = useState<"auto" | "skip" | "replace" | "add">(
+    () => {
+      if (preview.education?.type === "conflict") {
+        return "skip"; // по умолчанию НЕ трогать существующее
+      }
+      return "auto";
+    }
+  );
+
+  const [submitting, setSubmitting] = useState(false);
+
   const ocrFailedDocs = documents.filter((d) => d.status === "ocr_failed");
+
+  async function handleConfirm() {
+    setSubmitting(true);
+    try {
+      const overrides = Object.entries(conflictChoices)
+        .filter(([_, useOcr]) => useOcr)
+        .map(([field]) => field);
+      await onConfirm({
+        overrides,
+        education_action: educationAction,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const totalChanges =
+    preview.auto_fill.length +
+    Object.values(conflictChoices).filter((v) => v).length +
+    (preview.education?.type === "auto_fill" ? 1 : 0) +
+    (preview.education?.type === "conflict" && educationAction !== "skip" ? 1 : 0);
 
   return (
     <div>
       <StepHeader
         title="Что мы извлекли"
-        subtitle="Проверьте распознанные данные. После подтверждения они появятся в полях анкеты — вы сможете их отредактировать."
+        subtitle="Проверьте распознанные данные и решите что использовать в анкете."
       />
 
       {error && (
@@ -401,84 +415,256 @@ function ReviewMode({ documents, onConfirm, onBack, error }: ReviewProps) {
         </div>
       )}
 
-      {/* Успешно распознанные */}
-      {ocrDoneDocs.length > 0 && (
-        <div className="space-y-4">
-          {ocrDoneDocs.map((doc) => {
-            const fields = Object.entries(doc.parsed_data || {}).filter(
-              ([_, v]) => v !== null && v !== undefined && v !== ""
-            );
-            if (fields.length === 0 && doc.doc_type !== "diploma_apostille") {
+      {/* === Конфликты — нужны решения === */}
+      {preview.conflicts.length > 0 && (
+        <div className="mb-6">
+          <div
+            className="p-4 rounded-lg mb-3"
+            style={{
+              background: "var(--color-bg-warning, var(--color-bg-secondary))",
+              border: "0.5px solid var(--color-border-secondary)",
+            }}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4" style={{ color: "var(--color-text-warning, var(--color-accent))" }} />
+              <span className="text-sm font-semibold text-primary">
+                Найдены различия — выберите что оставить
+              </span>
+            </div>
+            <div className="text-xs text-tertiary">
+              В этих полях ваши текущие данные отличаются от распознанных. Выберите для каждого поля.
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {preview.conflicts.map((c) => {
+              const useOcr = conflictChoices[c.field] || false;
+              const fieldLabel = FIELD_LABELS[c.field] || c.field;
+
               return (
                 <div
-                  key={doc.id}
-                  className="p-4 rounded-lg border border-tertiary"
-                  style={{ borderWidth: 0.5, background: "var(--color-bg-primary)" }}
+                  key={c.field}
+                  className="rounded-lg p-3 border"
+                  style={{
+                    borderWidth: 0.5,
+                    borderColor: "var(--color-border-secondary)",
+                    background: "var(--color-bg-primary)",
+                  }}
                 >
-                  <div className="flex items-center gap-2 mb-1">
-                    <AlertTriangle className="w-4 h-4" style={{ color: "var(--color-text-warning)" }} />
-                    <span className="text-sm font-medium text-primary">
-                      {DOC_SECTION_TITLES[doc.doc_type]}
-                    </span>
+                  <div className="text-xs font-semibold text-tertiary uppercase tracking-wide mb-2">
+                    {fieldLabel}
                   </div>
-                  <div className="text-xs text-tertiary">
-                    Документ загружен, но ничего не удалось извлечь. Возможно фото плохого качества.
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {/* Оставить текущее */}
+                    <label
+                      className="rounded-md p-3 cursor-pointer transition-colors"
+                      style={{
+                        borderWidth: useOcr ? 0.5 : 1.5,
+                        borderStyle: "solid",
+                        borderColor: useOcr ? "var(--color-border-secondary)" : "var(--color-accent)",
+                        background: useOcr ? "var(--color-bg-primary)" : "var(--color-bg-secondary)",
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name={`conflict-${c.field}`}
+                          checked={!useOcr}
+                          onChange={() =>
+                            setConflictChoices((prev) => ({ ...prev, [c.field]: false }))
+                          }
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-tertiary">Оставить как есть</div>
+                          <div className="text-sm text-primary break-words">
+                            {formatValue(c.field, c.current_value)}
+                          </div>
+                        </div>
+                      </div>
+                    </label>
+
+                    {/* Заменить распознанным */}
+                    <label
+                      className="rounded-md p-3 cursor-pointer transition-colors"
+                      style={{
+                        borderWidth: useOcr ? 1.5 : 0.5,
+                        borderStyle: "solid",
+                        borderColor: useOcr ? "var(--color-accent)" : "var(--color-border-secondary)",
+                        background: useOcr ? "var(--color-bg-secondary)" : "var(--color-bg-primary)",
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name={`conflict-${c.field}`}
+                          checked={useOcr}
+                          onChange={() =>
+                            setConflictChoices((prev) => ({ ...prev, [c.field]: true }))
+                          }
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-tertiary">Из документа</div>
+                          <div className="text-sm text-primary break-words">
+                            {formatValue(c.field, c.ocr_value)}
+                          </div>
+                        </div>
+                      </div>
+                    </label>
                   </div>
                 </div>
               );
-            }
-
-            if (doc.doc_type === "diploma_apostille") {
-              return (
-                <div
-                  key={doc.id}
-                  className="p-4 rounded-lg border border-tertiary"
-                  style={{ borderWidth: 0.5, background: "var(--color-bg-primary)" }}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <CheckCircle2 className="w-4 h-4" style={{ color: "var(--color-text-success)" }} />
-                    <span className="text-sm font-medium text-primary">
-                      Апостиль сохранён
-                    </span>
-                  </div>
-                  <div className="text-xs text-tertiary">
-                    Файл будет приложен к заявке для подачи.
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <div
-                key={doc.id}
-                className="p-4 rounded-lg border border-tertiary"
-                style={{ borderWidth: 0.5, background: "var(--color-bg-primary)" }}
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <FileSearch className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
-                  <span className="text-sm font-semibold text-primary">
-                    {DOC_SECTION_TITLES[doc.doc_type]}
-                  </span>
-                </div>
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                  {fields.map(([key, value]) => (
-                    <div key={key}>
-                      <dt className="text-xs text-tertiary">
-                        {FIELD_LABELS[key] || key}
-                      </dt>
-                      <dd className="text-primary">{formatValue(key, value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            );
-          })}
+            })}
+          </div>
         </div>
       )}
 
-      {/* Провалившиеся */}
+      {/* === Education конфликт === */}
+      {preview.education?.type === "conflict" && (
+        <div className="mb-6">
+          <div
+            className="rounded-lg p-3 border"
+            style={{
+              borderWidth: 0.5,
+              borderColor: "var(--color-border-secondary)",
+              background: "var(--color-bg-primary)",
+            }}
+          >
+            <div className="text-xs font-semibold text-tertiary uppercase tracking-wide mb-2">
+              Образование
+            </div>
+            <div className="text-xs text-tertiary mb-3">
+              У вас уже {preview.education.current_count > 1 ? `${preview.education.current_count} записи` : "1 запись"} об образовании.
+              Что делать с распознанным дипломом ({(preview.education.ocr_value as any).institution || "—"})?
+            </div>
+            <div className="space-y-2">
+              {(["skip", "add", "replace"] as const).map((action) => {
+                const labels: Record<typeof action, { title: string; desc: string }> = {
+                  skip: {
+                    title: "Не трогать",
+                    desc: "Оставить только мои существующие записи",
+                  },
+                  add: {
+                    title: "Добавить",
+                    desc: "Добавить распознанный диплом к существующим записям",
+                  },
+                  replace: {
+                    title: "Заменить",
+                    desc: "Удалить мои записи и оставить только распознанный диплом",
+                  },
+                };
+                const l = labels[action];
+                const checked = educationAction === action;
+                return (
+                  <label
+                    key={action}
+                    className="rounded-md p-2.5 cursor-pointer transition-colors flex items-start gap-2"
+                    style={{
+                      borderWidth: checked ? 1.5 : 0.5,
+                      borderStyle: "solid",
+                      borderColor: checked ? "var(--color-accent)" : "var(--color-border-secondary)",
+                      background: checked ? "var(--color-bg-secondary)" : "var(--color-bg-primary)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="edu-action"
+                      checked={checked}
+                      onChange={() => setEducationAction(action)}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-primary">{l.title}</div>
+                      <div className="text-xs text-tertiary">{l.desc}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* === Auto-fill — пустые поля будут заполнены === */}
+      {(preview.auto_fill.length > 0 || preview.education?.type === "auto_fill") && (
+        <div className="mb-6">
+          <div className="text-xs font-semibold text-tertiary uppercase tracking-wide mb-2">
+            Автоматически заполнятся
+          </div>
+          <div
+            className="rounded-lg p-3 border"
+            style={{
+              borderWidth: 0.5,
+              borderColor: "var(--color-border-secondary)",
+              background: "var(--color-bg-primary)",
+            }}
+          >
+            <ul className="space-y-1.5">
+              {preview.auto_fill.map((item) => (
+                <li key={item.field} className="flex gap-2 text-sm">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "var(--color-text-success)" }} />
+                  <span className="flex-1 min-w-0">
+                    <span className="text-tertiary">{FIELD_LABELS[item.field] || item.field}: </span>
+                    <span className="text-primary break-words">{formatValue(item.field, item.ocr_value)}</span>
+                  </span>
+                </li>
+              ))}
+              {preview.education?.type === "auto_fill" && (
+                <li className="flex gap-2 text-sm">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "var(--color-text-success)" }} />
+                  <span className="flex-1 min-w-0">
+                    <span className="text-tertiary">Образование: </span>
+                    <span className="text-primary break-words">
+                      {(preview.education.ocr_value as any).institution || "—"}
+                      {(preview.education.ocr_value as any).graduation_year &&
+                        ` (${(preview.education.ocr_value as any).graduation_year})`}
+                    </span>
+                  </span>
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* === Совпадения — компактный блок === */}
+      {preview.same.length > 0 && (
+        <div className="mb-6">
+          <details>
+            <summary className="text-xs text-tertiary cursor-pointer hover:text-secondary">
+              Совпало с тем что вы ввели ({preview.same.length})
+            </summary>
+            <ul className="mt-2 space-y-1 pl-4">
+              {preview.same.map((item) => (
+                <li key={item.field} className="text-xs text-tertiary">
+                  ✓ {FIELD_LABELS[item.field] || item.field}: {formatValue(item.field, item.value)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      )}
+
+      {/* === Если ничего не распозналось вообще === */}
+      {preview.auto_fill.length === 0 &&
+       preview.conflicts.length === 0 &&
+       !preview.education && (
+        <div
+          className="p-4 rounded-lg mb-4 text-sm"
+          style={{
+            background: "var(--color-bg-secondary)",
+            border: "0.5px solid var(--color-border-secondary)",
+          }}
+        >
+          Ничего нового из документов извлечь не удалось. Все поля у вас уже совпадают
+          с распознанным или OCR не справился. Можно продолжать заполнение анкеты.
+        </div>
+      )}
+
+      {/* === Провалившиеся документы === */}
       {ocrFailedDocs.length > 0 && (
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 mb-4 space-y-2">
           {ocrFailedDocs.map((doc) => (
             <div
               key={doc.id}
@@ -498,51 +684,56 @@ function ReviewMode({ documents, onConfirm, onBack, error }: ReviewProps) {
         </div>
       )}
 
-      {/* Информационная плашка */}
-      <div
-        className="mt-5 p-4 rounded-lg flex gap-3"
-        style={{
-          background: "var(--color-bg-secondary)",
-          border: "0.5px solid var(--color-border-secondary)",
-        }}
-      >
-        <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "var(--color-text-success)" }} />
-        <div className="text-sm text-secondary">
-          После подтверждения распознанные поля появятся в анкете. Уже заполненные вами
-          вручную поля <strong className="text-primary">не будут перезаписаны</strong>.
-          Вы сможете отредактировать любое поле в следующих шагах.
-        </div>
-      </div>
-
-      {/* Кнопки */}
+      {/* === Кнопки === */}
       <div
         className="mt-8 pt-6 border-t border-tertiary flex flex-col sm:flex-row gap-3 justify-between"
         style={{ borderTopWidth: 0.5 }}
       >
         <button
           onClick={onBack}
-          className="px-5 py-2.5 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary transition-colors"
+          disabled={submitting}
+          className="px-5 py-2.5 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
           style={{ borderWidth: 0.5 }}
         >
           ← Назад к загрузке
         </button>
 
         <button
-          onClick={onConfirm}
-          disabled={ocrDoneDocs.length === 0}
+          onClick={handleConfirm}
+          disabled={submitting}
           className="px-5 py-2.5 rounded-md text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           style={{ background: "var(--color-accent)" }}
         >
-          <CheckCircle2 className="w-4 h-4" />
-          Подтвердить и заполнить анкету →
+          {submitting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Применяем...
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="w-4 h-4" />
+              {totalChanges === 0
+                ? "Продолжить →"
+                : `Применить (${totalChanges}) и продолжить →`}
+            </>
+          )}
         </button>
       </div>
     </div>
   );
 }
 
+const DOC_SECTION_TITLES: Record<ClientDocumentType, string> = {
+  passport_internal_main: "Паспорт РФ — главная",
+  passport_internal_address: "Паспорт РФ — прописка",
+  passport_foreign: "Загранпаспорт",
+  diploma_main: "Диплом",
+  diploma_apostille: "Апостиль",
+  other: "Другое",
+};
+
 // =============================================================================
-// DocumentSlot — слот для одного типа документа
+// DocumentSlot
 // =============================================================================
 
 interface DocumentSlotProps {
@@ -591,7 +782,7 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
       "application/pdf",
     ];
     if (!allowedTypes.includes(file.type)) {
-      setLocalError(`Неподдерживаемый формат: ${file.type}. Нужен JPEG, PNG или PDF.`);
+      setLocalError(`Неподдерживаемый формат: ${file.type}.`);
       return;
     }
 
@@ -628,12 +819,10 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     if (file) handleFile(file);
   }
 
-  // Документ загружен — показываем превью + статус OCR
   if (doc) {
     const isImage = doc.content_type.startsWith("image/");
     const fileSizeKB = Math.round(doc.file_size / 1024);
 
-    // Статус OCR
     let statusBadge: React.ReactNode = null;
     if (isRecognizing || doc.status === "ocr_pending") {
       statusBadge = (
@@ -734,7 +923,6 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     );
   }
 
-  // Документа нет — зона загрузки
   return (
     <div
       className="rounded-lg border-dashed p-4 transition-colors"

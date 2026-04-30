@@ -2,10 +2,10 @@
  * Pack 8.7 — добавлены:
  * - patchApplication(): partial-update заявки
  * - CRUD endpoints для справочников
- * - Расширенные типы CompanyResponse / PositionResponse и т.д.
  *
- * Pack 13.0b — добавлены типы и функции для документов клиента
- * Pack 13.1 — улучшен recognizeDocument + новая applyDocumentsToApplicant
+ * Pack 13.0b — типы и функции для документов клиента
+ * Pack 13.1 — реальный OCR
+ * Pack 13.1.1 — preview-apply с конфликтами + overrides
  */
 
 export const API_BASE_URL =
@@ -77,7 +77,6 @@ export type ApplicationResponse = {
   applicant_name_latin?: string;
 };
 
-// Pack 13: типы документов клиента
 export type ClientDocumentType =
   | "passport_internal_main"
   | "passport_internal_address"
@@ -105,6 +104,38 @@ export type ClientDocument = {
   applied_to_applicant: boolean;
   created_at: string;
   download_url?: string;
+};
+
+// Pack 13.1.1: типы для preview-apply
+export type ApplyPreviewItem = {
+  field: string;
+  ocr_value?: any;
+  current_value?: any;
+  value?: any;
+};
+
+export type ApplyEducationInfo =
+  | {
+      type: "auto_fill";
+      ocr_value: Record<string, any>;
+    }
+  | {
+      type: "conflict";
+      current_value: Record<string, any>;
+      ocr_value: Record<string, any>;
+      current_count: number;
+    };
+
+export type ApplyPreview = {
+  auto_fill: ApplyPreviewItem[];
+  conflicts: ApplyPreviewItem[];
+  same: ApplyPreviewItem[];
+  education: ApplyEducationInfo | null;
+};
+
+export type ApplyOptions = {
+  overrides?: string[];
+  education_action?: "auto" | "skip" | "replace" | "add";
 };
 
 export type CompanyResponse = {
@@ -332,12 +363,6 @@ export async function deleteDocument(
   }
 }
 
-/**
- * Pack 13.1: реальный OCR через LLM Vision.
- *
- * Возвращает обновлённый документ. Endpoint может вернуть документ со статусом
- * "ocr_failed" — это НЕ ошибка функции, проверяй doc.status в результате.
- */
 export async function recognizeDocument(
   token: string,
   docId: number,
@@ -359,16 +384,45 @@ export async function recognizeDocument(
 }
 
 /**
- * Pack 13.1: применить распознанные данные из всех документов к анкете.
- *
- * Только пустые поля заполняются — уже введённые клиентом не перезаписываются.
- *
+ * Pack 13.1.1: предпросмотр применения OCR данных.
  * Возвращает:
- *   - applied_fields: какие поля были заполнены
- *   - applicant: обновлённый профиль
+ * - auto_fill: поля будут заполнены автоматически (были пустые)
+ * - conflicts: поля с конфликтом — клиент должен выбрать
+ * - same: поля совпадают
+ * - education: отдельная инфо о дипломе
+ */
+export async function previewApplyDocuments(
+  token: string,
+): Promise<ApplyPreview> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/client/${token}/documents/preview-apply`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Не удалось подготовить предпросмотр (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
+  }
+  return res.json();
+}
+
+/**
+ * Pack 13.1.1: применить распознанные данные с опциональными overrides.
+ *
+ * options.overrides — список полей которые ТОЧНО перезаписать (конфликты)
+ * options.education_action — что делать с образованием:
+ *   "auto" (default) — добавить если пусто, иначе пропустить
+ *   "replace" — заменить весь список одной записью из диплома
+ *   "add" — добавить запись в существующий список
+ *   "skip" — не трогать
  */
 export async function applyDocumentsToApplicant(
   token: string,
+  options?: ApplyOptions,
 ): Promise<{
   applied_fields: string[];
   applicant?: ApplicantResponse;
@@ -376,7 +430,11 @@ export async function applyDocumentsToApplicant(
 }> {
   const res = await fetch(
     `${API_BASE_URL}/api/client/${token}/documents/apply-to-applicant`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options || {}),
+    },
   );
   if (!res.ok) {
     const errText = await res.text();
@@ -742,4 +800,22 @@ export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
   diploma_main: "Диплом — основная страница",
   diploma_apostille: "Диплом — апостиль",
   other: "Другой документ",
+};
+
+// Pack 13.1.1: метки для конфликт-полей в Review
+export const FIELD_LABELS: Record<string, string> = {
+  last_name_native: "Фамилия (рус)",
+  first_name_native: "Имя (рус)",
+  middle_name_native: "Отчество",
+  last_name_latin: "Фамилия (лат)",
+  first_name_latin: "Имя (лат)",
+  birth_date: "Дата рождения",
+  birth_place_latin: "Место рождения (лат)",
+  nationality: "Гражданство",
+  sex: "Пол",
+  passport_number: "Номер паспорта",
+  passport_issue_date: "Дата выдачи паспорта",
+  passport_issuer: "Кем выдан",
+  home_address: "Адрес регистрации",
+  home_country: "Страна",
 };

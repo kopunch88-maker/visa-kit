@@ -3,16 +3,18 @@ Client portal — эндпоинты для самого клиента.
 
 Авторизация — по токену в URL.
 
-Pack 13.1: реальный OCR через LLM Vision + endpoint apply-to-applicant.
+Pack 13.1.1: добавлен preview-apply (показ конфликтов) и overrides в apply-to-applicant
+для гранулярного контроля что заменять, а что нет.
 """
 
 import logging
+import re
 import time
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, date
+from typing import Optional, List, Any
 from pathlib import Path as PathLib
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from sqlmodel import Session, select
 
 from app.db.session import get_session
@@ -37,8 +39,8 @@ router = APIRouter(prefix="/client", tags=["client-portal"])
 # Helpers
 # ============================================================================
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 МБ
-MIN_FILE_SIZE = 100 * 1024  # 100 КБ
+MAX_FILE_SIZE = 10 * 1024 * 1024
+MIN_FILE_SIZE = 100 * 1024
 
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
@@ -114,7 +116,7 @@ def _enrich_document(doc: ApplicantDocument) -> dict:
 
 
 # ============================================================================
-# Profile (Applicant)
+# Profile endpoints (no changes)
 # ============================================================================
 
 @router.get("/{token}/me")
@@ -190,19 +192,17 @@ def get_my_application(token: str, session: Session = Depends(get_session)):
 
 
 # ============================================================================
-# Pack 13: Documents
+# Documents
 # ============================================================================
 
 @router.get("/{token}/documents")
 def list_my_documents(token: str, session: Session = Depends(get_session)):
     application = _get_application_by_token(token, session)
-
     docs = session.exec(
         select(ApplicantDocument)
         .where(ApplicantDocument.application_id == application.id)
         .order_by(ApplicantDocument.created_at.desc())
     ).all()
-
     return [_enrich_document(d) for d in docs]
 
 
@@ -316,7 +316,7 @@ def delete_document(
 
 
 # ============================================================================
-# Pack 13.1: Real OCR
+# OCR
 # ============================================================================
 
 @router.post("/{token}/documents/{doc_id}/recognize")
@@ -325,18 +325,12 @@ async def recognize_one_document(
     doc_id: int,
     session: Session = Depends(get_session),
 ):
-    """
-    Запустить OCR для одного документа.
-
-    Возвращает обновлённый документ с parsed_data или с ocr_error.
-    """
     application = _get_application_by_token(token, session)
 
     doc = session.get(ApplicantDocument, doc_id)
     if not doc or doc.application_id != application.id:
         raise HTTPException(404, "Document not found")
 
-    # Для diploma_apostille — OCR не нужен, но мы возвращаем 200 с пустым parsed_data
     if doc.doc_type == ApplicantDocumentType.DIPLOMA_APOSTILLE:
         doc.status = ApplicantDocumentStatus.OCR_DONE
         doc.parsed_data = {}
@@ -347,13 +341,11 @@ async def recognize_one_document(
         session.refresh(doc)
         return _enrich_document(doc)
 
-    # Помечаем что OCR в процессе (на случай если клиент сразу обновит список)
     doc.status = ApplicantDocumentStatus.OCR_PENDING
     doc.ocr_error = None
     session.add(doc)
     session.commit()
 
-    # Загружаем файл из storage
     storage = get_storage()
     try:
         image_bytes = storage.read(doc.storage_key)
@@ -366,7 +358,6 @@ async def recognize_one_document(
         session.refresh(doc)
         return _enrich_document(doc)
 
-    # Вызываем OCR
     try:
         parsed = await recognize_document(
             doc_type=doc.doc_type.value,
@@ -395,23 +386,84 @@ async def recognize_one_document(
     return _enrich_document(doc)
 
 
-def _merge_parsed_to_applicant_data(
-    documents: List[ApplicantDocument],
-    existing: Optional[Applicant],
-) -> dict:
-    """
-    Объединяет parsed_data из всех документов в единый dict для ApplicantData.
+# ============================================================================
+# Field-by-field comparison helpers
+# ============================================================================
 
-    Логика приоритета:
-    - Поле уже заполнено в existing (НЕ пустое) → НЕ перезаписываем
-    - Поле пустое → берём из parsed_data
-    - Если несколько документов дают одно поле → приоритет:
-      passport_internal_main > passport_foreign > passport_internal_address > diploma
-      (ФИО кириллицей лучше извлекать из российского паспорта)
+# Поля которые из OCR применяются к Applicant (плоские, не education)
+FLAT_OCR_FIELDS = [
+    "last_name_native",
+    "first_name_native",
+    "middle_name_native",
+    "last_name_latin",
+    "first_name_latin",
+    "birth_date",
+    "birth_place_latin",
+    "nationality",
+    "sex",
+    "passport_number",
+    "passport_issue_date",
+    "passport_issuer",
+    "home_address",
+    "home_country",
+]
 
-    Возвращает dict для подачи в ApplicantUpdate.
+
+def _is_empty(value) -> bool:
+    """True если поле считается пустым (нет, "", "   ", None)."""
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    return False
+
+
+def _normalize_for_compare(field: str, value) -> str:
     """
-    # Сортируем документы по приоритету
+    Нормализует значение поля для сравнения.
+
+    - ФИО, имена: lowercase + trim (Иванов = ИВАНОВ = иванов)
+    - Номера: только цифры
+    - Даты: ISO YYYY-MM-DD
+    - Прочее: trim
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+
+    # Поля имён — case insensitive
+    if field in (
+        "last_name_native", "first_name_native", "middle_name_native",
+        "last_name_latin", "first_name_latin",
+        "birth_place_latin", "passport_issuer",
+        "home_address",
+    ):
+        return s.lower()
+
+    # Поля номеров — только цифры
+    if field in ("passport_number", "passport_series"):
+        return re.sub(r"\D", "", s)
+
+    # Прочее — как есть, но trim
+    return s
+
+
+def _values_match(field: str, current, ocr) -> bool:
+    """Проверяет — совпадают ли текущее и распознанное значение."""
+    if _is_empty(current) and _is_empty(ocr):
+        return True
+    if _is_empty(current) or _is_empty(ocr):
+        return False
+    return _normalize_for_compare(field, current) == _normalize_for_compare(field, ocr)
+
+
+def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
+    """
+    Собирает все распознанные плоские поля из всех документов в один dict.
+
+    Приоритет (если поле есть в нескольких документах):
+    passport_internal_main > passport_foreign > passport_internal_address > diploma
+    """
     priority = {
         ApplicantDocumentType.PASSPORT_INTERNAL_MAIN: 1,
         ApplicantDocumentType.PASSPORT_FOREIGN: 2,
@@ -422,24 +474,7 @@ def _merge_parsed_to_applicant_data(
     }
     sorted_docs = sorted(documents, key=lambda d: priority.get(d.doc_type, 99))
 
-    # Собираем результат
     result = {}
-
-    def _set_if_empty(field: str, value):
-        """Устанавливает поле если его ещё нет в result И в existing оно пустое."""
-        if value is None or value == "":
-            return
-        if field in result:
-            return  # уже взяли из более приоритетного документа
-        # Проверка existing
-        if existing is not None:
-            existing_value = getattr(existing, field, None)
-            if existing_value:  # уже заполнено клиентом — не трогаем
-                return
-        result[field] = value
-
-    # Education — отдельно (это список, а не плоское поле)
-    education_record = None
 
     for doc in sorted_docs:
         if doc.status != ApplicantDocumentStatus.OCR_DONE:
@@ -448,68 +483,188 @@ def _merge_parsed_to_applicant_data(
         if not p:
             continue
 
-        # Российский паспорт — главная
         if doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_MAIN:
-            _set_if_empty("last_name_native", p.get("last_name_native"))
-            _set_if_empty("first_name_native", p.get("first_name_native"))
-            _set_if_empty("middle_name_native", p.get("middle_name_native"))
-            _set_if_empty("birth_date", p.get("birth_date"))
-            _set_if_empty("sex", p.get("sex"))
-            # nationality — для РФ паспорта по умолчанию RUS
-            if not result.get("nationality") and (existing is None or not existing.nationality):
+            for f in ["last_name_native", "first_name_native", "middle_name_native",
+                      "birth_date", "sex"]:
+                if f not in result and not _is_empty(p.get(f)):
+                    result[f] = p[f]
+            # nationality / home_country по умолчанию RUS
+            if "nationality" not in result:
                 result["nationality"] = "RUS"
-            if not result.get("home_country") and (existing is None or not existing.home_country):
+            if "home_country" not in result:
                 result["home_country"] = "RUS"
 
-        # Российский паспорт — прописка
         elif doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS:
-            _set_if_empty("home_address", p.get("registration_address"))
+            if "home_address" not in result and not _is_empty(p.get("registration_address")):
+                result["home_address"] = p["registration_address"]
 
-        # Загранпаспорт
         elif doc.doc_type == ApplicantDocumentType.PASSPORT_FOREIGN:
-            _set_if_empty("last_name_latin", p.get("last_name_latin"))
-            _set_if_empty("first_name_latin", p.get("first_name_latin"))
-            _set_if_empty("birth_place_latin", p.get("birth_place_latin"))
-            _set_if_empty("passport_number", p.get("passport_number"))
-            _set_if_empty("passport_issue_date", p.get("passport_issue_date"))
-            _set_if_empty("passport_issuer", p.get("passport_issuer"))
-            _set_if_empty("nationality", p.get("nationality"))
-            # ФИО кириллицей — из загранпаспорта если ещё нет (на всякий случай)
-            _set_if_empty("last_name_native", p.get("last_name_native"))
-            _set_if_empty("first_name_native", p.get("first_name_native"))
-            _set_if_empty("birth_date", p.get("birth_date"))
-            _set_if_empty("sex", p.get("sex"))
-
-        # Диплом
-        elif doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN:
-            if education_record is None:
-                education_record = {
-                    "institution": p.get("institution"),
-                    "graduation_year": p.get("graduation_year"),
-                    "degree": p.get("degree"),
-                    "specialty": p.get("specialty"),
-                }
-                # Только если в existing нет education — добавляем
-                if existing is None or not existing.education:
-                    # Очистим None-поля
-                    cleaned = {k: v for k, v in education_record.items() if v}
-                    if cleaned:
-                        result["education"] = [cleaned]
+            for src_field, dst_field in [
+                ("last_name_latin", "last_name_latin"),
+                ("first_name_latin", "first_name_latin"),
+                ("birth_place_latin", "birth_place_latin"),
+                ("passport_number", "passport_number"),
+                ("passport_issue_date", "passport_issue_date"),
+                ("passport_issuer", "passport_issuer"),
+                ("nationality", "nationality"),
+                ("last_name_native", "last_name_native"),
+                ("first_name_native", "first_name_native"),
+                ("birth_date", "birth_date"),
+                ("sex", "sex"),
+            ]:
+                if dst_field not in result and not _is_empty(p.get(src_field)):
+                    result[dst_field] = p[src_field]
 
     return result
 
 
+def _build_education_from_diploma(documents: List[ApplicantDocument]) -> Optional[dict]:
+    """Строит запись education из диплома, если он распознан."""
+    for doc in documents:
+        if (doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN
+                and doc.status == ApplicantDocumentStatus.OCR_DONE):
+            p = doc.parsed_data or {}
+            if not p:
+                continue
+            record = {
+                "institution": p.get("institution"),
+                "graduation_year": p.get("graduation_year"),
+                "degree": p.get("degree"),
+                "specialty": p.get("specialty"),
+            }
+            cleaned = {k: v for k, v in record.items() if not _is_empty(v)}
+            if cleaned:
+                return cleaned
+    return None
+
+
+# ============================================================================
+# Pack 13.1.1: Preview apply (показ конфликтов)
+# ============================================================================
+
+@router.post("/{token}/documents/preview-apply")
+def preview_apply(
+    token: str,
+    session: Session = Depends(get_session),
+):
+    """
+    Возвращает план применения OCR-данных к Applicant.
+
+    Не делает изменений — только показывает что будет:
+    - auto_fill: поля пустые у клиента, будут заполнены распознанным
+    - conflicts: поля заполнены клиентом, и распознанное отличается — нужно решение
+    - same: поля совпадают (просто уведомление)
+    - education: отдельно — есть ли что добавить и есть ли конфликт
+
+    Frontend использует это чтобы показать UI выбора.
+    """
+    application = _get_application_by_token(token, session)
+
+    docs = session.exec(
+        select(ApplicantDocument)
+        .where(ApplicantDocument.application_id == application.id)
+        .where(ApplicantDocument.status == ApplicantDocumentStatus.OCR_DONE)
+    ).all()
+
+    if not docs:
+        return {
+            "auto_fill": [],
+            "conflicts": [],
+            "same": [],
+            "education": None,
+        }
+
+    existing = None
+    if application.applicant_id:
+        existing = session.get(Applicant, application.applicant_id)
+
+    ocr_data = _collect_ocr_data(docs)
+
+    auto_fill = []
+    conflicts = []
+    same = []
+
+    for field in FLAT_OCR_FIELDS:
+        ocr_value = ocr_data.get(field)
+        current_value = getattr(existing, field, None) if existing else None
+
+        if _is_empty(ocr_value):
+            continue  # OCR ничего не вернул — пропускаем
+
+        if _is_empty(current_value):
+            # Поле пустое — auto_fill
+            auto_fill.append({
+                "field": field,
+                "ocr_value": ocr_value,
+            })
+        elif _values_match(field, current_value, ocr_value):
+            # Совпадает — пропускаем
+            same.append({
+                "field": field,
+                "value": current_value,
+            })
+        else:
+            # Конфликт — нужно решение клиента
+            conflicts.append({
+                "field": field,
+                "current_value": current_value,
+                "ocr_value": ocr_value,
+            })
+
+    # Education — отдельно
+    edu_record = _build_education_from_diploma(docs)
+    education_info = None
+    if edu_record:
+        existing_edu = (existing.education if existing else []) or []
+        if not existing_edu:
+            education_info = {
+                "type": "auto_fill",
+                "ocr_value": edu_record,
+            }
+        else:
+            # У клиента уже что-то есть — это конфликт (нужно спрашивать)
+            education_info = {
+                "type": "conflict",
+                "current_value": existing_edu[0],  # для отображения первая запись
+                "ocr_value": edu_record,
+                "current_count": len(existing_edu),
+            }
+
+    return {
+        "auto_fill": auto_fill,
+        "conflicts": conflicts,
+        "same": same,
+        "education": education_info,
+    }
+
+
+# ============================================================================
+# Pack 13.1.1: Apply with overrides
+# ============================================================================
+
 @router.post("/{token}/documents/apply-to-applicant")
 def apply_documents_to_applicant(
     token: str,
+    body: dict = Body(default={}),
     session: Session = Depends(get_session),
 ):
     """
     Применить распознанные данные из всех документов к Applicant.
 
-    Только пустые поля заполняются. Уже заполненные клиентом — не трогаются.
+    Body (опционально):
+    {
+        "overrides": ["field_name1", "field_name2"],   // поля которые ТОЧНО перезаписать
+        "education_action": "skip" | "replace" | "add" // что делать с education
+    }
+
+    По умолчанию (без body): только пустые поля заполняются.
+
+    Если поле в overrides — оно перезаписывается даже если уже заполнено.
     """
     application = _get_application_by_token(token, session)
+
+    overrides = set(body.get("overrides") or [])
+    education_action = body.get("education_action") or "auto"  # auto / skip / replace / add
 
     docs = session.exec(
         select(ApplicantDocument)
@@ -523,13 +678,41 @@ def apply_documents_to_applicant(
             "No recognized documents to apply. Run /recognize first."
         )
 
-    # Получить существующий applicant если есть
     existing = None
     if application.applicant_id:
         existing = session.get(Applicant, application.applicant_id)
 
-    # Собрать data из распознанных документов
-    update_data = _merge_parsed_to_applicant_data(docs, existing)
+    ocr_data = _collect_ocr_data(docs)
+
+    # Собираем update_data
+    update_data = {}
+
+    for field, ocr_value in ocr_data.items():
+        if _is_empty(ocr_value):
+            continue
+
+        current_value = getattr(existing, field, None) if existing else None
+
+        if _is_empty(current_value):
+            # Пустое → заполняем
+            update_data[field] = ocr_value
+        elif field in overrides:
+            # Клиент явно сказал перезаписать
+            update_data[field] = ocr_value
+        # else — оставляем как есть
+
+    # Education
+    edu_record = _build_education_from_diploma(docs)
+    if edu_record:
+        existing_edu = (existing.education if existing else []) or []
+        if not existing_edu:
+            # Пусто → добавляем
+            update_data["education"] = [edu_record]
+        elif education_action == "replace":
+            update_data["education"] = [edu_record]
+        elif education_action == "add":
+            update_data["education"] = list(existing_edu) + [edu_record]
+        # auto / skip — не трогаем существующее
 
     if not update_data:
         return {
@@ -537,9 +720,11 @@ def apply_documents_to_applicant(
             "message": "Nothing to apply (all fields already filled or no new data)",
         }
 
-    log.info(f"Applying OCR data to applicant: {list(update_data.keys())}")
+    log.info(
+        f"Applying OCR data to applicant: fields={list(update_data.keys())} "
+        f"overrides={overrides} education_action={education_action}"
+    )
 
-    # Применить
     if not application.applicant_id:
         try:
             applicant = Applicant(**update_data)
@@ -559,7 +744,6 @@ def apply_documents_to_applicant(
             setattr(applicant, key, value)
         session.add(applicant)
 
-    # Помечаем документы как применённые
     for d in docs:
         d.applied_to_applicant = True
         session.add(d)
