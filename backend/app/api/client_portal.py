@@ -3,8 +3,11 @@ Client portal — эндпоинты для самого клиента.
 
 Авторизация — по токену в URL.
 
-Pack 13.1.1: добавлен preview-apply (показ конфликтов) и overrides в apply-to-applicant
+Pack 13.1.1: preview-apply (показ конфликтов) и overrides в apply-to-applicant
 для гранулярного контроля что заменять, а что нет.
+
+Pack 13.1.2: автоматическая транслитерация *_native → *_latin при apply,
+если из загранпаспорта не пришли свои латинские (или клиент их не подтвердил).
 """
 
 import logging
@@ -29,6 +32,7 @@ from app.models.applicant_document import (
 )
 from app.services.storage import get_storage
 from app.services.ocr import recognize_document, OCRError
+from app.services.transliteration import transliterate_name
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +120,7 @@ def _enrich_document(doc: ApplicantDocument) -> dict:
 
 
 # ============================================================================
-# Profile endpoints (no changes)
+# Profile endpoints
 # ============================================================================
 
 @router.get("/{token}/me")
@@ -390,7 +394,6 @@ async def recognize_one_document(
 # Field-by-field comparison helpers
 # ============================================================================
 
-# Поля которые из OCR применяются к Applicant (плоские, не education)
 FLAT_OCR_FIELDS = [
     "last_name_native",
     "first_name_native",
@@ -410,7 +413,6 @@ FLAT_OCR_FIELDS = [
 
 
 def _is_empty(value) -> bool:
-    """True если поле считается пустым (нет, "", "   ", None)."""
     if value is None:
         return True
     if isinstance(value, str) and value.strip() == "":
@@ -419,19 +421,10 @@ def _is_empty(value) -> bool:
 
 
 def _normalize_for_compare(field: str, value) -> str:
-    """
-    Нормализует значение поля для сравнения.
-
-    - ФИО, имена: lowercase + trim (Иванов = ИВАНОВ = иванов)
-    - Номера: только цифры
-    - Даты: ISO YYYY-MM-DD
-    - Прочее: trim
-    """
     if value is None:
         return ""
     s = str(value).strip()
 
-    # Поля имён — case insensitive
     if field in (
         "last_name_native", "first_name_native", "middle_name_native",
         "last_name_latin", "first_name_latin",
@@ -440,16 +433,13 @@ def _normalize_for_compare(field: str, value) -> str:
     ):
         return s.lower()
 
-    # Поля номеров — только цифры
     if field in ("passport_number", "passport_series"):
         return re.sub(r"\D", "", s)
 
-    # Прочее — как есть, но trim
     return s
 
 
 def _values_match(field: str, current, ocr) -> bool:
-    """Проверяет — совпадают ли текущее и распознанное значение."""
     if _is_empty(current) and _is_empty(ocr):
         return True
     if _is_empty(current) or _is_empty(ocr):
@@ -461,8 +451,8 @@ def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
     """
     Собирает все распознанные плоские поля из всех документов в один dict.
 
-    Приоритет (если поле есть в нескольких документах):
-    passport_internal_main > passport_foreign > passport_internal_address > diploma
+    Также помечает - откуда пришли latin поля, чтобы знать когда нужен
+    автотранслит, а когда есть авторитетный источник (загранпаспорт).
     """
     priority = {
         ApplicantDocumentType.PASSPORT_INTERNAL_MAIN: 1,
@@ -488,7 +478,6 @@ def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
                       "birth_date", "sex"]:
                 if f not in result and not _is_empty(p.get(f)):
                     result[f] = p[f]
-            # nationality / home_country по умолчанию RUS
             if "nationality" not in result:
                 result["nationality"] = "RUS"
             if "home_country" not in result:
@@ -518,8 +507,17 @@ def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
     return result
 
 
+def _has_foreign_passport_done(documents: List[ApplicantDocument]) -> bool:
+    """True если загранпаспорт распознан (есть авторитетный источник латиницы)."""
+    for d in documents:
+        if (d.doc_type == ApplicantDocumentType.PASSPORT_FOREIGN
+                and d.status == ApplicantDocumentStatus.OCR_DONE
+                and d.parsed_data):
+            return True
+    return False
+
+
 def _build_education_from_diploma(documents: List[ApplicantDocument]) -> Optional[dict]:
-    """Строит запись education из диплома, если он распознан."""
     for doc in documents:
         if (doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN
                 and doc.status == ApplicantDocumentStatus.OCR_DONE):
@@ -539,7 +537,7 @@ def _build_education_from_diploma(documents: List[ApplicantDocument]) -> Optiona
 
 
 # ============================================================================
-# Pack 13.1.1: Preview apply (показ конфликтов)
+# Pack 13.1.1: Preview apply
 # ============================================================================
 
 @router.post("/{token}/documents/preview-apply")
@@ -547,17 +545,6 @@ def preview_apply(
     token: str,
     session: Session = Depends(get_session),
 ):
-    """
-    Возвращает план применения OCR-данных к Applicant.
-
-    Не делает изменений — только показывает что будет:
-    - auto_fill: поля пустые у клиента, будут заполнены распознанным
-    - conflicts: поля заполнены клиентом, и распознанное отличается — нужно решение
-    - same: поля совпадают (просто уведомление)
-    - education: отдельно — есть ли что добавить и есть ли конфликт
-
-    Frontend использует это чтобы показать UI выбора.
-    """
     application = _get_application_by_token(token, session)
 
     docs = session.exec(
@@ -589,29 +576,25 @@ def preview_apply(
         current_value = getattr(existing, field, None) if existing else None
 
         if _is_empty(ocr_value):
-            continue  # OCR ничего не вернул — пропускаем
+            continue
 
         if _is_empty(current_value):
-            # Поле пустое — auto_fill
             auto_fill.append({
                 "field": field,
                 "ocr_value": ocr_value,
             })
         elif _values_match(field, current_value, ocr_value):
-            # Совпадает — пропускаем
             same.append({
                 "field": field,
                 "value": current_value,
             })
         else:
-            # Конфликт — нужно решение клиента
             conflicts.append({
                 "field": field,
                 "current_value": current_value,
                 "ocr_value": ocr_value,
             })
 
-    # Education — отдельно
     edu_record = _build_education_from_diploma(docs)
     education_info = None
     if edu_record:
@@ -622,10 +605,9 @@ def preview_apply(
                 "ocr_value": edu_record,
             }
         else:
-            # У клиента уже что-то есть — это конфликт (нужно спрашивать)
             education_info = {
                 "type": "conflict",
-                "current_value": existing_edu[0],  # для отображения первая запись
+                "current_value": existing_edu[0],
                 "ocr_value": edu_record,
                 "current_count": len(existing_edu),
             }
@@ -639,7 +621,7 @@ def preview_apply(
 
 
 # ============================================================================
-# Pack 13.1.1: Apply with overrides
+# Pack 13.1.2: Apply with overrides + auto-transliteration
 # ============================================================================
 
 @router.post("/{token}/documents/apply-to-applicant")
@@ -653,18 +635,26 @@ def apply_documents_to_applicant(
 
     Body (опционально):
     {
-        "overrides": ["field_name1", "field_name2"],   // поля которые ТОЧНО перезаписать
-        "education_action": "skip" | "replace" | "add" // что делать с education
+        "overrides": ["field_name1", ...],         // поля которые ТОЧНО перезаписать
+        "education_action": "skip"|"replace"|"add" // что делать с education
     }
 
-    По умолчанию (без body): только пустые поля заполняются.
+    Pack 13.1.2: после применения изменений в *_native полях автоматически
+    обновляются *_latin через ГОСТ-транслитерацию, если:
+    - latin поле обновлять не нужно (загранпаспорт сам его обновил с авторитетным значением)
+    - И: native поле было обновлено (не осталось как было)
+    - И: текущее latin не выглядит как ручной ввод клиента (дальше — эвристика)
 
-    Если поле в overrides — оно перезаписывается даже если уже заполнено.
+    Точный алгоритм:
+    1. Собираем update_data как обычно (с учётом overrides)
+    2. ПЕРЕД сохранением: для last_name_native и first_name_native проверяем —
+       если поле обновляется и в update_data НЕТ соответствующего latin от загранпаспорта —
+       генерируем latin через транслитерацию и добавляем в update_data
     """
     application = _get_application_by_token(token, session)
 
     overrides = set(body.get("overrides") or [])
-    education_action = body.get("education_action") or "auto"  # auto / skip / replace / add
+    education_action = body.get("education_action") or "auto"
 
     docs = session.exec(
         select(ApplicantDocument)
@@ -684,7 +674,7 @@ def apply_documents_to_applicant(
 
     ocr_data = _collect_ocr_data(docs)
 
-    # Собираем update_data
+    # Шаг 1. Собираем плоские update_data
     update_data = {}
 
     for field, ocr_value in ocr_data.items():
@@ -694,25 +684,57 @@ def apply_documents_to_applicant(
         current_value = getattr(existing, field, None) if existing else None
 
         if _is_empty(current_value):
-            # Пустое → заполняем
             update_data[field] = ocr_value
         elif field in overrides:
-            # Клиент явно сказал перезаписать
             update_data[field] = ocr_value
-        # else — оставляем как есть
 
-    # Education
+    # Шаг 2. Pack 13.1.2 — автоматическая транслитерация ФИО
+    # После того как мы применили все изменения native + latin из OCR,
+    # проверяем — есть ли native которое поменялось без соответствующего latin.
+    # Если да → транслитерируем.
+
+    NATIVE_TO_LATIN_PAIRS = [
+        ("last_name_native", "last_name_latin"),
+        ("first_name_native", "first_name_latin"),
+    ]
+
+    for native_field, latin_field in NATIVE_TO_LATIN_PAIRS:
+        # native_field обновляется в этом запросе?
+        native_will_change = native_field in update_data
+
+        # latin_field уже задан в update_data (например из загранпаспорта)?
+        latin_will_change = latin_field in update_data
+
+        # Если меняется native и при этом latin ИЗ OCR не пришёл — транслитерируем
+        if native_will_change and not latin_will_change:
+            new_native = update_data[native_field]
+            if not _is_empty(new_native):
+                generated_latin = transliterate_name(new_native)
+
+                # Текущее значение latin (что сейчас в БД)
+                current_latin = getattr(existing, latin_field, None) if existing else None
+
+                # Перезаписываем latin если:
+                # - текущее latin пустое (никакого риска затереть ручной ввод), ИЛИ
+                # - native_field попало в overrides (клиент явно сказал заменить)
+                # Иначе — оставляем текущее latin как есть (клиент мог его править вручную)
+                if _is_empty(current_latin):
+                    update_data[latin_field] = generated_latin
+                elif native_field in overrides:
+                    update_data[latin_field] = generated_latin
+                # else: native поменялся через auto_fill (был пустой),
+                # но latin был непустой — оставляем что есть
+
+    # Шаг 3. Education
     edu_record = _build_education_from_diploma(docs)
     if edu_record:
         existing_edu = (existing.education if existing else []) or []
         if not existing_edu:
-            # Пусто → добавляем
             update_data["education"] = [edu_record]
         elif education_action == "replace":
             update_data["education"] = [edu_record]
         elif education_action == "add":
             update_data["education"] = list(existing_edu) + [edu_record]
-        # auto / skip — не трогаем существующее
 
     if not update_data:
         return {
