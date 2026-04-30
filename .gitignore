@@ -23,10 +23,9 @@ dev.db
 prod.db
 
 # === Storage (загруженные/сгенерированные файлы) ===
-storage/
-backend/storage/
+/storage/
+/backend/storage/
 uploads/
-
 # === Environment variables ===
 .env
 .env.local
