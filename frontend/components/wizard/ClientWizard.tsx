@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Moon, Sun, Lock, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Loader2, Moon, Sun, Lock } from "lucide-react";
 import { StepPersonalInfo } from "./StepPersonalInfo";
 import { StepPassport } from "./StepPassport";
 import { StepAddress } from "./StepAddress";
@@ -16,13 +16,14 @@ import {
   STATUS_LABELS,
 } from "@/lib/api";
 
+// Pack 13.0b: новый Шаг 0 «Документы» в начале
 const STEPS = [
+  { id: "docs", title: "Документы", subtitle: "Сканы паспортов и диплома (опционально)" },
   { id: "personal", title: "Личные данные", subtitle: "ФИО, дата рождения" },
   { id: "passport", title: "Паспорт", subtitle: "Номер, родители, ИНН" },
   { id: "address", title: "Адрес и контакты", subtitle: "Где живёте, как связаться" },
   { id: "education", title: "Образование", subtitle: "Учебные заведения" },
   { id: "work", title: "Опыт работы", subtitle: "Для резюме на испанском" },
-  { id: "docs", title: "Документы", subtitle: "Сканы паспорта, дипломов" },
 ];
 
 interface Props {
@@ -42,7 +43,6 @@ export function ClientWizard({ token }: Props) {
   const [appStatus, setAppStatus] = useState<string>("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
-  // Refs для скролла к шагу на мобильном
   const stepRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
@@ -60,12 +60,15 @@ export function ClientWizard({ token }: Props) {
         if (!mounted) return;
         if (profile) {
           setData(profile);
+          // Восстанавливаем какие шаги были пройдены раньше
+          // Pack 13: Шаг 0 — Документы, отдельная логика (проверка не через profile, опускаем для простоты)
+          // Шаги 1-5 — обычные данные
           const completed = new Set<number>();
-          if (profile.last_name_native && profile.first_name_native) completed.add(0);
-          if (profile.passport_number) completed.add(1);
-          if (profile.home_address && profile.email) completed.add(2);
-          if (profile.education && profile.education.length > 0) completed.add(3);
-          if (profile.work_history && profile.work_history.length > 0) completed.add(4);
+          if (profile.last_name_native && profile.first_name_native) completed.add(1);
+          if (profile.passport_number) completed.add(2);
+          if (profile.home_address && profile.email) completed.add(3);
+          if (profile.education && profile.education.length > 0) completed.add(4);
+          if (profile.work_history && profile.work_history.length > 0) completed.add(5);
           setCompletedSteps(completed);
           if (completed.size > 0) {
             const maxCompleted = Math.max(...Array.from(completed));
@@ -91,6 +94,12 @@ export function ClientWizard({ token }: Props) {
   }
 
   async function saveProgress() {
+    // Шаг 0 — Документы — нет данных Applicant'а для сохранения
+    if (currentStep === 0) {
+      setCompletedSteps((prev) => new Set([...prev, 0]));
+      return true;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -107,21 +116,18 @@ export function ClientWizard({ token }: Props) {
     }
   }
 
-  function isMobile() {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(max-width: 767px)").matches;
-  }
-
   function scrollToStep(idx: number) {
-    if (isMobile()) {
+    if (typeof window !== "undefined" && window.innerWidth >= 768) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    setTimeout(() => {
       const el = stepRefs.current[idx];
       if (el) {
-        const top = el.getBoundingClientRect().top + window.scrollY - 12;
+        const top = el.getBoundingClientRect().top + window.scrollY - 80;
         window.scrollTo({ top, behavior: "smooth" });
       }
-    } else {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    }, 50);
   }
 
   async function handleStepClick(idx: number) {
@@ -129,19 +135,79 @@ export function ClientWizard({ token }: Props) {
     if (idx > maxReachedStep) return;
     await saveProgress();
     setCurrentStep(idx);
-    requestAnimationFrame(() => scrollToStep(idx));
+    scrollToStep(idx);
   }
 
   async function handleNext() {
     const ok = await saveProgress();
     if (!ok) return;
-
     if (currentStep >= STEPS.length - 1) return;
-
     const nextStep = currentStep + 1;
     setMaxReachedStep((prev) => Math.max(prev, nextStep));
     setCurrentStep(nextStep);
-    requestAnimationFrame(() => scrollToStep(nextStep));
+    scrollToStep(nextStep);
+  }
+
+  // Из StepDocuments — переход к Шагу 1 (пропуск или после загрузки)
+  function handleDocumentsContinue() {
+    setCompletedSteps((prev) => new Set([...prev, 0]));
+    setMaxReachedStep((prev) => Math.max(prev, 1));
+    setCurrentStep(1);
+    scrollToStep(1);
+  }
+
+  function renderStepContent(idx: number) {
+    if (idx === 0) {
+      return (
+        <StepDocuments
+          token={token}
+          onSkip={handleDocumentsContinue}
+          onContinue={handleDocumentsContinue}
+        />
+      );
+    }
+    if (idx === 1) return <StepPersonalInfo data={data} onChange={updateData} />;
+    if (idx === 2) return <StepPassport data={data} onChange={updateData} />;
+    if (idx === 3) return <StepAddress data={data} onChange={updateData} />;
+    if (idx === 4) return <StepEducation data={data} onChange={updateData} />;
+    if (idx === 5) return <StepWorkHistory data={data} onChange={updateData} />;
+    return null;
+  }
+
+  function renderNavButtons() {
+    // Шаг 0 — Документы — у него СВОИ кнопки (Пропустить / Распознать) внутри компонента
+    if (currentStep === 0) return null;
+
+    return (
+      <div
+        className="mt-8 pt-6 border-t border-tertiary flex justify-between gap-3"
+        style={{ borderTopWidth: 0.5 }}
+      >
+        <button
+          onClick={() => handleStepClick(Math.max(0, currentStep - 1))}
+          disabled={currentStep === 0 || saving}
+          className="px-4 py-2 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={{ borderWidth: 0.5 }}
+        >
+          ← Назад
+        </button>
+
+        <button
+          onClick={handleNext}
+          disabled={saving}
+          className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          style={{ background: "var(--color-accent)" }}
+        >
+          {saving ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : currentStep === STEPS.length - 1 ? (
+            "Сохранить"
+          ) : (
+            "Продолжить →"
+          )}
+        </button>
+      </div>
+    );
   }
 
   if (loading) {
@@ -163,133 +229,12 @@ export function ClientWizard({ token }: Props) {
     );
   }
 
-  function renderStepContent(idx: number) {
-    if (idx === 0) return <StepPersonalInfo data={data} onChange={updateData} />;
-    if (idx === 1) return <StepPassport data={data} onChange={updateData} />;
-    if (idx === 2) return <StepAddress data={data} onChange={updateData} />;
-    if (idx === 3) return <StepEducation data={data} onChange={updateData} />;
-    if (idx === 4) return <StepWorkHistory data={data} onChange={updateData} />;
-    if (idx === 5) return <StepDocuments />;
-    return null;
-  }
-
-  function renderStepActions(idx: number) {
-    const isLast = idx === STEPS.length - 1;
-    return (
-      <div
-        className="mt-8 pt-6 border-t border-tertiary flex justify-between gap-3"
-        style={{ borderTopWidth: 0.5 }}
-      >
-        <button
-          onClick={() => handleStepClick(Math.max(0, idx - 1))}
-          disabled={idx === 0 || saving}
-          className="px-4 py-2 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          style={{ borderWidth: 0.5 }}
-        >
-          ← Назад
-        </button>
-
-        <button
-          onClick={handleNext}
-          disabled={saving}
-          className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          style={{ background: "var(--color-accent)" }}
-        >
-          {saving ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : isLast ? (
-            "Сохранить"
-          ) : (
-            "Продолжить →"
-          )}
-        </button>
-      </div>
-    );
-  }
-
-  function renderMobileStepHeader(idx: number) {
-    const isActive = idx === currentStep;
-    const isCompleted = completedSteps.has(idx);
-    const isLocked = idx > maxReachedStep;
-    const step = STEPS[idx];
-
-    return (
-      <button
-        onClick={() => handleStepClick(idx)}
-        disabled={isLocked}
-        className={`w-full text-left px-4 py-3 flex items-center gap-3 ${
-          isLocked
-            ? "cursor-not-allowed opacity-50"
-            : "cursor-pointer hover:bg-tertiary transition-colors"
-        } ${isActive ? "bg-secondary" : ""}`}
-        title={isLocked ? "Сначала пройдите предыдущие шаги" : undefined}
-      >
-        <div className="flex-shrink-0">
-          {isCompleted ? (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center"
-              style={{
-                background: "var(--color-text-success)",
-                color: "white",
-              }}
-            >
-              <Check className="w-4 h-4" />
-            </div>
-          ) : isActive ? (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-sm font-semibold text-white"
-              style={{ background: "var(--color-accent)" }}
-            >
-              {idx + 1}
-            </div>
-          ) : isLocked ? (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center"
-              style={{ color: "var(--color-text-tertiary)" }}
-            >
-              <Lock className="w-4 h-4" />
-            </div>
-          ) : (
-            <div
-              className="w-7 h-7 rounded-full border flex items-center justify-center text-sm font-medium"
-              style={{
-                borderColor: "var(--color-border-secondary)",
-                color: "var(--color-text-secondary)",
-              }}
-            >
-              {idx + 1}
-            </div>
-          )}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div
-            className={`text-sm font-semibold ${
-              isActive ? "text-primary" : "text-secondary"
-            }`}
-          >
-            {step.title}
-          </div>
-          <div className="text-xs text-tertiary mt-0.5 truncate">
-            {step.subtitle}
-          </div>
-        </div>
-        {!isLocked && (
-          <ChevronDown
-            className={`w-5 h-5 text-tertiary flex-shrink-0 transition-transform ${
-              isActive ? "rotate-180" : ""
-            }`}
-          />
-        )}
-      </button>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-tertiary py-4 md:py-6 px-3 md:px-4">
+    <div className="min-h-screen bg-tertiary py-4 px-3 md:py-6 md:px-4">
       <div className="max-w-5xl mx-auto">
         {/* Шапка */}
         <div
-          className="bg-primary rounded-xl border border-tertiary px-4 md:px-5 py-3 md:py-4 mb-3 md:mb-4 flex items-center justify-between gap-2"
+          className="bg-primary rounded-xl border border-tertiary px-4 py-3 md:px-5 md:py-4 mb-4 flex items-center justify-between gap-3"
           style={{ borderWidth: 0.5 }}
         >
           <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -299,7 +244,7 @@ export function ClientWizard({ token }: Props) {
             >
               V
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-primary truncate">
                 Visa kit · Digital nomad España
               </div>
@@ -309,10 +254,9 @@ export function ClientWizard({ token }: Props) {
             </div>
           </div>
 
-          {/* Кнопка темы — на мобильном только иконка */}
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="text-sm px-2 md:px-3 py-1.5 rounded-md border border-tertiary text-secondary hover:bg-secondary transition-colors flex items-center gap-2 flex-shrink-0"
+            className="text-sm px-2.5 py-1.5 md:px-3 rounded-md border border-tertiary text-secondary hover:bg-secondary transition-colors flex items-center gap-2 flex-shrink-0"
             style={{ borderWidth: 0.5 }}
             aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
           >
@@ -323,9 +267,25 @@ export function ClientWizard({ token }: Props) {
           </button>
         </div>
 
-        {/* DESKTOP LAYOUT (>=768px) — sidebar + одна форма. Скрыт на мобильном */}
+        {/* Статус сохранения — на мобильном тут */}
+        <div className="md:hidden mb-3 px-1 min-h-[18px]">
+          {saving && (
+            <div className="text-xs text-tertiary flex items-center gap-2">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Сохраняется...
+            </div>
+          )}
+          {savedAt && !saving && !error && (
+            <div className="text-xs text-success">
+              Сохранено в {savedAt.toLocaleTimeString("ru")}
+            </div>
+          )}
+          {error && <div className="text-xs text-danger">{error}</div>}
+        </div>
+
+        {/* === DESKTOP === */}
         <div
-          className="bg-primary rounded-xl border border-tertiary overflow-hidden hidden md:flex"
+          className="hidden md:flex bg-primary rounded-xl border border-tertiary overflow-hidden"
           style={{ borderWidth: 0.5, minHeight: "70vh" }}
         >
           <aside
@@ -358,7 +318,9 @@ export function ClientWizard({ token }: Props) {
                     }`}
                     style={
                       isActive
-                        ? { boxShadow: "0 0 0 1px var(--color-border-secondary)" }
+                        ? {
+                            boxShadow: "0 0 0 1px var(--color-border-secondary)",
+                          }
                         : {}
                     }
                     title={isLocked ? "Сначала пройдите предыдущие шаги" : undefined}
@@ -384,7 +346,9 @@ export function ClientWizard({ token }: Props) {
                       ) : isLocked ? (
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center"
-                          style={{ color: "var(--color-text-tertiary)" }}
+                          style={{
+                            color: "var(--color-text-tertiary)",
+                          }}
                         >
                           <Lock className="w-3 h-3" />
                         </div>
@@ -435,14 +399,17 @@ export function ClientWizard({ token }: Props) {
 
           <main className="flex-1 p-6 md:p-8 overflow-x-auto">
             {renderStepContent(currentStep)}
-            {renderStepActions(currentStep)}
+            {renderNavButtons()}
           </main>
         </div>
 
-        {/* MOBILE LAYOUT (<768px) — аккордеон. Скрыт на ПК */}
-        <div className="md:hidden space-y-2">
+        {/* === MOBILE — аккордеон === */}
+        <div className="md:hidden space-y-3">
           {STEPS.map((step, idx) => {
             const isActive = idx === currentStep;
+            const isCompleted = completedSteps.has(idx);
+            const isLocked = idx > maxReachedStep;
+
             return (
               <div
                 key={step.id}
@@ -450,37 +417,92 @@ export function ClientWizard({ token }: Props) {
                   stepRefs.current[idx] = el;
                 }}
                 className="bg-primary rounded-xl border border-tertiary overflow-hidden"
-                style={{ borderWidth: 0.5 }}
+                style={{
+                  borderWidth: 0.5,
+                  boxShadow: isActive
+                    ? "0 0 0 1px var(--color-border-secondary)"
+                    : undefined,
+                }}
               >
-                {renderMobileStepHeader(idx)}
+                <button
+                  onClick={() => handleStepClick(idx)}
+                  disabled={isLocked || isActive}
+                  className={`w-full text-left px-4 py-3.5 flex items-center gap-3 transition-colors ${
+                    isLocked
+                      ? "cursor-not-allowed opacity-50"
+                      : isActive
+                      ? "cursor-default"
+                      : "active:bg-secondary cursor-pointer"
+                  }`}
+                  title={isLocked ? "Сначала пройдите предыдущие шаги" : undefined}
+                >
+                  <div className="flex-shrink-0">
+                    {isCompleted && !isActive ? (
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center"
+                        style={{
+                          background: "var(--color-text-success)",
+                          color: "white",
+                        }}
+                      >
+                        <Check className="w-4 h-4" />
+                      </div>
+                    ) : isActive ? (
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-sm font-semibold text-white"
+                        style={{ background: "var(--color-accent)" }}
+                      >
+                        {idx + 1}
+                      </div>
+                    ) : isLocked ? (
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        <Lock className="w-4 h-4" />
+                      </div>
+                    ) : (
+                      <div
+                        className="w-7 h-7 rounded-full border flex items-center justify-center text-sm"
+                        style={{
+                          borderColor: "var(--color-border-secondary)",
+                          color: "var(--color-text-tertiary)",
+                        }}
+                      >
+                        {idx + 1}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className={`text-base font-medium ${
+                        isActive ? "text-primary" : "text-secondary"
+                      }`}
+                    >
+                      {step.title}
+                    </div>
+                    {!isActive && (
+                      <div className="text-xs text-tertiary mt-0.5">
+                        {step.subtitle}
+                      </div>
+                    )}
+                  </div>
+
+                  {!isActive && !isLocked && (
+                    <ChevronDown className="w-5 h-5 text-tertiary flex-shrink-0" />
+                  )}
+                </button>
 
                 {isActive && (
-                  <div
-                    className="px-4 py-4 border-t border-tertiary"
-                    style={{ borderTopWidth: 0.5 }}
-                  >
+                  <div className="px-4 pb-5 pt-1">
                     {renderStepContent(idx)}
-                    {renderStepActions(idx)}
+                    {renderNavButtons()}
                   </div>
                 )}
               </div>
             );
           })}
-
-          <div className="text-center mt-4 min-h-[20px]">
-            {saving && (
-              <div className="text-xs text-tertiary flex items-center justify-center gap-2">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Сохраняется...
-              </div>
-            )}
-            {savedAt && !saving && !error && (
-              <div className="text-xs text-success">
-                Сохранено в {savedAt.toLocaleTimeString("ru")}
-              </div>
-            )}
-            {error && <div className="text-xs text-danger">{error}</div>}
-          </div>
         </div>
 
         <div className="text-center text-xs text-tertiary mt-4">

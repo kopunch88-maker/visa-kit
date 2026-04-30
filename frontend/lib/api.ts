@@ -3,6 +3,10 @@
  * - patchApplication(): partial-update заявки
  * - CRUD endpoints для справочников
  * - Расширенные типы CompanyResponse / PositionResponse и т.д.
+ *
+ * Pack 13.0b — добавлены:
+ * - Типы ClientDocument / ClientDocumentType / ClientDocumentStatus
+ * - uploadDocument / getMyDocuments / deleteDocument / recognizeDocument
  */
 
 export const API_BASE_URL =
@@ -71,18 +75,47 @@ export type ApplicationResponse = {
   is_archived?: boolean;
   archived_at?: string;
   can_be_archived?: boolean;
-  // Pack 10.1: имя заявителя для отображения в списках
+  // Pack 10.1
   applicant_name_native?: string;
   applicant_name_latin?: string;
 };
 
-// Полный тип Company с всеми полями (для drawer редактирования)
+// Pack 13: типы документов клиента
+export type ClientDocumentType =
+  | "passport_internal_main"
+  | "passport_internal_address"
+  | "passport_foreign"
+  | "diploma_main"
+  | "diploma_apostille"
+  | "other";
+
+export type ClientDocumentStatus =
+  | "uploaded"
+  | "ocr_pending"
+  | "ocr_done"
+  | "ocr_failed";
+
+export type ClientDocument = {
+  id: number;
+  doc_type: ClientDocumentType;
+  file_name: string;
+  file_size: number;
+  content_type: string;
+  status: ClientDocumentStatus;
+  parsed_data: Record<string, any>;
+  ocr_error?: string;
+  ocr_completed_at?: string;
+  applied_to_applicant: boolean;
+  created_at: string;
+  download_url?: string;
+};
+
+// Полный тип Company
 export type CompanyResponse = {
   id: number;
   short_name: string;
   full_name_ru: string;
   full_name_es: string;
-  // Совместимость со старым кодом
   full_name?: string;
   inn?: string;
   kpp?: string;
@@ -95,7 +128,6 @@ export type CompanyResponse = {
   director_full_name_genitive_ru: string;
   director_short_ru: string;
   director_position_ru: string;
-  // Совместимость
   director_name_genitive?: string;
   bank_name: string;
   bank_account: string;
@@ -118,14 +150,14 @@ export type PositionResponse = {
   salary_rub_default: number;
   tags?: string[];
   profile_description?: string;
-  description_ru?: string; // совместимость
+  description_ru?: string;
   is_active: boolean;
   application_count?: number;
 };
 
 export type RepresentativeResponse = {
   id: number;
-  full_name?: string; // computed на сервере
+  full_name?: string;
   first_name: string;
   last_name: string;
   nie: string;
@@ -154,7 +186,6 @@ export type SpainAddressResponse = {
   label: string;
   notes?: string;
   is_active: boolean;
-  // совместимость
   address_line?: string;
   application_count?: number;
 };
@@ -254,6 +285,94 @@ export async function getMyApplication(token: string): Promise<ApplicationRespon
 }
 
 // ============================================================================
+// Pack 13.0b: Client documents
+// ============================================================================
+
+/**
+ * Получить список загруженных клиентом документов.
+ */
+export async function getMyDocuments(token: string): Promise<ClientDocument[]> {
+  const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents`);
+  if (!res.ok) {
+    throw new Error(`Не удалось получить документы: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
+
+/**
+ * Загрузить документ. Если такого типа уже есть — заменяется.
+ *
+ * @param token - токен клиентского доступа
+ * @param docType - тип документа (passport_internal_main и т.д.)
+ * @param file - File объект из <input type="file">
+ */
+export async function uploadDocument(
+  token: string,
+  docType: ClientDocumentType,
+  file: File,
+): Promise<ClientDocument> {
+  const formData = new FormData();
+  formData.append("doc_type", docType);
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents/upload`, {
+    method: "POST",
+    body: formData,
+    // Note: НЕ ставим Content-Type — браузер сам выставит multipart/form-data с boundary
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Ошибка загрузки (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {
+      // оставляем дефолт
+    }
+    throw new Error(errMessage);
+  }
+
+  return res.json();
+}
+
+/**
+ * Удалить загруженный документ.
+ */
+export async function deleteDocument(
+  token: string,
+  docId: number,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/client/${token}/documents/${docId}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    throw new Error(`Не удалось удалить документ: ${res.status} ${await res.text()}`);
+  }
+}
+
+/**
+ * Запустить OCR для документа.
+ *
+ * Pack 13.0b: возвращает 501 (заглушка).
+ * Pack 13.1: реальное распознавание.
+ */
+export async function recognizeDocument(
+  token: string,
+  docId: number,
+): Promise<ClientDocument> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/client/${token}/documents/${docId}/recognize`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(`Не удалось распознать: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ============================================================================
 // Admin Applications
 // ============================================================================
 
@@ -308,7 +427,6 @@ export async function requestRecommendation(appId: number): Promise<any> {
   return res.json();
 }
 
-// Pack 8.7: partial update
 export async function patchApplication(
   appId: number,
   patch: Partial<{
@@ -333,7 +451,6 @@ export async function patchApplication(
   return res.json();
 }
 
-// Старый endpoint — для обратной совместимости
 export async function assignApplication(
   appId: number,
   payload: {
@@ -368,7 +485,6 @@ export async function updateStatus(
   return res.json();
 }
 
-// Pack 10: архивирование
 export async function archiveApplication(appId: number): Promise<ApplicationResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/archive`, {
     method: "POST", headers: authHeaders(),
@@ -600,3 +716,13 @@ export function getClientLink(token: string): string {
   if (typeof window !== "undefined") return `${window.location.origin}/client/${token}`;
   return `/client/${token}`;
 }
+
+// Pack 13: метки типов документов клиента
+export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
+  passport_internal_main: "Паспорт РФ — главный разворот",
+  passport_internal_address: "Паспорт РФ — страница прописки",
+  passport_foreign: "Загранпаспорт",
+  diploma_main: "Диплом — основная страница",
+  diploma_apostille: "Диплом — апостиль",
+  other: "Другой документ",
+};
