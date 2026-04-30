@@ -1,7 +1,7 @@
-# VISA KIT — состояние проекта на конец сессии 10
+# VISA KIT — состояние проекта
 
-**Дата:** 30 апреля 2026
-**Статус:** 🚀 **PRODUCTION ЗАДЕПЛОЕН И РАБОТАЕТ**
+**Последнее обновление:** 30 апреля 2026
+**Статус:** 🚀 PRODUCTION работает, MVP + мобилка задеплоены
 
 ---
 
@@ -9,15 +9,14 @@
 
 ### URLs
 
-- **Frontend (Vercel):** https://visa-kit.vercel.app
-- **Backend (Railway):** https://visa-kit-production.up.railway.app
+- **Frontend:** https://visa-kit.vercel.app
+- **Backend:** https://visa-kit-production.up.railway.app
 - **API Docs:** https://visa-kit-production.up.railway.app/docs
-- **Health:** https://visa-kit-production.up.railway.app/health
-- **GitHub репо:** https://github.com/kopunch88-maker/visa-kit (private)
+- **GitHub:** https://github.com/kopunch88-maker/visa-kit (private)
 
-### Инфраструктура
+### Стек
 
-- **GitHub** — monorepo (backend + frontend + templates), main branch
+- **GitHub** — monorepo (backend + frontend + templates), main branch, deploy via push
 - **Railway** — backend (Docker, Python 3.12) + PostgreSQL
 - **Vercel** — frontend (Next.js 16.2.4)
 - **Cloudflare R2** — хранилище файлов (bucket `visa-kit-storage`)
@@ -25,66 +24,56 @@
 
 ### Стоимость
 
-- Vercel Hobby: $0
-- Railway: ~$5-10/мес (Hobby plan, $5 кредит/мес)
-- Cloudflare R2: $0 (до 10GB)
-- GitHub: $0 (private)
-- **Итого: $5-10/мес**
+~$5-10/мес (Railway). Vercel/R2/GitHub бесплатно.
 
 ### Пользователи
 
-- **panchenkoconstantin@gmail.com** — admin (Constantin)
-- Остальные 3 менеджера — будут созданы по мере включения в команду
+- `panchenkoconstantin@gmail.com` — admin (Constantin)
+- 3 менеджера будут добавлены позже
 
 ---
 
 ## Прогресс по плану
 
-### Phase 1 — MVP (✅ ЗАВЕРШЁН)
-- ✅ Pack 1-7 — Базовая архитектура, модели, DOCX, клиентский кабинет
-- ✅ Pack 8 / 8.5 / 8.6 / 8.7 — Админка с двухпанельным layout, CRUD справочников
-- ✅ Pack 9 — 4 испанские PDF-формы (MI-T, Designación, Compromiso, Declaración)
-- ✅ Pack 9.1 — Скачивание по клику любого файла отдельно
-- ✅ Pack 10 — Архив завершённых заявок
-- ✅ Pack 10.1 — ФИО заявителя в таблице архива
-- ✅ Pack 11 — Production deployment (bcrypt auth, R2, PostgreSQL, Docker)
-- ✅ Pack 11.1 — Auth fix для существующей User модели (password_hash)
-- ✅ Pack 11.2 — Optional поля в Applicant для пошагового сохранения
-- ✅ Pack 12 — Mobile-аккордеон для клиентского кабинета (desktop не тронут)
+### Phase 1 — MVP (✅ ЗАВЕРШЁН + В PRODUCTION)
 
-### Phase 2 — Агенты автоматизации (НЕ НАЧАТА)
-- ⬜ Pack 13 — OCR паспорта (Claude Vision API)
-- ⬜ Pack 14 — Авто-проверка пакета перед скачиванием
-- ⬜ Pack 15 — Email-агент
-- ⬜ Pack 16 — Авто-распределение по компаниям
-- ⬜ Pack 17 — Перевод-черновик на испанский
-- ⬜ Pack 18 — Мониторинг статусов в UGE (хрупкое)
+- ✅ Pack 1-7 — Базовая архитектура
+- ✅ Pack 8.x — Админка (двухпанельный layout, CRUD справочников)
+- ✅ Pack 9 — 4 испанские PDF-формы
+- ✅ Pack 9.1 — Скачивание отдельных файлов
+- ✅ Pack 10 + 10.1 — Архив с ФИО
+- ✅ Pack 11 + 11.1 + 11.2 — Production deployment (bcrypt, R2, PostgreSQL, Optional поля)
+- ✅ Pack 12 — Mobile-аккордеон клиентского кабинета (desktop не тронут)
+
+### Phase 2 — Агенты автоматизации (⬜ НЕ НАЧАТА)
+
+Roadmap (можно делать в любом порядке):
+- Pack 13 — OCR паспорта (Claude Vision API)
+- Pack 14 — Авто-проверка пакета перед скачиванием
+- Pack 15 — Email-агент
+- Pack 16 — Авто-распределение по компаниям
+- Pack 17 — Перевод-черновик на испанский
+- Pack 18 — Мониторинг статусов в UGE (хрупкое, последним)
 
 ### Намеренно отложено
-- ⏸️ Семейная подача (нужно сначала обкатать одиночные кейсы)
-- ⏸️ Свой домен (visa-kit.com или подобное)
+
+- ⏸️ Семейная подача (после обкатки одиночных)
+- ⏸️ Свой домен
 - ⏸️ Пункт о ПДн в шаблоне договора
 
 ---
 
-## Что важно знать (НЕ ЗАБЫТЬ В СЛЕДУЮЩЕЙ СЕССИИ)
+## Текущие мелкие баги (не блокируют)
 
-### 1. Известные мелкие баги
+1. **`employer_letter` падает с `None.month`** — `08_Письмо.docx` не попадает в ZIP. Файл `backend/app/templates_engine/render_employer_letter.py`. Fix: fallback `.month` на `application.contract_sign_date`.
 
-**A. `employer_letter` падает с `None.month`**
-- В логах при генерации: `[employer_letter] render failed: UndefinedError: 'None' has no attribute 'month'`
-- `08_Письмо.docx` не попадает в ZIP корректно
-- Файл: `backend/app/templates_engine/render_employer_letter.py`
-- Fix: где-то используется `.month` без проверки на None. Поставить fallback на `application.contract_sign_date` или сегодняшнюю дату.
+2. **«Все 10 документов сгенерированы»** в `frontend/components/admin/BusinessChecksBlock.tsx`. Должно быть 14 (10 DOCX + 4 PDF).
 
-**B. Чек-лист показывает «Все 10 документов сгенерированы»**
-- Файл: `frontend/components/admin/BusinessChecksBlock.tsx`
-- Должно быть «Все 14 документов» (10 DOCX + 4 PDF).
-- Косметика, не блокирует.
+3. **Эстетика мобилки** — может потребоваться полировка по фидбеку команды.
 
-### 2. Деплой workflow
+---
 
-Любые изменения теперь идут через git push:
+## Деплой workflow
 
 ```powershell
 cd D:\VISA\visa_kit
@@ -93,90 +82,42 @@ git commit -m "Описание"
 git push
 ```
 
-**Vercel** и **Railway** автоматически передеплоятся. Через 2-5 минут изменения в production.
+Vercel + Railway автоматически передеплоятся за 2-5 минут.
 
-### 3. Создание пользователей в production
+**ВАЖНО:** GitHub Push Protection блокирует коммиты с секретами (Cloudflare/AWS keys и т.д.). Не вписывать реальные значения в код или markdown файлы. Всё хранится в Railway/Vercel UI.
 
-Используем DATABASE_PUBLIC_URL Railway. Сам URL — взять в Railway → Postgres → Variables → `DATABASE_PUBLIC_URL`. Формат:
+---
 
-```
-postgresql://postgres:<password>@switchyard.proxy.rlwy.net:<port>/railway
-```
+## Создание пользователей в production
 
-Запуск:
+Используем `DATABASE_PUBLIC_URL` из Railway → Postgres → Variables.
 
 ```powershell
 cd D:\VISA\visa_kit\backend
-$env:DATABASE_URL="<значение из Railway DATABASE_PUBLIC_URL>"
+$env:DATABASE_URL="<DATABASE_PUBLIC_URL из Railway>"
 python scripts/create_admin.py
-$env:DATABASE_URL=$null  # сбросить после
+$env:DATABASE_URL=$null  # обязательно сбросить
 ```
 
-**ВАЖНО:** Railway периодически ротирует пароль БД. Если перестанет работать — взять свежий `DATABASE_PUBLIC_URL`.
+Railway периодически ротирует пароль БД — берём свежий URL каждый раз.
 
-### 4. Локальная разработка после деплоя
+---
 
-После Vercel CLI link, локальный `.env.local` мог быть переписан. Если локальный фронт не работает, восстановить:
+## Production env-переменные (имена)
 
-```
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
-```
-# backend/.env (создать заново если нет)
-DATABASE_URL=sqlite:///./dev.db
-FRONTEND_URL=http://localhost:3000
-JWT_SECRET=dev-secret-change-in-production-please
-SECRET_KEY=dev-secret-change-in-production-please
-STORAGE_BACKEND=local
-STORAGE_PATH=storage
-```
-
-### 5. Production env-переменные
-
-**Все секреты хранятся ТОЛЬКО в Railway/Vercel UI**, не в репо и не в этом файле.
-
-**Railway (visa-kit service Variables) — список имён:**
+**Railway (visa-kit service):**
 - `DATABASE_URL` (через `${{Postgres.DATABASE_URL}}`)
 - `FRONTEND_URL` = `https://visa-kit.vercel.app`
 - `JWT_SECRET` (длинная случайная строка)
-- `SECRET_KEY` (то же значение что JWT_SECRET)
+- `SECRET_KEY` (то же значение)
 - `STORAGE_BACKEND` = `r2`
-- `R2_ACCOUNT_ID`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
 - `R2_BUCKET_NAME` = `visa-kit-storage`
 
-**Vercel (Environment Variables):**
+**Vercel:**
 - `NEXT_PUBLIC_API_URL` = `https://visa-kit-production.up.railway.app`
 
-Реальные значения секретов — в Railway/Vercel UI, в Bitwarden/1Password или в надёжном local notes у Constantin.
-
----
-
-## Технический долг (НЕ КРИТИЧНО, можно копить)
-
-1. **TypeScript ошибки игнорируются** в build (`next.config.js: ignoreBuildErrors: true`). Около 5-10 мест где параметры без типизации (например `(v) => ...` в `CompanyContractDrawer.tsx:145`).
-2. **Чек-лист «10 документов»** — старый текст.
-3. **Employer letter** падает на `None.month`.
-4. **Vercel CLI** при `vercel link` переписал локальный `.env.local`. Учесть при следующем разворачивании.
-5. **Next.js 16.2.4** — вместо стабильной 15.x. Могут быть скрытые несовместимости (хотя пока работает).
-6. **eslint-ключ в next.config.js** даёт варнинг в Next 16 — некритично, но потом убрать.
-
----
-
-## Технические детали
-
-- Windows, Python 3.14 локально, Python 3.12-slim в Docker
-- Проект: `D:\VISA\visa_kit\`
-- Backend: FastAPI + SQLite (dev) / PostgreSQL (prod) + SQLModel
-- Frontend: Next.js 16.2.4 + Tailwind
-- LLM: Claude Sonnet (для рекомендаций должности)
-- PDF: pypdf (AcroForm) + reportlab (с нуля)
-- Шаблоны DOCX: `D:\VISA\visa_kit\templates\docx\`
-- Шаблоны PDF: `D:\VISA\visa_kit\templates\pdf\`
-- В Docker: `/app/templates/`
+Реальные значения — в Railway/Vercel UI и в notes у Constantin.
 
 ---
 
@@ -193,7 +134,22 @@ cd D:\VISA\visa_kit\frontend
 npm run dev
 ```
 
-Логин в админку: `http://localhost:3000/admin/login` (с email + пароль).
+Логин: `http://localhost:3000/admin/login`
+
+**Если фронт ходит в production вместо локала** — Vercel CLI ранее переписал `.env.local`. Восстановить:
+```
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+---
+
+## Технический долг
+
+1. **TypeScript ошибки игнорируются** при build (`ignoreBuildErrors: true`). ~5-10 мест с `any`.
+2. **Next.js 16.2.4** — могут вылезти несовместимости.
+3. **eslint-ключ** в next.config.js даёт варнинг в Next 16 — некритично.
+4. **Vercel CLI** переписывает `.env.local` при `vercel link` — учесть.
 
 ---
 
@@ -201,68 +157,49 @@ npm run dev
 
 | Pack | Что добавил |
 |---|---|
-| 1-7 | Базовая архитектура, модели, DOCX-шаблоны, клиентский кабинет |
-| 8 | Админка с детальной страницей, LLM-рекомендации, ZIP-скачивание |
-| 8.5 | Двухпанельный layout (список + детали) |
-| 8.6 | 3 карточки, объединённая «Компания и договор», bilingual ФИО |
-| 8.7 | Partial-update endpoint, CRUD справочников, settings page |
+| 1-7 | Базовая архитектура, модели, DOCX, клиентский кабинет |
+| 8.x | Админка (двухпанельная, CRUD справочников, settings) |
 | 9 | 4 испанские PDF-формы (MI-T, Designación, Compromiso, Declaración) |
-| 9.1 | Скачивание по клику любого файла отдельно |
+| 9.1 | Скачивание отдельных файлов |
 | 10 | Архив завершённых заявок |
-| 10.1 | ФИО в таблице архива |
+| 10.1 | ФИО в архиве |
 | 11 | Production deployment (bcrypt, R2, PostgreSQL, Docker, Vercel/Railway) |
-| 11.1 | Auth fix для существующей User модели (password_hash) |
-| 11.2 | Optional поля в Applicant для пошагового сохранения + миграция PostgreSQL |
-| 12 | Mobile-аккордеон для клиентского кабинета (desktop не тронут) |
+| 11.1 | Auth fix для существующей User модели |
+| 11.2 | Optional поля Applicant + миграция PostgreSQL |
+| 12 | Mobile-аккордеон клиентского кабинета (desktop не тронут) |
 
 ---
 
 ## Цели после Phase 2
 
 - Время менеджера на одну заявку: **с 4-6 часов → до 30 минут**
-- Один менеджер ведёт: **с 50 → до 200+ заявок/мес**
-- Возможные сценарии:
-  - Рост выручки в 4-6 раз без увеличения штата
-  - Снижение цены клиенту в 2-3 раза при сохранении маржи
-
-## Что НЕ автоматизируем (намеренно)
-
-1. Итоговое решение менеджера перед подачей (юр. ответственность)
-2. Эмпатичная коммуникация в сложных кейсах (развод, отказы)
-3. Оценка рисков отказа в нестандартных кейсах
-4. Подача документов в UGE (нет API, серая зона)
-5. Подписание документов (юр. действие)
+- Один менеджер ведёт: **с 50 → 200+ заявок/мес**
 
 ---
 
-## Что попросить у меня в следующей сессии
+## Что попросить в следующей сессии
 
-**Если хочешь чинить мелкие баги (опционально):**
-1. Прислать `backend/app/templates_engine/render_employer_letter.py` — починю `None.month`
-2. Прислать `frontend/components/admin/BusinessChecksBlock.tsx` — обновлю «10» на «14»
+**Чиним мелкие баги:**
+- Прислать `backend/app/templates_engine/render_employer_letter.py` → починю `None.month`
+- Прислать `frontend/components/admin/BusinessChecksBlock.tsx` → обновлю «10» на «14»
 
-**Если сразу к Phase 2:**
-- «Делаем Pack 13 (OCR паспорта)» — Claude Vision API + автозаполнение анкеты по скану
-- Я начну с разработки клиентского портала загрузки паспорта + endpoint OCR
+**Полируем мобилку (если будет фидбек):**
+- Скриншоты проблем + описание
 
-**Можно делать пакеты в любом порядке** — приоритеты выше всего лишь моя рекомендация.
-
-**Если будет фидбек от команды:**
-- Присылай скриншоты + описание поведения
-- Любые изменения через git push автоматически попадут в production
+**Phase 2 — выбрать пакет:**
+- Pack 13 OCR паспорта (рекомендую первым)
+- Pack 14 Авто-проверка пакета
+- Pack 15 Email-агент
+- Что-то другое из roadmap
 
 ---
 
-## Финальный шаблон для следующей сессии
+## Шаблон для следующей сессии
 
 ```
-Привет! Я продолжаю работу над visa_kit. Production задеплоен и работает.
+Привет! Production работает уже N дней. 
 Прикрепляю PROJECT_STATE.md.
 
-Сегодня делаем: ___ (выбрать)
-- Чиним мелкие баги (employer_letter, чек-лист)
-- Pack 13 — OCR паспорта  
-- Pack 14 — Авто-проверка пакета
-- Что-то другое из roadmap
-- Реакция на фидбек команды (приложить детали)
+Сегодня делаем: ___
+[фидбек от команды если есть]
 ```

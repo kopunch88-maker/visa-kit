@@ -1,10 +1,8 @@
 """
-Миграции БД — добавление полей которые появились после первоначального schema.
+Миграции БД — добавление полей и таблиц после первоначального schema.
 
 Каждая миграция идемпотентна — можно вызывать многократно безопасно.
-
-Pack 11.2 fix: поддержка и SQLite (для dev), и PostgreSQL (для production).
-Используем SQLAlchemy Inspector — он работает с обоими движками одинаково.
+Используем SQLAlchemy Inspector — работает и в SQLite, и в PostgreSQL.
 """
 
 import logging
@@ -15,10 +13,14 @@ log = logging.getLogger(__name__)
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    """Универсально через SQLAlchemy Inspector — SQLite + PostgreSQL."""
     inspector = inspect(conn)
     columns = {col["name"] for col in inspector.get_columns(table)}
     return column in columns
+
+
+def _table_exists(conn, table: str) -> bool:
+    inspector = inspect(conn)
+    return table in inspector.get_table_names()
 
 
 def _is_postgres() -> bool:
@@ -26,9 +28,7 @@ def _is_postgres() -> bool:
 
 
 def apply_pack10_migration():
-    """
-    Pack 10: добавляет is_archived (BOOLEAN) и archived_at в application.
-    """
+    """Pack 10: is_archived, archived_at в application."""
     with engine.begin() as conn:
         if not _column_exists(conn, "application", "is_archived"):
             if _is_postgres():
@@ -61,9 +61,7 @@ def apply_pack10_migration():
 
 
 def apply_pack11_migration():
-    """
-    Pack 11: добавляет password_hash в user (для bcrypt-аутентификации).
-    """
+    """Pack 11: password_hash в user (для bcrypt-аутентификации)."""
     with engine.begin() as conn:
         if not _column_exists(conn, "user", "password_hash"):
             conn.execute(text(
@@ -75,20 +73,11 @@ def apply_pack11_migration():
 
 
 def apply_pack11_2_migration():
-    """
-    Pack 11.2: снимает NOT NULL constraint с полей applicant которые теперь Optional.
-    
-    Это критично для production: в SQLite NOT NULL мог быть не строгим, в PostgreSQL
-    он строгий. Чтобы клиент мог сохранять анкету по шагам, эти поля должны
-    допускать NULL в БД.
-    
-    Только PostgreSQL — в SQLite ALTER COLUMN сложен и не нужен.
-    """
+    """Pack 11.2: снимает NOT NULL с полей applicant для пошагового сохранения."""
     if not _is_postgres():
         log.debug("[migration:pack11_2] Skipping (only needed for PostgreSQL)")
         return
 
-    # Список полей в applicant, с которых снимаем NOT NULL
     nullable_fields = [
         "passport_number",
         "birth_date",
@@ -110,9 +99,46 @@ def apply_pack11_2_migration():
                 ))
                 log.info(f"[migration:pack11_2] DROPPED NOT NULL on applicant.{field}")
             except Exception as e:
-                # Если уже nullable или столбец не существует — пропускаем
                 err = str(e).lower()
                 if "is in a column without not null" in err or "does not exist" in err:
                     log.debug(f"[migration:pack11_2] applicant.{field} already nullable or missing")
                 else:
                     log.warning(f"[migration:pack11_2] Failed to drop NOT NULL on {field}: {e}")
+
+
+def apply_pack13_migration():
+    """
+    Pack 13: создание таблицы applicant_document для OCR-документов.
+
+    Таблица создаётся через init_db() (SQLModel.metadata.create_all),
+    но если она ещё не существует — мы явно создадим тут как fallback.
+    Также добавим индексы.
+    """
+    with engine.begin() as conn:
+        if not _table_exists(conn, "applicant_document"):
+            log.info(
+                "[migration:pack13] Table applicant_document not found — "
+                "expected to be created by SQLModel.metadata.create_all() in init_db()"
+            )
+            # Не создаём руками — пусть init_db() сделает.
+            # Если здесь нет таблицы, значит модель ещё не подцепилась —
+            # это надо поправить отдельно (импортировать модель в app.models.__init__).
+            return
+
+        # Создаём индексы (если их нет)
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_applicant_document_application_id "
+                "ON applicant_document (application_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_applicant_document_doc_type "
+                "ON applicant_document (doc_type)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_applicant_document_status "
+                "ON applicant_document (status)"
+            ))
+            log.info("[migration:pack13] Indexes verified on applicant_document")
+        except Exception as e:
+            log.warning(f"[migration:pack13] Index creation failed: {e}")

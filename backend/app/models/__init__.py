@@ -43,7 +43,7 @@ from ._supporting import (
     User, UserRole,
     TimelineEvent,
 )
-
+from .applicant_document import ApplicantDocument, DocumentType, DocumentStatus
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",

@@ -1,11 +1,5 @@
 """
 FastAPI application — точка входа.
-
-Запуск для разработки:
-    uvicorn app.main:app --reload
-
-Swagger UI: http://localhost:8000/docs
-ReDoc:      http://localhost:8000/redoc
 """
 
 from contextlib import asynccontextmanager
@@ -19,33 +13,25 @@ from app.db.migrations import (
     apply_pack10_migration,
     apply_pack11_migration,
     apply_pack11_2_migration,
+    apply_pack13_migration,
 )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Startup / shutdown hooks.
-
-    На старте — создаём таблицы в БД (для разработки) и применяем миграции.
-    """
     init_db()
     print(f"📦 Database ready at {settings.database_url}")
 
-    # Pack 10: поля is_archived / archived_at в application
     apply_pack10_migration()
-    # Pack 11: поле password_hash в user (для bcrypt auth)
     apply_pack11_migration()
-    # Pack 11.2: снять NOT NULL с applicant полей (для пошагового сохранения)
     apply_pack11_2_migration()
+    apply_pack13_migration()  # NEW: applicant_document table
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")
 
     yield
-
-    # На shutdown ничего не делаем
 
 
 app = FastAPI(
@@ -55,7 +41,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — фронт на 3000, бэк на 8000, без CORS не подключатся
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -65,7 +50,6 @@ app.add_middleware(
 )
 
 
-# === Подключаем роутеры ===
 from app.api import (  # noqa: E402
     auth,
     companies,
@@ -91,11 +75,8 @@ app.include_router(client_portal.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
 
 
-# === Health check ===
-
 @app.get("/", tags=["meta"])
 def root():
-    """Корень — подтверждение что бэк работает."""
     return {
         "service": "visa-kit-backend",
         "version": "0.1.0",
@@ -105,5 +86,4 @@ def root():
 
 @app.get("/health", tags=["meta"])
 def health():
-    """Health check для мониторинга."""
     return {"status": "ok"}
