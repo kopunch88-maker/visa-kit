@@ -5,7 +5,6 @@ All SQLModel entities live here. They serve as both ORM models and Pydantic
 schemas (for FastAPI request/response validation).
 
 Import from here, not from individual files:
-
     from app.models import Application, Company, Position
 """
 
@@ -43,7 +42,16 @@ from ._supporting import (
     User, UserRole,
     TimelineEvent,
 )
-from .applicant_document import ApplicantDocument, DocumentType, DocumentStatus
+
+# Pack 13: client documents for OCR
+# Имена ApplicantDocumentType / ApplicantDocumentStatus — чтобы не конфликтовать
+# с DocumentType из _supporting (для GeneratedDocument)
+from .applicant_document import (
+    ApplicantDocument,
+    ApplicantDocumentType,
+    ApplicantDocumentStatus,
+)
+
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -64,4 +72,8 @@ __all__ = [
     "GeneratedDocument", "DocumentType", "DocumentSignStatus",
     "User", "UserRole",
     "TimelineEvent",
+    # Pack 13: applicant documents for OCR
+    "ApplicantDocument",
+    "ApplicantDocumentType",
+    "ApplicantDocumentStatus",
 ]

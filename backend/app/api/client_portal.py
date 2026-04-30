@@ -23,10 +23,8 @@ from app.models import (
 )
 from app.models.applicant_document import (
     ApplicantDocument,
-    DocumentType,
-    DocumentStatus,
-    DocumentRead,
-    DocumentUploadResponse,
+    ApplicantDocumentType,
+    ApplicantDocumentStatus,
 )
 from app.services.storage import get_storage
 
@@ -42,7 +40,10 @@ router = APIRouter(prefix="/client", tags=["client-portal"])
 # Максимальный размер файла — 10 МБ
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
-# Разрешённые форматы изображений
+# Минимальный размер для качества — 100 КБ
+MIN_FILE_SIZE = 100 * 1024
+
+# Разрешённые форматы
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/jpg",
@@ -50,7 +51,7 @@ ALLOWED_CONTENT_TYPES = {
     "image/webp",
     "image/heic",
     "image/heif",
-    "application/pdf",  # для сканов диплома
+    "application/pdf",
 }
 
 
@@ -208,7 +209,7 @@ def get_my_application(
 
 
 # ============================================================================
-# Pack 13: Documents (паспорт/диплом для OCR)
+# Pack 13: Documents
 # ============================================================================
 
 @router.get("/{token}/documents")
@@ -242,14 +243,13 @@ async def upload_document(
     """
     application = _get_application_by_token(token, session)
 
-    # === Валидация ===
-    # Тип документа
+    # === Валидация типа ===
     try:
-        doc_type_enum = DocumentType(doc_type)
+        doc_type_enum = ApplicantDocumentType(doc_type)
     except ValueError:
         raise HTTPException(422, f"Invalid doc_type: {doc_type}")
 
-    # Размер файла (читаем чтобы проверить)
+    # === Чтение и проверка размера ===
     contents = await file.read()
     file_size = len(contents)
 
@@ -262,15 +262,13 @@ async def upload_document(
             f"File too large: {file_size} bytes (max {MAX_FILE_SIZE} bytes / 10 MB)"
         )
 
-    # Минимальный размер для качества (защита от мыла)
-    # 100 КБ — нижняя граница качественного фото паспорта
-    if file_size < 100 * 1024:
+    if file_size < MIN_FILE_SIZE:
         raise HTTPException(
             422,
             "File too small (less than 100 KB). Please use a higher quality photo."
         )
 
-    # Content type
+    # === Content type ===
     content_type = file.content_type or "application/octet-stream"
     if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
@@ -279,7 +277,7 @@ async def upload_document(
             f"Allowed: JPEG, PNG, WebP, HEIC, PDF"
         )
 
-    # === Удаляем существующий документ того же типа (если есть) ===
+    # === Удаляем существующий документ того же типа ===
     existing = session.exec(
         select(ApplicantDocument)
         .where(ApplicantDocument.application_id == application.id)
@@ -296,8 +294,7 @@ async def upload_document(
         session.delete(existing)
         session.flush()
 
-    # === Сохраняем новый файл в R2 ===
-    # Ключ: applications/{app_id}/documents/{doc_type}_{timestamp}.{ext}
+    # === Сохраняем новый файл ===
     timestamp = int(time.time())
     original_name = file.filename or f"{doc_type}.bin"
     extension = PathLib(original_name).suffix.lower() or ".bin"
@@ -320,7 +317,7 @@ async def upload_document(
         file_name=original_name,
         file_size=file_size,
         content_type=content_type,
-        status=DocumentStatus.UPLOADED,
+        status=ApplicantDocumentStatus.UPLOADED,
         parsed_data={},
     )
     session.add(doc)
@@ -348,17 +345,14 @@ def delete_document(
     if not doc:
         raise HTTPException(404, "Document not found")
 
-    # Проверка что документ принадлежит этой заявке
     if doc.application_id != application.id:
         raise HTTPException(403, "Document does not belong to this application")
 
-    # Удалить файл из storage
     storage = get_storage()
     try:
         storage.delete(doc.storage_key)
     except Exception as e:
         log.warning(f"Failed to delete from storage: {e}")
-        # Не кидаем ошибку — БД-запись всё равно удалим
 
     session.delete(doc)
     session.commit()
@@ -376,7 +370,7 @@ async def recognize_document(
     """
     Запустить OCR для документа.
 
-    Pack 13.0: ЗАГЛУШКА — возвращает not_implemented.
+    Pack 13.0: ЗАГЛУШКА.
     Pack 13.1: реальный OCR через LLM Vision.
     """
     application = _get_application_by_token(token, session)
@@ -385,7 +379,6 @@ async def recognize_document(
     if not doc or doc.application_id != application.id:
         raise HTTPException(404, "Document not found")
 
-    # TODO Pack 13.1: реальный OCR
     raise HTTPException(
         501,
         "OCR not implemented yet. Coming in Pack 13.1."
