@@ -302,24 +302,30 @@ async def translate_docx(
         + (f", {len(substitutions)} pre-substitutions ACTIVE" if substitutions else ", NO substitutions")
     )
 
-    # Pack 15.3: диагностика — найдём в DOCX параграф с «ИНЖГЕОСЕРВИС» или «Юксел»
-    # и покажем что с ним делает substitutions.apply()
-    if substitutions:
-        for p in paragraphs:
-            txt = _extract_paragraph_text(p)
-            if "ИНЖГЕОСЕРВИС" in txt or "Юксел" in txt or "ИНН" in txt:
-                applied = substitutions.apply(txt)
-                if applied != txt:
-                    log.warning(f"[translation:DIAG] BEFORE: {txt[:200]!r}")
-                    log.warning(f"[translation:DIAG] AFTER:  {applied[:200]!r}")
-                    break
+    # Pack 15.4: расширенная диагностика — отметим ВСЕ параграфы где есть
+    # критичные русские маркеры, и потом проследим что с ними стало после LLM
+    diag_marker_indices: list[int] = []  # paragraph indices to track
 
     targets: list[tuple[int, str]] = []
     for idx, p in enumerate(paragraphs):
         text = _extract_paragraph_text(p)
+        original_text = text  # сохраняем для DIAG
 
         if substitutions:
             text = substitutions.apply(text)
+
+        # Pack 15.4 DIAG: трекаем параграфы с проблемными маркерами
+        is_diag = (
+            "ИНЖГЕОСЕРВИС" in original_text
+            or "Юксел" in original_text
+            or "Ведат" in original_text
+            or ("ИНН" in original_text and any(c.isdigit() for c in original_text))
+        )
+        if is_diag:
+            log.warning(f"[DIAG p{idx}] BEFORE_SUB: {original_text[:300]!r}")
+            log.warning(f"[DIAG p{idx}] AFTER_SUB:  {text[:300]!r}")
+            log.warning(f"[DIAG p{idx}] WILL_SKIP: {_should_skip(text)}")
+            diag_marker_indices.append(idx)
 
         if not _should_skip(text):
             targets.append((idx, text))
@@ -344,6 +350,9 @@ async def translate_docx(
         )
 
     for (paragraph_idx, _original), translated_text in zip(targets, all_translations):
+        # Pack 15.4 DIAG
+        if paragraph_idx in diag_marker_indices:
+            log.warning(f"[DIAG p{paragraph_idx}] AFTER_LLM:  {translated_text[:300]!r}")
         _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
 
     out = io.BytesIO()
