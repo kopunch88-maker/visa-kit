@@ -8,7 +8,6 @@ interface Props {
   onSelect: (id: number) => void;
 }
 
-// Цветовая схема статусов
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   draft: { bg: "var(--color-bg-secondary)", text: "var(--color-text-tertiary)" },
   awaiting_data: { bg: "var(--color-bg-warning)", text: "var(--color-text-warning)" },
@@ -65,8 +64,28 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
         const statusLabel = STATUS_LABELS[app.status] || app.status;
         const colors = STATUS_COLORS[app.status] || STATUS_COLORS.draft;
 
-        // Достаём данные клиента из заметки или показываем "Ожидание данных"
-        const displayTitle = app.internal_notes || `Заявка ${app.reference}`;
+        // Приоритет отображения:
+        // 1. ФИО клиента (если заполнена анкета)
+        // 2. Внутренняя заметка менеджера
+        // 3. Просто номер заявки
+        const hasApplicant =
+          app.applicant_name_native && app.applicant_name_native.trim() !== "";
+        const hasNotes =
+          app.internal_notes && app.internal_notes.trim() !== "";
+
+        const displayTitle = hasApplicant
+          ? app.applicant_name_native
+          : hasNotes
+          ? app.internal_notes
+          : `Заявка ${app.reference}`;
+
+        // Подзаголовок:
+        // - если есть имя — показываем латиницу (если есть)
+        // - если нет имени, но есть заметка — ничего не показываем (заметка уже сверху)
+        const subtitle =
+          hasApplicant && app.applicant_name_latin
+            ? app.applicant_name_latin
+            : null;
 
         return (
           <button
@@ -85,7 +104,7 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
                 : {}),
             }}
           >
-            <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex items-start justify-between gap-2 mb-1">
               <div className="text-sm font-semibold text-primary line-clamp-1">
                 {displayTitle}
               </div>
@@ -93,6 +112,12 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
                 #{app.reference}
               </div>
             </div>
+
+            {subtitle && (
+              <div className="text-xs text-tertiary uppercase tracking-wide line-clamp-1 mb-1.5">
+                {subtitle}
+              </div>
+            )}
 
             <div className="flex items-center gap-2 flex-wrap">
               <span
