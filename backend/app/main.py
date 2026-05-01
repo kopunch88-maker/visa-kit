@@ -60,6 +60,7 @@ from app.api import (  # noqa: E402
     render_endpoints,
     applicants,
     client_portal,
+    client_documents_admin,
     bank_transactions,
 )
 
@@ -72,6 +73,7 @@ app.include_router(applications.router, prefix="/api")
 app.include_router(render_endpoints.router, prefix="/api")
 app.include_router(applicants.router, prefix="/api")
 app.include_router(client_portal.router, prefix="/api")
+app.include_router(client_documents_admin.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
 
 

@@ -28,7 +28,7 @@ import { CompanyContractDrawer } from "./CompanyContractDrawer";
 import { SubmissionDrawer } from "./SubmissionDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
-
+import { AdminClientDocuments } from "./AdminClientDocuments";
 interface Props {
   applicationId: number;
   onUpdated: () => void;
@@ -291,7 +291,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
         applicant={applicant}
         company={company}
       />
-
+ <AdminClientDocuments applicationId={application.id} />
       {/* Документы */}
       {isAssigned && <DocumentsGrid applicationId={application.id} />}
 

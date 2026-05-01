@@ -104,7 +104,7 @@ export type ClientDocument = {
   applied_to_applicant: boolean;
   created_at: string;
   download_url?: string;
-  // Pack 13.1.3: оригинальный PDF (если был загружен)
+  // Pack 13.1.3
   has_original?: boolean;
   original_download_url?: string;
   original_file_name?: string;
@@ -331,14 +331,10 @@ export async function uploadDocument(
   token: string,
   docType: ClientDocumentType,
   file: File,
-  originalFile?: File | null,  // Pack 13.1.3: опциональный оригинал PDF
 ): Promise<ClientDocument> {
   const formData = new FormData();
   formData.append("doc_type", docType);
   formData.append("file", file);
-  if (originalFile) {
-    formData.append("original_file", originalFile);
-  }
 
   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents/upload`, {
     method: "POST",
@@ -455,6 +451,51 @@ export async function applyDocumentsToApplicant(
   }
   return res.json();
 }
+
+
+// ============================================================================
+// Pack 13.2: Admin — Client documents
+// ============================================================================
+
+/**
+ * Получить документы клиента (от имени менеджера).
+ */
+export async function adminListClientDocuments(
+  applicationId: number,
+): Promise<ClientDocument[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) {
+    throw new Error(`Не удалось получить документы: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
+
+/**
+ * Запустить OCR заново для документа клиента (от имени менеджера).
+ */
+export async function adminRecognizeClientDocument(
+  applicationId: number,
+  docId: number,
+): Promise<ClientDocument> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Не удалось распознать (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
+  }
+  return res.json();
+}
+
 
 // ============================================================================
 // Admin Applications
