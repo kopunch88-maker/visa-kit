@@ -1,26 +1,26 @@
 "use client";
 
-import { User } from "lucide-react";
+import { User, Pencil } from "lucide-react";
 import { ApplicantResponse, ApplicationResponse } from "@/lib/api";
 
 interface Props {
   applicant: ApplicantResponse | null;
   application: ApplicationResponse;
+  onEdit?: () => void;
 }
 
-// ISO 3-letter country codes → читаемое русское название
-// Топ-30 стран релевантных для DN-визы
+// ISO 3166-1 alpha-3 → русское название (топ-страны для DN-визы и СНГ)
 const COUNTRY_LABELS: Record<string, string> = {
   RUS: "Россия",
-  BLR: "Беларусь",
   UKR: "Украина",
+  BLR: "Беларусь",
   KAZ: "Казахстан",
-  ARM: "Армения",
   AZE: "Азербайджан",
+  ARM: "Армения",
   GEO: "Грузия",
-  KGZ: "Кыргызстан",
   TJK: "Таджикистан",
   UZB: "Узбекистан",
+  KGZ: "Кыргызстан",
   TKM: "Туркменистан",
   MDA: "Молдова",
   TUR: "Турция",
@@ -28,34 +28,35 @@ const COUNTRY_LABELS: Record<string, string> = {
   POL: "Польша",
   DEU: "Германия",
   CZE: "Чехия",
-  HUN: "Венгрия",
-  SRB: "Сербия",
-  MNE: "Черногория",
-  HRV: "Хорватия",
-  BGR: "Болгария",
-  ROU: "Румыния",
-  GRC: "Греция",
-  CYP: "Кипр",
-  ITA: "Италия",
   ESP: "Испания",
+  ITA: "Италия",
+  HUN: "Венгрия",
   PRT: "Португалия",
+  GRC: "Греция",
   FRA: "Франция",
-  NLD: "Нидерланды",
   GBR: "Великобритания",
   USA: "США",
   CAN: "Канада",
-  ARE: "ОАЭ",
+  SRB: "Сербия",
+  MNE: "Черногория",
   THA: "Таиланд",
-  IDN: "Индонезия",
+  ARE: "ОАЭ",
 };
 
 function formatCountry(code: string | null | undefined): string {
   if (!code) return "—";
-  const label = COUNTRY_LABELS[code.toUpperCase()];
-  return label ? `${label} (${code})` : code;
+  const upper = code.toUpperCase();
+  return COUNTRY_LABELS[upper] || upper;
 }
 
-export function CandidateCard({ applicant, application }: Props) {
+export function CandidateCard({ applicant, application, onEdit }: Props) {
+  // Pack 14 — подсказка для иностранцев у которых пустое русское ФИО
+  const needsRussianName =
+    applicant &&
+    (!applicant.last_name_native?.trim() || !applicant.first_name_native?.trim()) &&
+    applicant.last_name_latin &&
+    applicant.first_name_latin;
+
   return (
     <div
       className="bg-primary rounded-xl border p-4"
@@ -64,10 +65,23 @@ export function CandidateCard({ applicant, application }: Props) {
         borderWidth: 0.5,
       }}
     >
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3 flex items-center gap-1.5">
-        <User className="w-3.5 h-3.5" />
-        Кандидат
-      </h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary flex items-center gap-1.5">
+          <User className="w-3.5 h-3.5" />
+          Кандидат
+        </h3>
+        {applicant && onEdit && (
+          <button
+            onClick={onEdit}
+            className="text-xs px-2 py-1 rounded-md hover:bg-secondary transition-colors flex items-center gap-1"
+            style={{ color: "var(--color-text-info)" }}
+            title="Редактировать данные кандидата"
+          >
+            <Pencil className="w-3 h-3" />
+            Изменить
+          </button>
+        )}
+      </div>
 
       {!applicant ? (
         <div className="text-sm text-tertiary italic py-4">
@@ -75,28 +89,31 @@ export function CandidateCard({ applicant, application }: Props) {
         </div>
       ) : (
         <div className="space-y-2">
+          {/* Pack 14 — предупреждение если у иностранца нет русского имени */}
+          {needsRussianName && (
+            <div
+              className="mb-2 p-2 rounded text-xs flex gap-1.5 items-start"
+              style={{
+                background: "var(--color-bg-warning)",
+                color: "var(--color-text-warning)",
+                border: "0.5px solid var(--color-border-warning)",
+              }}
+            >
+              <Pencil className="w-3 h-3 flex-shrink-0 mt-0.5" />
+              <div>
+                В договоре будет латиница. Нажмите <b>«Изменить»</b> и впишите русские ФИО.
+              </div>
+            </div>
+          )}
+
           <Field
             label="Паспорт"
             value={
               applicant.passport_number
-                ? `${applicant.passport_number}${applicant.nationality ? ` (${applicant.nationality})` : ""}`
+                ? `${applicant.passport_number} (${applicant.nationality || "?"})`
                 : "—"
             }
           />
-
-          {/* Pack 14b+c: гражданство и страна жительства */}
-          <Field
-            label="🌍 Гражданство"
-            value={formatCountry(applicant.nationality)}
-          />
-          {applicant.home_country &&
-            applicant.home_country !== applicant.nationality && (
-              <Field
-                label="🏠 Живёт в"
-                value={formatCountry(applicant.home_country)}
-              />
-            )}
-
           <Field
             label="Родился"
             value={
@@ -106,21 +123,18 @@ export function CandidateCard({ applicant, application }: Props) {
             }
           />
 
-          {applicant.passport_issue_date && (
+          {applicant.nationality && (
             <Field
-              label="Паспорт выдан"
-              value={`${new Date(applicant.passport_issue_date).toLocaleDateString("ru")}${
-                applicant.passport_issuer ? ` · ${applicant.passport_issuer}` : ""
-              }`}
+              label="Гражданство"
+              value={`${formatCountry(applicant.nationality)} (${applicant.nationality})`}
             />
           )}
-          {applicant.passport_expiry_date && (
+          {applicant.home_country && (
             <Field
-              label="Паспорт действует до"
-              value={new Date(applicant.passport_expiry_date).toLocaleDateString("ru")}
+              label="Живёт в"
+              value={`${formatCountry(applicant.home_country)} (${applicant.home_country})`}
             />
           )}
-
           {applicant.home_address && (
             <Field label="Адрес" value={applicant.home_address} />
           )}

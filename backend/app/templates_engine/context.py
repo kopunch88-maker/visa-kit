@@ -3,6 +3,9 @@
 
 Берёт Application + связанные сущности, превращает в плоский dict,
 который docxtpl подставит в переменные {{ ... }}.
+
+Pack 14 finishing: расширены справочники стран (TUR, POL, DEU и т.д.) +
+fallback на latin если у иностранца нет русского имени.
 """
 
 import re
@@ -49,7 +52,9 @@ _MONTHS_NOMINATIVE_RU = [
 ]
 
 # Юридически правильные названия стран в родительном падеже
+# (используется в фразе «Гражданин <ROD>», «Гражданка <ROD>»)
 _NATIONALITY_GENITIVE_RU = {
+    # СНГ + ближнее зарубежье
     "RUS": "Российской Федерации",
     "AZE": "Азербайджанской Республики",
     "ARM": "Республики Армения",
@@ -64,6 +69,62 @@ _NATIONALITY_GENITIVE_RU = {
     "TKM": "Туркменистана",
     "MKD": "Республики Северная Македония",
     "ALB": "Республики Албания",
+    # Pack 14 — расширение для иностранных клиентов
+    "TUR": "Турецкой Республики",
+    "POL": "Республики Польша",
+    "DEU": "Федеративной Республики Германия",
+    "CZE": "Чешской Республики",
+    "SVK": "Словацкой Республики",
+    "SVN": "Республики Словения",
+    "HUN": "Венгрии",
+    "ROU": "Румынии",
+    "BGR": "Республики Болгария",
+    "EST": "Эстонской Республики",
+    "LVA": "Латвийской Республики",
+    "LTU": "Литовской Республики",
+    "ESP": "Королевства Испания",
+    "ITA": "Итальянской Республики",
+    "PRT": "Португальской Республики",
+    "GRC": "Греческой Республики",
+    "FRA": "Французской Республики",
+    "BEL": "Королевства Бельгия",
+    "NLD": "Королевства Нидерландов",
+    "AUT": "Австрийской Республики",
+    "CHE": "Швейцарской Конфедерации",
+    "GBR": "Соединённого Королевства Великобритании и Северной Ирландии",
+    "IRL": "Ирландии",
+    "NOR": "Королевства Норвегия",
+    "SWE": "Королевства Швеция",
+    "DNK": "Королевства Дания",
+    "FIN": "Финляндской Республики",
+    "ISL": "Республики Исландия",
+    "ISR": "Государства Израиль",
+    "USA": "Соединённых Штатов Америки",
+    "CAN": "Канады",
+    "MEX": "Мексиканских Соединённых Штатов",
+    "BRA": "Федеративной Республики Бразилия",
+    "ARG": "Аргентинской Республики",
+    "CHN": "Китайской Народной Республики",
+    "JPN": "Японии",
+    "KOR": "Республики Корея",
+    "IND": "Республики Индия",
+    "THA": "Королевства Таиланд",
+    "VNM": "Социалистической Республики Вьетнам",
+    "PHL": "Республики Филиппины",
+    "IDN": "Республики Индонезия",
+    "MYS": "Малайзии",
+    "SGP": "Республики Сингапур",
+    "ARE": "Объединённых Арабских Эмиратов",
+    "SAU": "Королевства Саудовская Аравия",
+    "EGY": "Арабской Республики Египет",
+    "MAR": "Королевства Марокко",
+    "ZAF": "Южно-Африканской Республики",
+    "AUS": "Австралии",
+    "NZL": "Новой Зеландии",
+    "SRB": "Республики Сербия",
+    "MNE": "Черногории",
+    "BIH": "Боснии и Герцеговины",
+    "HRV": "Республики Хорватия",
 }
 
 _NATIONALITY_NOMINATIVE_RU = {
@@ -79,6 +140,63 @@ _NATIONALITY_NOMINATIVE_RU = {
     "KGZ": "Кыргызстан",
     "MKD": "Северная Македония",
     "ALB": "Албания",
+    "MDA": "Молдова",
+    "TKM": "Туркменистан",
+    "TUR": "Турция",
+    "POL": "Польша",
+    "DEU": "Германия",
+    "CZE": "Чехия",
+    "SVK": "Словакия",
+    "SVN": "Словения",
+    "HUN": "Венгрия",
+    "ROU": "Румыния",
+    "BGR": "Болгария",
+    "EST": "Эстония",
+    "LVA": "Латвия",
+    "LTU": "Литва",
+    "ESP": "Испания",
+    "ITA": "Италия",
+    "PRT": "Португалия",
+    "GRC": "Греция",
+    "FRA": "Франция",
+    "BEL": "Бельгия",
+    "NLD": "Нидерланды",
+    "AUT": "Австрия",
+    "CHE": "Швейцария",
+    "GBR": "Великобритания",
+    "IRL": "Ирландия",
+    "NOR": "Норвегия",
+    "SWE": "Швеция",
+    "DNK": "Дания",
+    "FIN": "Финляндия",
+    "ISL": "Исландия",
+    "ISR": "Израиль",
+    "USA": "США",
+    "CAN": "Канада",
+    "MEX": "Мексика",
+    "BRA": "Бразилия",
+    "ARG": "Аргентина",
+    "CHN": "Китай",
+    "JPN": "Япония",
+    "KOR": "Республика Корея",
+    "IND": "Индия",
+    "THA": "Таиланд",
+    "VNM": "Вьетнам",
+    "PHL": "Филиппины",
+    "IDN": "Индонезия",
+    "MYS": "Малайзия",
+    "SGP": "Сингапур",
+    "ARE": "ОАЭ",
+    "SAU": "Саудовская Аравия",
+    "EGY": "Египет",
+    "MAR": "Марокко",
+    "ZAF": "ЮАР",
+    "AUS": "Австралия",
+    "NZL": "Новая Зеландия",
+    "SRB": "Сербия",
+    "MNE": "Черногория",
+    "BIH": "Босния и Герцеговина",
+    "HRV": "Хорватия",
 }
 
 _SALARY_WORDS_RU = {
@@ -211,32 +329,65 @@ def _money_to_words_es(amount: int) -> str:
 # ============================================================================
 
 def _full_name_native(applicant: Applicant) -> str:
-    parts = [applicant.last_name_native, applicant.first_name_native]
-    if applicant.middle_name_native:
-        parts.append(applicant.middle_name_native)
-    return " ".join(p for p in parts if p)
+    """
+    Полное имя на русском (Им. падеж).
+    Pack 14 fix: если native пустые — fallback на latin (для иностранцев которым менеджер
+    ещё не вписал русское имя).
+    """
+    if applicant.last_name_native and applicant.first_name_native:
+        parts = [applicant.last_name_native, applicant.first_name_native]
+        if applicant.middle_name_native:
+            parts.append(applicant.middle_name_native)
+        return " ".join(p for p in parts if p)
+
+    # Fallback на latin
+    if applicant.last_name_latin and applicant.first_name_latin:
+        return f"{applicant.last_name_latin} {applicant.first_name_latin}"
+
+    return ""
 
 
 def _initials_native(applicant: Applicant) -> str:
-    if not applicant.last_name_native or not applicant.first_name_native:
-        return ""
-    result = f"{applicant.last_name_native} {applicant.first_name_native[0]}."
-    if applicant.middle_name_native:
-        result += f"{applicant.middle_name_native[0]}."
-    return result
+    """
+    Сокращённая форма (Иванов И.И.).
+    Pack 14 fix: fallback на latin (Yuksel V.).
+    """
+    if applicant.last_name_native and applicant.first_name_native:
+        result = f"{applicant.last_name_native} {applicant.first_name_native[0]}."
+        if applicant.middle_name_native:
+            result += f"{applicant.middle_name_native[0]}."
+        return result
+
+    # Fallback на latin
+    if applicant.last_name_latin and applicant.first_name_latin:
+        return f"{applicant.last_name_latin} {applicant.first_name_latin[0]}."
+
+    return ""
 
 
 def _build_citizen_phrase(applicant: Applicant) -> str:
     """
     Юридически правильная формулировка для договора:
     "Гражданин Российской Федерации"
-    "Гражданка Республики Армения"
+    "Гражданка Турецкой Республики"
+    "Гражданин Республики Польша"
+
+    Pack 14 fix: расширен список стран до 60+. Если страна не в словаре —
+    fallback на ISO код (например "Гражданин XYZ"), чтобы было видно непокрытый кейс.
     """
     is_female = applicant.sex == "M"  # M = Mujer
     citizen_word = "Гражданка" if is_female else "Гражданин"
-    country = _NATIONALITY_GENITIVE_RU.get(
-        applicant.nationality, "Российской Федерации"
-    )
+
+    nationality = applicant.nationality
+    if not nationality:
+        # Если nationality не задано — оставляем как было (RUS по умолчанию)
+        country = "Российской Федерации"
+    else:
+        country = _NATIONALITY_GENITIVE_RU.get(nationality)
+        if not country:
+            # Страна не в словаре — используем ISO код (видимый «дефект» который заметит менеджер)
+            country = nationality
+
     return f"{citizen_word} {country}"
 
 
@@ -247,22 +398,12 @@ def _build_named_suffix(applicant: Applicant) -> str:
 
 
 def _parse_passport(passport_number: str | None, nationality: str | None) -> dict:
-    """
-    Разбирает номер паспорта на серию и номер с учётом гражданства.
-    
-    Российский паспорт (10 цифр):
-        '4503123456' → series='4503', number_only='123456'
-        '4503 123456' → series='4503', number_only='123456'
-        '45 03 123456' → series='4503', number_only='123456'
-    
-    Иностранный паспорт:
-        'C01366076' → series='', number_only='C01366076'
-    """
+    """Разбирает номер паспорта на серию и номер с учётом гражданства."""
     if not passport_number:
         return {"series": "", "number_only": "", "formatted": ""}
-    
+
     clean = passport_number.replace(" ", "").replace("-", "")
-    
+
     if nationality == "RUS":
         digits = re.sub(r"\D", "", clean)
         if len(digits) >= 10:
@@ -278,7 +419,7 @@ def _parse_passport(passport_number: str | None, nationality: str | None) -> dic
             "number_only": passport_number,
             "formatted": f"№ {passport_number}",
         }
-    
+
     return {
         "series": "",
         "number_only": passport_number,
@@ -489,7 +630,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     monthly_docs = _generate_monthly_documents(application)
     eur_data = _build_eur_data(application) if application.salary_rub else None
     bank_data = _build_bank_context(application, company)
-    
+
     # Парсим паспорт по гражданству
     passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
 
@@ -497,8 +638,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "applicant": {
             "full_name_native": _full_name_native(applicant),
             "initials_native": _initials_native(applicant),
-            "last_name_native": applicant.last_name_native,
-            "first_name_native": applicant.first_name_native,
+            "last_name_native": applicant.last_name_native or "",
+            "first_name_native": applicant.first_name_native or "",
             "middle_name_native": applicant.middle_name_native or "",
             "last_name_latin": applicant.last_name_latin,
             "first_name_latin": applicant.first_name_latin,
@@ -520,10 +661,10 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "email": applicant.email,
             "phone": applicant.phone,
             "nationality_ru_genitive": _NATIONALITY_GENITIVE_RU.get(
-                applicant.nationality, applicant.nationality
+                applicant.nationality, applicant.nationality or ""
             ),
             "nationality_ru": _NATIONALITY_NOMINATIVE_RU.get(
-                applicant.nationality, applicant.nationality
+                applicant.nationality, applicant.nationality or ""
             ),
             # Юридически правильные формулировки для договора
             "citizen_phrase": _build_citizen_phrase(applicant),

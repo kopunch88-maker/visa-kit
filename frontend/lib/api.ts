@@ -479,26 +479,24 @@ export async function adminListClientDocuments(
 /**
  * Запустить OCR заново для документа клиента (от имени менеджера).
  *
- * Pack 14b+c finishing: опциональный pageNum — для PDF документов
- * можно выбрать другую страницу (требует наличия original PDF).
- * Если pageNum не передан — OCR текущего файла.
+ * Pack 14b+c FIX: опциональный pageNum — если PDF, можно выбрать другую страницу.
+ * Backend конвертирует выбранную страницу в новый JPEG, заменяет primary файл и распознаёт.
  */
 export async function adminRecognizeClientDocument(
   applicationId: number,
   docId: number,
   pageNum?: number,
 ): Promise<ClientDocument> {
-  const body: Record<string, unknown> = {};
-  if (pageNum !== undefined && pageNum !== null) {
-    body.page_num = pageNum;
-  }
-
+  const body = pageNum != null ? JSON.stringify({ page_num: pageNum }) : "{}";
   const res = await fetch(
     `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,
     {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body,
     },
   );
   if (!res.ok) {
@@ -807,6 +805,53 @@ export async function createApplication(payload: {
 export async function getApplicantById(id: number): Promise<ApplicantResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Обновить данные кандидата (Applicant) от имени менеджера.
+ * Pack 14 finishing: позволяет менеджеру вписать русские ФИО для иностранцев,
+ * исправить гражданство и т.д.
+ */
+export async function updateApplicant(
+  id: number,
+  patch: Partial<{
+    last_name_native: string;
+    first_name_native: string;
+    middle_name_native: string;
+    last_name_latin: string;
+    first_name_latin: string;
+    nationality: string;
+    sex: string;
+    home_country: string;
+    home_address: string;
+    passport_number: string;
+    passport_issue_date: string;
+    passport_issuer: string;
+    birth_date: string;
+    birth_place_latin: string;
+    email: string;
+    phone: string;
+    inn: string;
+  }>,
+): Promise<ApplicantResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, {
+    method: "PATCH",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка обновления (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
   return res.json();
 }
 

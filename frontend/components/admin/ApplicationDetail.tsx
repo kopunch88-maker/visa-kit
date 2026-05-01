@@ -26,9 +26,11 @@ import { BusinessChecksBlock } from "./BusinessChecksBlock";
 import { DocumentsGrid } from "./DocumentsGrid";
 import { CompanyContractDrawer } from "./CompanyContractDrawer";
 import { SubmissionDrawer } from "./SubmissionDrawer";
+import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
 import { AdminClientDocuments } from "./AdminClientDocuments";
+
 interface Props {
   applicationId: number;
   onUpdated: () => void;
@@ -73,6 +75,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const [copied, setCopied] = useState(false);
   const [showCompanyDrawer, setShowCompanyDrawer] = useState(false);
   const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);
+  const [showApplicantDrawer, setShowApplicantDrawer] = useState(false);
 
   async function loadAll() {
     setError(null);
@@ -175,7 +178,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const isAssigned = !!application.company_id;
   const statusColors = STATUS_COLORS[application.status] || STATUS_COLORS.draft;
 
-  // Двухязычное ФИО
+  // Двуязычное ФИО
   const fullNameRu = applicant?.full_name_native || application.internal_notes || "Без имени";
   const fullNameLatin =
     applicant?.last_name_latin && applicant?.first_name_latin
@@ -184,7 +187,6 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Pack 10: баннер «Эта заявка в архиве» */}
       {application.is_archived && (
         <ArchiveBanner application={application} onChanged={handleArchiveChanged} />
       )}
@@ -196,7 +198,6 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       >
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex-1 min-w-0">
-            {/* Двухязычное ФИО */}
             <h2 className="text-2xl font-bold text-primary mb-0.5 leading-tight">
               {fullNameRu}
             </h2>
@@ -262,7 +263,6 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
               Открыть как клиент
             </button>
 
-            {/* Pack 10: кнопка В архив / Вернуть в работу */}
             <ArchiveButton application={application} onChanged={handleArchiveChanged} />
           </div>
         </div>
@@ -270,7 +270,11 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
 
       {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <CandidateCard applicant={applicant} application={application} />
+        <CandidateCard
+          applicant={applicant}
+          application={application}
+          onEdit={applicant ? () => setShowApplicantDrawer(true) : undefined}
+        />
         <CompanyCard
           company={company}
           position={position}
@@ -285,17 +289,14 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
         />
       </div>
 
-      {/* Чек-лист (бывшие бизнес-проверки) */}
       <BusinessChecksBlock
         application={application}
         applicant={applicant}
         company={company}
       />
- <AdminClientDocuments applicationId={application.id} />
-      {/* Документы */}
+      <AdminClientDocuments applicationId={application.id} />
       {isAssigned && <DocumentsGrid applicationId={application.id} />}
 
-      {/* Подсказка если не распределена */}
       {!isAssigned && applicant && (
         <div
           className="bg-primary rounded-xl border p-5 text-center"
@@ -345,6 +346,19 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           onClose={() => setShowSubmissionDrawer(false)}
           onSaved={() => {
             setShowSubmissionDrawer(false);
+            loadAll();
+            onUpdated();
+          }}
+        />
+      )}
+
+      {/* Pack 14 finishing — drawer для редактирования Applicant */}
+      {showApplicantDrawer && applicant && (
+        <ApplicantDrawer
+          applicant={applicant}
+          onClose={() => setShowApplicantDrawer(false)}
+          onSaved={() => {
+            setShowApplicantDrawer(false);
             loadAll();
             onUpdated();
           }}
