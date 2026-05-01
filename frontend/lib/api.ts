@@ -1226,3 +1226,129 @@ export const FIELD_LABELS: Record<string, string> = {
   home_address: "Адрес регистрации",
   home_country: "Страна",
 };
+// ============================================================================
+// Pack 15 — Translations (испанский перевод документов)
+// ============================================================================
+
+export type TranslationKind =
+  | "contract"
+  | "act_1"
+  | "act_2"
+  | "act_3"
+  | "invoice_1"
+  | "invoice_2"
+  | "invoice_3"
+  | "employer_letter"
+  | "cv"
+  | "bank_statement";
+
+export type TranslationStatus = "pending" | "in_progress" | "done" | "failed";
+
+export type TranslationItem = {
+  id: number;
+  kind: TranslationKind;
+  status: TranslationStatus;
+  file_name?: string;
+  file_size?: number;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+  download_url?: string;
+};
+
+export type TranslationsSummary = {
+  total: number;
+  pending: number;
+  in_progress: number;
+  done: number;
+  failed: number;
+  is_active: boolean;  // есть ли pending или in_progress
+  has_any: boolean;    // есть ли хоть одна запись
+};
+
+export type TranslationsResponse = {
+  translations: TranslationItem[];
+  summary: TranslationsSummary;
+};
+
+// Метаинформация о документах для UI: красивые имена и порядок
+export const TRANSLATION_KIND_INFO: Record<
+  TranslationKind,
+  { ru_label: string; es_filename: string; order: number }
+> = {
+  contract:        { ru_label: "Договор",     es_filename: "01_Contrato.docx",            order: 1  },
+  act_1:           { ru_label: "Акт 1",       es_filename: "02_Acta_1.docx",              order: 2  },
+  act_2:           { ru_label: "Акт 2",       es_filename: "03_Acta_2.docx",              order: 3  },
+  act_3:           { ru_label: "Акт 3",       es_filename: "04_Acta_3.docx",              order: 4  },
+  invoice_1:       { ru_label: "Счёт 1",      es_filename: "05_Factura_1.docx",           order: 5  },
+  invoice_2:       { ru_label: "Счёт 2",      es_filename: "06_Factura_2.docx",           order: 6  },
+  invoice_3:       { ru_label: "Счёт 3",      es_filename: "07_Factura_3.docx",           order: 7  },
+  employer_letter: { ru_label: "Письмо",      es_filename: "08_Carta_de_la_empresa.docx", order: 8  },
+  cv:              { ru_label: "Резюме",      es_filename: "09_CV.docx",                  order: 9  },
+  bank_statement:  { ru_label: "Выписка",     es_filename: "10_Extracto_bancario.docx",   order: 10 },
+};
+
+/** Запустить перевод всего пакета (10 документов) в фоне. */
+export async function startPackageTranslation(applicationId: number): Promise<{ status: string; kinds_count: number }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translate`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/** Перевести один документ (или повторить для упавшего). */
+export async function startSingleTranslation(
+  applicationId: number,
+  kind: TranslationKind,
+): Promise<{ status: string; kind: string }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translate/${kind}`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/** Получить список всех переводов заявки + сводку статусов. */
+export async function getTranslations(applicationId: number): Promise<TranslationsResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/** Удалить все переводы (для «Перевести заново»). */
+export async function deleteAllTranslations(applicationId: number): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+}
+
+/** Скачать ZIP всех успешно переведённых документов. */
+export async function downloadTranslationsZip(applicationId: number): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/zip`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.blob();
+}
+
+/** Скачать один переведённый файл по типу. */
+export async function downloadTranslationFile(
+  applicationId: number,
+  kind: TranslationKind,
+): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/${kind}/download`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.blob();
+}

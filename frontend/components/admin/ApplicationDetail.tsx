@@ -30,6 +30,7 @@ import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
 import { AdminClientDocuments } from "./AdminClientDocuments";
+import { TranslationPanel } from "./TranslationPanel";
 
 interface Props {
   applicationId: number;
@@ -296,6 +297,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       />
       <AdminClientDocuments applicationId={application.id} />
       {isAssigned && <DocumentsGrid applicationId={application.id} />}
+      {isAssigned && <TranslationPanel applicationId={application.id} />}
 
       {!isAssigned && applicant && (
         <div
