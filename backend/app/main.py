@@ -65,6 +65,7 @@ from app.api import (  # noqa: E402
     client_documents_admin,
     import_package,
     bank_transactions,
+    translations,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -79,6 +80,7 @@ app.include_router(client_portal.router, prefix="/api")
 app.include_router(client_documents_admin.router, prefix="/api")
 app.include_router(import_package.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
+app.include_router(translations.router, prefix="/api")
 
 
 @app.get("/", tags=["meta"])
