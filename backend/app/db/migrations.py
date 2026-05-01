@@ -142,3 +142,41 @@ def apply_pack13_migration():
             log.info("[migration:pack13] Indexes verified on applicant_document")
         except Exception as e:
             log.warning(f"[migration:pack13] Index creation failed: {e}")
+
+
+def apply_pack15_migration():
+    """
+    Pack 15: создание таблицы translation для испанских переводов.
+
+    Таблица создаётся через init_db() (SQLModel.metadata.create_all).
+    Здесь только индексы для быстрого поиска по application_id и status.
+    """
+    with engine.begin() as conn:
+        if not _table_exists(conn, "translation"):
+            log.info(
+                "[migration:pack15] Table translation not found — "
+                "expected to be created by SQLModel.metadata.create_all() in init_db()"
+            )
+            return
+
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_translation_application_id "
+                "ON translation (application_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_translation_kind "
+                "ON translation (kind)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_translation_status "
+                "ON translation (status)"
+            ))
+            # Композитный индекс — быстрый GET всех переводов заявки
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_translation_app_kind "
+                "ON translation (application_id, kind)"
+            ))
+            log.info("[migration:pack15] Indexes verified on translation")
+        except Exception as e:
+            log.warning(f"[migration:pack15] Index creation failed: {e}")

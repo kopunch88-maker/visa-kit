@@ -52,6 +52,14 @@ from .applicant_document import (
     ApplicantDocumentStatus,
 )
 
+# Pack 15: translations of rendered documents to Spanish
+from .translation import (
+    Translation,
+    TranslationKind,
+    TranslationStatus,
+)
+
+
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -76,4 +84,8 @@ __all__ = [
     "ApplicantDocument",
     "ApplicantDocumentType",
     "ApplicantDocumentStatus",
+    # Pack 15: translations
+    "Translation",
+    "TranslationKind",
+    "TranslationStatus",
 ]

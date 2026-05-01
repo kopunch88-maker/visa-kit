@@ -14,6 +14,7 @@ from app.db.migrations import (
     apply_pack11_migration,
     apply_pack11_2_migration,
     apply_pack13_migration,
+    apply_pack15_migration,
 )
 
 
@@ -25,7 +26,8 @@ async def lifespan(app: FastAPI):
     apply_pack10_migration()
     apply_pack11_migration()
     apply_pack11_2_migration()
-    apply_pack13_migration()  # NEW: applicant_document table
+    apply_pack13_migration()  # applicant_document table
+    apply_pack15_migration()  # translation table (Pack 15)
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
