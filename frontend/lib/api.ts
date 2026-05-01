@@ -455,6 +455,50 @@ export async function applyDocumentsToApplicant(
 // ============================================================================
 
 // ============================================================================
+// Pack 13.2: Admin — Client documents
+// ============================================================================
+
+/**
+ * Получить документы клиента (от имени менеджера).
+ */
+export async function adminListClientDocuments(
+  applicationId: number,
+): Promise<ClientDocument[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) {
+    throw new Error(`Не удалось получить документы: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
+
+/**
+ * Запустить OCR заново для документа клиента (от имени менеджера).
+ */
+export async function adminRecognizeClientDocument(
+  applicationId: number,
+  docId: number,
+): Promise<ClientDocument> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Не удалось распознать (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
+  }
+  return res.json();
+}
+
+
+// ============================================================================
 // Pack 14a: Bulk import — пакет документов от менеджера
 // ============================================================================
 
