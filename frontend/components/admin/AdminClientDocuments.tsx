@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Loader2, FileText, Image as ImageIcon, Download, RefreshCw,
   CheckCircle2, AlertCircle, Inbox, ExternalLink, Sparkles,
+  X, FileWarning,
 } from "lucide-react";
 import {
   ClientDocument,
@@ -13,6 +14,7 @@ import {
   adminListClientDocuments,
   adminRecognizeClientDocument,
 } from "@/lib/api";
+import { pdfToImagePages, PdfPagePreview } from "@/lib/pdfConverter";
 
 interface Props {
   applicationId: number;
@@ -53,6 +55,7 @@ export function AdminClientDocuments({ applicationId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recognizingId, setRecognizingId] = useState<number | null>(null);
+  const [pageSelectorDoc, setPageSelectorDoc] = useState<ClientDocument | null>(null);
 
   async function load() {
     setError(null);
@@ -72,7 +75,8 @@ export function AdminClientDocuments({ applicationId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationId]);
 
-  async function handleRecognize(docId: number) {
+  // Простое распознавание (для не-PDF или когда страница не нужна)
+  async function handleRecognizeSimple(docId: number) {
     setRecognizingId(docId);
     setError(null);
     try {
@@ -82,6 +86,32 @@ export function AdminClientDocuments({ applicationId }: Props) {
       setError((e as Error).message);
     } finally {
       setRecognizingId(null);
+    }
+  }
+
+  // Распознавание с выбранной страницей PDF
+  async function handleRecognizeWithPage(docId: number, pageNum: number) {
+    setRecognizingId(docId);
+    setError(null);
+    try {
+      const updated = await adminRecognizeClientDocument(applicationId, docId, pageNum);
+      setDocuments((prev) => prev.map((d) => (d.id === docId ? updated : d)));
+      setPageSelectorDoc(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRecognizingId(null);
+    }
+  }
+
+  // Обработчик клика по «Распознать» / «↻»: для PDF — открыть пикер страниц, иначе сразу
+  function handleRecognizeClick(doc: ClientDocument) {
+    if (doc.has_original && doc.original_download_url) {
+      // Это PDF, у которого есть оригинал. Открываем выбор страницы.
+      setPageSelectorDoc(doc);
+    } else {
+      // Не-PDF или PDF без оригинала — стандартный путь
+      handleRecognizeSimple(doc.id);
     }
   }
 
@@ -96,7 +126,7 @@ export function AdminClientDocuments({ applicationId }: Props) {
             Документы клиента
           </h3>
           <div className="text-xs text-tertiary">
-            Загружено клиентом через личный кабинет
+            Загружено клиентом через личный кабинет или импортом пакета
           </div>
         </div>
         <button
@@ -144,10 +174,20 @@ export function AdminClientDocuments({ applicationId }: Props) {
               key={doc.id}
               doc={doc}
               isRecognizing={recognizingId === doc.id}
-              onRecognize={() => handleRecognize(doc.id)}
+              onRecognize={() => handleRecognizeClick(doc)}
             />
           ))}
         </div>
+      )}
+
+      {/* Pack 14b+c finishing: модалка выбора страницы PDF */}
+      {pageSelectorDoc && (
+        <PdfPageSelector
+          doc={pageSelectorDoc}
+          isRecognizing={recognizingId === pageSelectorDoc.id}
+          onClose={() => setPageSelectorDoc(null)}
+          onSelect={(page) => handleRecognizeWithPage(pageSelectorDoc.id, page)}
+        />
       )}
     </div>
   );
@@ -188,13 +228,12 @@ function DocumentCard({
   const docTypeLabel =
     DOCUMENT_TYPE_LABELS[doc.doc_type as ClientDocumentType] || doc.doc_type;
 
-  // Список распознанных полей с непустыми значениями
   const parsedFields = Object.entries(doc.parsed_data || {}).filter(
     ([_, v]) => v !== null && v !== undefined && v !== "",
   );
 
-  // Apostille — особый случай: parsed_data пустой по дизайну
   const isApostille = doc.doc_type === "diploma_apostille";
+  const isPdf = doc.has_original; // doc has original PDF saved
 
   return (
     <div
@@ -267,7 +306,7 @@ function DocumentCard({
           {doc.file_name} · {fileSizeKB} КБ
         </div>
 
-        {/* Распознанные поля (если есть) */}
+        {/* Распознанные поля */}
         {doc.status === "ocr_done" && parsedFields.length > 0 && !isApostille && (
           <details className="mb-2">
             <summary
@@ -291,14 +330,12 @@ function DocumentCard({
           </details>
         )}
 
-        {/* Apostille — только notice */}
         {isApostille && doc.status === "ocr_done" && (
           <div className="text-xs text-tertiary italic mb-2">
             Апостиль распознавать не нужно — файл сохранён для подачи
           </div>
         )}
 
-        {/* OCR error */}
         {doc.status === "ocr_failed" && doc.ocr_error && (
           <div
             className="text-xs mb-2 p-2 rounded"
@@ -355,7 +392,11 @@ function DocumentCard({
                 disabled={isRecognizing}
                 className="text-xs px-2.5 py-1 rounded-md text-white disabled:opacity-50 transition-colors flex items-center gap-1"
                 style={{ background: "var(--color-accent)" }}
-                title="Запустить OCR для этого документа"
+                title={
+                  isPdf
+                    ? "Открыть выбор страницы и распознать"
+                    : "Запустить OCR для этого документа"
+                }
               >
                 {isRecognizing ? (
                   <>
@@ -366,6 +407,7 @@ function DocumentCard({
                   <>
                     <Sparkles className="w-3 h-3" />
                     {doc.status === "ocr_failed" ? "Попробовать снова" : "Распознать"}
+                    {isPdf ? " (выбор стр.)" : ""}
                   </>
                 )}
               </button>
@@ -380,15 +422,224 @@ function DocumentCard({
                 borderColor: "var(--color-border-tertiary)",
                 borderWidth: 0.5,
               }}
-              title="Распознать заново"
+              title={
+                isPdf
+                  ? "Распознать другую страницу PDF"
+                  : "Распознать заново"
+              }
             >
               {isRecognizing ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
               ) : (
-                <RefreshCw className="w-3 h-3" />
+                <>
+                  <RefreshCw className="w-3 h-3" />
+                  {isPdf && <span className="ml-1">Выбрать стр.</span>}
+                </>
               )}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// =============================================================================
+// PDF Page Selector Modal (Pack 14b+c finishing)
+// =============================================================================
+
+function PdfPageSelector({
+  doc,
+  isRecognizing,
+  onClose,
+  onSelect,
+}: {
+  doc: ClientDocument;
+  isRecognizing: boolean;
+  onClose: () => void;
+  onSelect: (pageNum: number) => void;
+}) {
+  const [pages, setPages] = useState<PdfPagePreview[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedPage, setSelectedPage] = useState<number>(1);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPages() {
+      if (!doc.original_download_url) {
+        setLoadError("Оригинальный PDF недоступен");
+        setLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch(doc.original_download_url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const result = await pdfToImagePages(blob, { dpi: 100, maxPages: 30 });
+        if (!cancelled) {
+          setPages(result);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setLoadError((e as Error).message);
+          setLoading(false);
+        }
+      }
+    }
+    loadPages();
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.original_download_url]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+    >
+      <div
+        className="rounded-xl max-w-4xl w-full max-h-[92vh] overflow-hidden flex flex-col"
+        style={{
+          background: "var(--color-bg-primary)",
+          border: "0.5px solid var(--color-border-secondary)",
+        }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b"
+          style={{
+            borderColor: "var(--color-border-tertiary)",
+            borderBottomWidth: 0.5,
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5" style={{ color: "var(--color-accent)" }} />
+            <span className="text-base font-semibold text-primary">
+              Выбор страницы для распознавания
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={isRecognizing}
+            className="p-1.5 rounded-md hover:bg-secondary transition-colors text-tertiary disabled:opacity-50"
+            aria-label="Закрыть"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-auto p-5">
+          <div className="text-xs text-tertiary mb-3">
+            {doc.original_file_name || doc.file_name} · Кликните страницу с данными,
+            затем «Распознать выбранную страницу».
+          </div>
+
+          {loading && (
+            <div className="flex flex-col items-center justify-center py-12 gap-2">
+              <Loader2 className="w-6 h-6 animate-spin text-tertiary" />
+              <div className="text-sm text-tertiary">Конвертируем страницы PDF...</div>
+            </div>
+          )}
+
+          {loadError && (
+            <div
+              className="p-3 rounded-md text-sm flex gap-2 items-start"
+              style={{
+                background: "var(--color-bg-danger)",
+                color: "var(--color-text-danger)",
+                border: "0.5px solid var(--color-border-danger)",
+              }}
+            >
+              <FileWarning className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>Не удалось загрузить превью: {loadError}</span>
+            </div>
+          )}
+
+          {pages && pages.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {pages.map((p) => {
+                const selected = selectedPage === p.pageNum;
+                return (
+                  <button
+                    key={p.pageNum}
+                    onClick={() => setSelectedPage(p.pageNum)}
+                    disabled={isRecognizing}
+                    className="relative rounded-md overflow-hidden text-left transition-all disabled:opacity-50"
+                    style={{
+                      borderWidth: selected ? 2 : 0.5,
+                      borderStyle: "solid",
+                      borderColor: selected
+                        ? "var(--color-accent)"
+                        : "var(--color-border-secondary)",
+                      background: "var(--color-bg-secondary)",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.dataUrl}
+                      alt={`Стр. ${p.pageNum}`}
+                      className="w-full h-auto block"
+                      style={{ aspectRatio: `${p.width}/${p.height}` }}
+                    />
+                    <div
+                      className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs font-medium text-center"
+                      style={{
+                        background: selected
+                          ? "var(--color-accent)"
+                          : "rgba(0,0,0,0.6)",
+                        color: "white",
+                      }}
+                    >
+                      Стр. {p.pageNum}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div
+          className="px-5 py-4 border-t flex justify-between gap-3"
+          style={{
+            borderColor: "var(--color-border-tertiary)",
+            borderTopWidth: 0.5,
+          }}
+        >
+          <button
+            onClick={onClose}
+            disabled={isRecognizing}
+            className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors disabled:opacity-50"
+            style={{
+              borderColor: "var(--color-border-tertiary)",
+              borderWidth: 0.5,
+            }}
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => onSelect(selectedPage)}
+            disabled={isRecognizing || loading || !pages}
+            className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2 disabled:opacity-50"
+            style={{ background: "var(--color-accent)" }}
+          >
+            {isRecognizing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Распознаём страницу {selectedPage}...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                Распознать страницу {selectedPage}
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

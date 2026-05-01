@@ -478,14 +478,28 @@ export async function adminListClientDocuments(
 
 /**
  * Запустить OCR заново для документа клиента (от имени менеджера).
+ *
+ * Pack 14b+c finishing: опциональный pageNum — для PDF документов
+ * можно выбрать другую страницу (требует наличия original PDF).
+ * Если pageNum не передан — OCR текущего файла.
  */
 export async function adminRecognizeClientDocument(
   applicationId: number,
   docId: number,
+  pageNum?: number,
 ): Promise<ClientDocument> {
+  const body: Record<string, unknown> = {};
+  if (pageNum !== undefined && pageNum !== null) {
+    body.page_num = pageNum;
+  }
+
   const res = await fetch(
     `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,
-    { method: "POST", headers: authHeaders() },
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
   );
   if (!res.ok) {
     const errText = await res.text();

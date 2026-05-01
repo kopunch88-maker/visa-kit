@@ -8,6 +8,53 @@ interface Props {
   application: ApplicationResponse;
 }
 
+// ISO 3-letter country codes → читаемое русское название
+// Топ-30 стран релевантных для DN-визы
+const COUNTRY_LABELS: Record<string, string> = {
+  RUS: "Россия",
+  BLR: "Беларусь",
+  UKR: "Украина",
+  KAZ: "Казахстан",
+  ARM: "Армения",
+  AZE: "Азербайджан",
+  GEO: "Грузия",
+  KGZ: "Кыргызстан",
+  TJK: "Таджикистан",
+  UZB: "Узбекистан",
+  TKM: "Туркменистан",
+  MDA: "Молдова",
+  TUR: "Турция",
+  ISR: "Израиль",
+  POL: "Польша",
+  DEU: "Германия",
+  CZE: "Чехия",
+  HUN: "Венгрия",
+  SRB: "Сербия",
+  MNE: "Черногория",
+  HRV: "Хорватия",
+  BGR: "Болгария",
+  ROU: "Румыния",
+  GRC: "Греция",
+  CYP: "Кипр",
+  ITA: "Италия",
+  ESP: "Испания",
+  PRT: "Португалия",
+  FRA: "Франция",
+  NLD: "Нидерланды",
+  GBR: "Великобритания",
+  USA: "США",
+  CAN: "Канада",
+  ARE: "ОАЭ",
+  THA: "Таиланд",
+  IDN: "Индонезия",
+};
+
+function formatCountry(code: string | null | undefined): string {
+  if (!code) return "—";
+  const label = COUNTRY_LABELS[code.toUpperCase()];
+  return label ? `${label} (${code})` : code;
+}
+
 export function CandidateCard({ applicant, application }: Props) {
   return (
     <div
@@ -32,10 +79,24 @@ export function CandidateCard({ applicant, application }: Props) {
             label="Паспорт"
             value={
               applicant.passport_number
-                ? `${applicant.passport_number} (${applicant.nationality || "?"})`
+                ? `${applicant.passport_number}${applicant.nationality ? ` (${applicant.nationality})` : ""}`
                 : "—"
             }
           />
+
+          {/* Pack 14b+c: гражданство и страна жительства */}
+          <Field
+            label="🌍 Гражданство"
+            value={formatCountry(applicant.nationality)}
+          />
+          {applicant.home_country &&
+            applicant.home_country !== applicant.nationality && (
+              <Field
+                label="🏠 Живёт в"
+                value={formatCountry(applicant.home_country)}
+              />
+            )}
+
           <Field
             label="Родился"
             value={
@@ -44,6 +105,26 @@ export function CandidateCard({ applicant, application }: Props) {
                 : "—"
             }
           />
+
+          {applicant.passport_issue_date && (
+            <Field
+              label="Паспорт выдан"
+              value={`${new Date(applicant.passport_issue_date).toLocaleDateString("ru")}${
+                applicant.passport_issuer ? ` · ${applicant.passport_issuer}` : ""
+              }`}
+            />
+          )}
+          {applicant.passport_expiry_date && (
+            <Field
+              label="Паспорт действует до"
+              value={new Date(applicant.passport_expiry_date).toLocaleDateString("ru")}
+            />
+          )}
+
+          {applicant.home_address && (
+            <Field label="Адрес" value={applicant.home_address} />
+          )}
+
           <Field
             label="Контакты"
             value={
