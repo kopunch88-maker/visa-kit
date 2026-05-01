@@ -1,24 +1,14 @@
 """
 Pack 15.1 — Pre-substitution имён до перевода через LLM.
+Pack 15.2 — Расширения:
+   - applicant.full_name_native (Юксел Ведат — единая строка из шаблона)
+   - company.short_name (ИНЖГЕОСЕРВИС — без ООО)
+   - Метки ИНН/КПП/ОГРН/БИК → NIF/KPP/OGRN/BIC (надёжная замена даже если LLM
+     решит их «не трогать»)
+   - "None" → "—" (фикс случаев когда Jinja подставляет None для пустых полей)
 
 Принцип: до отправки текста в LLM, заменяем в DOCX все вхождения русских имён
 (applicant, директора компании, название компании) на латинские эквиваленты.
-
-LLM получает уже частично-латинизированный русский текст. Промпт явно говорит
-«латиницу не трогай — это уже корректные имена из официальных документов».
-
-Это решает три проблемы которые видны в реальных подачах:
-1. LLM раньше иногда транслитерировал имена сам — получался разнобой
-   (один документ "Yuksel", другой "Yuksel'" или "Iuksel'" по ГОСТу)
-2. LLM иногда переводил название компании смыслом ("ИНЖГЕОСЕРВИС" → "Engineering...")
-   вместо транслита, как принято у jurada-переводчиков
-3. Менеджер потом руками правил — теперь не нужно
-
-Источники латинских форм:
-- Applicant.last_name_latin / first_name_latin — из паспорта (приоритет)
-- Company.full_name_es — заполнен менеджером в drawer (приоритет)
-- Company.director_full_name_latin — заполнен менеджером в drawer (приоритет)
-- Если что-то не заполнено — fallback на GOST 52535.1-2006 транслит
 """
 
 import logging
@@ -32,18 +22,46 @@ from app.services.transliteration import transliterate_name
 log = logging.getLogger(__name__)
 
 
+# Pack 15.2: метки реквизитов всегда переводятся (а не оставляются кириллицей).
+# Это надёжный backup промпта — если LLM решит «оставить как есть», pre-sub
+# уже подменил их на испанскую версию.
+LABEL_SUBSTITUTIONS: list[tuple[str, str]] = [
+    # Налоговые ID (с пробелом после — чтобы не задеть «ИНН» внутри слов)
+    ("ИНН ",  "NIF "),
+    ("КПП ",  "KPP "),
+    ("ОГРН ", "OGRN "),
+    ("БИК ",  "BIC "),
+    ("СНИЛС ", "SNILS "),
+    ("ОКПО ", "OKPO "),
+    # Метки в конце строки (без пробела после)
+    ("ИНН\n",  "NIF\n"),
+    ("КПП\n",  "KPP\n"),
+    ("ОГРН\n", "OGRN\n"),
+    ("БИК\n",  "BIC\n"),
+    ("СНИЛС\n", "SNILS\n"),
+    # Также если идут с двоеточием
+    ("ИНН:",  "NIF:"),
+    ("КПП:",  "KPP:"),
+    ("ОГРН:", "OGRN:"),
+    ("БИК:",  "BIC:"),
+    # Обычно «БИК банка» в шаблонах — этот вариант уже LLM хорошо переводит,
+    # но на всякий случай:
+    ("БИК банка", "BIC del banco"),
+    # Жёсткий фикс: None из Jinja
+    (": None\n", ": —\n"),
+    (" None\n", " —\n"),
+    ("\nNone\n", "\n—\n"),
+    ("\nNone ", "\n— "),
+    ("\nNone:", "\n—:"),
+]
+
+
 @dataclass
 class SubstitutionDict:
-    """
-    Словарь замен ru → lat для одной заявки.
-
-    Замены применяются в порядке: longest first (длинные сначала),
-    чтобы «Иванов Иван Иванович» заменилось целиком, прежде чем «Иванов» отдельно.
-    """
-    pairs: list[tuple[str, str]]  # [(ru_text, lat_text), ...] длинные сначала
+    """Словарь замен ru → lat для одной заявки."""
+    pairs: list[tuple[str, str]]
 
     def apply(self, text: str) -> str:
-        """Применяет все замены к тексту."""
         result = text
         for ru, lat in self.pairs:
             if ru and lat and ru in result:
@@ -54,38 +72,31 @@ class SubstitutionDict:
         return len(self.pairs)
 
 
-def _safe(value: Optional[str]) -> str:
-    """None → '', strip whitespace."""
-    return (value or "").strip()
+def _safe(value) -> str:
+    """None / любой объект → '', strip whitespace."""
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str]]:
     """
     Замены для имени заявителя.
 
-    Источник латиницы: applicant.last_name_latin + first_name_latin (из паспорта).
-    Если латиница не заполнена — пропускаем (LLM сам разберётся).
-
-    Возвращаем замены вида:
-    - "Юксель Ведат" → "Yuksel Vedat"  (полное)
-    - "Юкселя Ведата" → "Yuksel Vedat"  (родительный — если есть в genitive_ru)
-    - "Юксель" → "Yuksel"  (только фамилия)
-    - "Ведат" → "Vedat"  (только имя)
-
-    Не покрываем все падежи русского — это слишком хрупко. Покрываем только
-    Им. падеж и Род. падеж (если есть в applicant). LLM остальное само поймёт
-    по контексту.
+    Pack 15.2: ОБЯЗАТЕЛЬНО покрываем applicant.full_name_native — это единая
+    переменная Jinja которая в шаблоне используется в реквизитной таблице
+    («Юксел Ведат» одной строкой).
     """
     if not applicant:
         return []
 
     last_native = _safe(applicant.last_name_native)
     first_native = _safe(applicant.first_name_native)
-    middle_native = _safe(applicant.middle_name_native)
+    middle_native = _safe(getattr(applicant, "middle_name_native", None))
 
     last_latin = _safe(applicant.last_name_latin)
     first_latin = _safe(applicant.first_name_latin)
-    middle_latin = _safe(applicant.middle_name_latin) if hasattr(applicant, "middle_name_latin") else ""
+    middle_latin = _safe(getattr(applicant, "middle_name_latin", None))
 
     if not last_latin or not first_latin:
         log.info(
@@ -94,14 +105,19 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
         )
         return []
 
-    # Собираем латинские формы: «Фамилия Имя [Отчество]» и просто фамилию/имя
+    # Латинские формы
     full_latin_parts = [last_latin, first_latin]
     if middle_latin:
         full_latin_parts.append(middle_latin)
-    full_latin = " ".join(full_latin_parts)
+    full_latin = " ".join(full_latin_parts)            # "Yuksel Vedat" (Lastname Firstname order)
     short_latin = f"{last_latin} {first_latin}"
 
     pairs: list[tuple[str, str]] = []
+
+    # Pack 15.2: ВАЖНО — applicant.full_name_native (если есть как computed field)
+    full_native = _safe(getattr(applicant, "full_name_native", None))
+    if full_native:
+        pairs.append((full_native, full_latin))
 
     # Полные формы (длинные сначала)
     if last_native and first_native and middle_native:
@@ -110,13 +126,13 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
         pairs.append((f"{last_native} {first_native}", short_latin))
         pairs.append((f"{first_native} {last_native}", short_latin))  # обратный порядок
 
-    # Genitive (Род. падеж) — у Applicant есть last_name_genitive_native?
+    # Genitive — обязательное поле через getattr
     last_genitive = _safe(getattr(applicant, "last_name_genitive_native", None))
     first_genitive = _safe(getattr(applicant, "first_name_genitive_native", None))
     if last_genitive and first_genitive:
         pairs.append((f"{last_genitive} {first_genitive}", short_latin))
 
-    # Одиночные (только фамилия / только имя)
+    # Одиночные
     if last_native:
         pairs.append((last_native, last_latin))
     if first_native:
@@ -128,24 +144,14 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
 
 
 def _gost_director_full(director_ru: str) -> str:
-    """GOST-транслит имени директора в формате "Фамилия Имя Отчество"."""
+    """GOST-транслит имени директора в формате 'Фамилия Имя Отчество'."""
     if not director_ru:
         return ""
     return transliterate_name(director_ru)
 
 
 def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
-    """
-    Замены для имени директора компании.
-
-    Источник латиницы: company.director_full_name_latin (если заполнено),
-    иначе GOST-транслит из company.director_full_name_ru.
-
-    Покрываем:
-    - director_full_name_ru (Им. падеж)
-    - director_full_name_genitive_ru (Род. падеж — обязательное поле)
-    - director_short_ru ("Тараскин Ю.А.")
-    """
+    """Замены для имени директора компании."""
     if not company:
         return []
 
@@ -156,7 +162,6 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
     if not full_ru:
         return []
 
-    # Латинская версия — приоритет на заполненном поле
     full_latin = _safe(getattr(company, "director_full_name_latin", None))
     if not full_latin:
         full_latin = _gost_director_full(full_ru)
@@ -164,12 +169,9 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
     if not full_latin:
         return []
 
-    # Короткая форма из латинского полного: "Tarakin Yury Aleksandrovich" → "Tarakin Y.A."
     short_latin = _short_form(full_latin)
 
     pairs: list[tuple[str, str]] = []
-
-    # Длинные сначала
     if full_ru:
         pairs.append((full_ru, full_latin))
     if genitive_ru:
@@ -181,10 +183,7 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
 
 
 def _short_form(full_name_latin: str) -> str:
-    """
-    "Tarakin Yury Aleksandrovich" → "Tarakin Y.A."
-    "Vuykovich Darko Stevanovich" → "Vuykovich D.S."
-    """
+    """'Tarakin Yury Aleksandrovich' → 'Tarakin Y.A.'"""
     parts = full_name_latin.strip().split()
     if not parts:
         return ""
@@ -198,8 +197,7 @@ def _build_company_subs(company: Optional[Company]) -> list[tuple[str, str]]:
     """
     Замены для названия компании.
 
-    Источник: company.full_name_es (заполнено менеджером).
-    Если пусто — пропускаем (LLM решит сам — это редкий случай, поле обязательное в БД).
+    Pack 15.2: добавлены замены для company.short_name (без ООО).
     """
     if not company:
         return []
@@ -208,35 +206,30 @@ def _build_company_subs(company: Optional[Company]) -> list[tuple[str, str]]:
     full_es = _safe(company.full_name_es)
     short_name = _safe(company.short_name)
 
-    if not full_ru or not full_es:
-        return []
-
     pairs: list[tuple[str, str]] = []
 
-    # Длинные сначала
-    pairs.append((full_ru, full_es))
+    # Полное название (длинное сначала)
+    if full_ru and full_es:
+        pairs.append((full_ru, full_es))
 
-    # Если short_name содержит кириллицу и отличается от full_ru — тоже заменяем
-    # (например full_ru = «ООО ИНЖГЕОСЕРВИС», short_name = «ИНЖГЕОСЕРВИС»)
-    if short_name and short_name != full_ru and re.search(r"[А-Яа-я]", short_name):
-        # Берём латинскую часть из full_es (после ООО/S.L.)
-        # Это эвристика: вытаскиваем то что в кавычках или после «ООО»/«S.L.»
-        es_core = _extract_company_core(full_es)
+    # Pack 15.2: short_name (например «ИНЖГЕОСЕРВИС») — ВАЖНО, в шаблоне в
+    # реквизитной таблице используется именно short_name.
+    if short_name and re.search(r"[А-Яа-я]", short_name):
+        es_core = _extract_company_core(full_es) if full_es else ""
         if es_core:
             pairs.append((short_name, es_core))
+        else:
+            # Fallback: GOST-транслит short_name
+            translit = transliterate_name(short_name)
+            if translit:
+                pairs.append((short_name, translit.upper()))
 
     return pairs
 
 
 def _extract_company_core(es_name: str) -> str:
-    """
-    Достаёт «ядро» названия компании из испанского варианта.
-
-    «Sociedad Limitada "INZHGEOSERVIS"» → "INZHGEOSERVIS"
-    «"INZHGEOSERVIS", S.L.» → "INZHGEOSERVIS"
-    «INZHGEOSERVIS S.L.» → "INZHGEOSERVIS"
-    """
-    # Сначала пробуем извлечь из кавычек (обычные/ёлочки/смарт)
+    """Достаёт «ядро» названия компании из испанского варианта."""
+    # Пробуем извлечь из кавычек
     match = re.search(r'[«"\'""]([^«"\'""]+)[»"\'""]', es_name)
     if match:
         return match.group(1).strip()
@@ -255,9 +248,9 @@ def build_substitution_dict(
     """
     Главная функция: строит словарь замен для одной заявки.
 
-    Замены упорядочены по убыванию длины — длинные совпадения применяются
-    первыми, чтобы «Иванов Иван Иванович» заменилось целиком прежде чем
-    срабатывало правило «Иванов» → «Ivanov» отдельно.
+    Pack 15.2: добавлены LABEL_SUBSTITUTIONS — фиксированные замены меток
+    реквизитов (ИНН → NIF и т.п.). Они идут ПОСЛЕДНИМИ — после имён
+    (длинные сначала), но ДО собственно отправки в LLM.
     """
     all_pairs: list[tuple[str, str]] = []
 
@@ -265,7 +258,7 @@ def build_substitution_dict(
     all_pairs.extend(_build_director_subs(company))
     all_pairs.extend(_build_company_subs(company))
 
-    # Дедупликация по ключу
+    # Дедупликация
     seen_keys: set[str] = set()
     deduped: list[tuple[str, str]] = []
     for ru, lat in all_pairs:
@@ -279,9 +272,14 @@ def build_substitution_dict(
     # Сортируем по убыванию длины ru-ключа (longest match first)
     deduped.sort(key=lambda pair: len(pair[0]), reverse=True)
 
+    # Pack 15.2: LABEL_SUBSTITUTIONS добавляем В КОНЕЦ — они короткие,
+    # но универсальные. В порядке как написаны (ИНН → NIF до КПП → KPP).
+    final_pairs = deduped + LABEL_SUBSTITUTIONS
+
     log.info(
-        f"[name_sub] Built {len(deduped)} substitutions for app {application.id}: "
-        f"{[(ru[:30], lat[:30]) for ru, lat in deduped[:5]]}..."
+        f"[name_sub] Built {len(final_pairs)} substitutions for app {application.id} "
+        f"({len(deduped)} dynamic + {len(LABEL_SUBSTITUTIONS)} labels): "
+        f"top={[(ru[:30], lat[:30]) for ru, lat in deduped[:5]]}"
     )
 
-    return SubstitutionDict(pairs=deduped)
+    return SubstitutionDict(pairs=final_pairs)

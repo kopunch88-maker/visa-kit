@@ -1,20 +1,10 @@
 """
-Pack 15 — DOCX translator (v2 — Pack 15.1).
+Pack 15 — DOCX translator (v3 — Pack 15.2).
 
-Берёт готовый русский DOCX (bytes), извлекает текст из всех параграфов
-(включая ячейки таблиц), переводит через LLM батчами, раскладывает обратно
-с сохранением форматирования на уровне параграфа.
-
-Pack 15.1 changes:
-- Опциональный SubstitutionDict — заменяет имена на латиницу ДО LLM
-- Расширенный jurada-style промпт с глоссарием реальных терминов из подач
-- Few-shot пример из реального jurada-перевода
-
-Стратегия сохранения формата:
-- Заголовки, выравнивание, шрифты, размеры, цвета — сохраняются (это свойства параграфа)
-- Таблицы, списки, отступы — сохраняются (структура XML не трогается)
-- Внутри-абзацный жирный/курсив — теряется (текст всех run'ов параграфа
-  объединяется и кладётся в первый run; остальные run'ы зачищаются)
+Pack 15.2 changes vs Pack 15.1:
+- Промпт явно требует переводить ИНН → NIF, КПП → KPP, ОГРН → OGRN, БИК → BIC
+  (раньше говорил «keep as-is» — это была ошибка)
+- Few-shot пример с реквизитной таблицей
 """
 
 import io
@@ -33,18 +23,17 @@ from .name_substitution import SubstitutionDict
 log = logging.getLogger(__name__)
 
 
-# Сколько параграфов отправляем за один LLM-вызов
 BATCH_SIZE = 30
 
-# Маркер пропуска перевода — числа, даты, реквизиты остаются как есть
 _SKIP_PATTERNS = [
-    re.compile(r"^\s*$"),                           # пустые
-    re.compile(r"^[\d\s.,\-/:]+$"),                 # только цифры/даты/спецсимволы
-    re.compile(r"^[A-Z]{2,5}\s*\d{6,}$"),           # типа "RUS 1234567"
+    re.compile(r"^\s*$"),
+    re.compile(r"^[\d\s.,\-/:]+$"),
+    re.compile(r"^[A-Z]{2,5}\s*\d{6,}$"),
 ]
 
 
-# Pack 15.1: jurada-style промпт со словарём из реальных подач
+# Pack 15.2: jurada-style промпт со словарём из реальных подач.
+# КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ИНН/КПП/ОГРН/БИК ВСЕГДА переводятся (раньше «keep as-is»).
 SYSTEM_PROMPT = """You are translating Russian business/legal documents to Spanish as a DRAFT for a sworn translator (traductor jurado MAE) who will review and finalize. Your goal: match the established Spanish jurada conventions so the jurado has minimal corrections to make.
 
 Input: JSON array of text fragments from a Russian document.
@@ -54,13 +43,20 @@ Output: JSON array of Spanish translations, EXACTLY same length and order. No co
 
 1. NEVER MODIFY any Latin-script text already in the input — names of people, companies, addresses, banks. They have been pre-substituted from official documents (passports, EGRYL extracts) and must be preserved character-for-character. If you see "Yuksel Vedat", "INZHGEOSERVIS", "SBERBANK" — output them unchanged.
 
-2. NEVER MODIFY: numbers (1234.56, 100 000), dates in any format (04.05.2025, 2025-05-04, «04» мая 2025 г. — translate ONLY the Russian month name, keep digits/structure), tax IDs (NIF, OGRN, KPP, BIC, SNILS, account numbers), email addresses, phone numbers, document codes (#2026-0003).
+2. NEVER MODIFY: numbers (1234.56, 100 000), dates in any format (04.05.2025, 2025-05-04, «04» мая 2025 г. — translate ONLY the Russian month name, keep digits/structure), tax IDs and account numbers (the digit strings — but DO translate the LABEL before them, see rule 4), email addresses, phone numbers, document codes (#2026-0003).
 
-3. NEVER MODIFY Russian abbreviations: ИНН, ОГРН, КПП, БИК, СНИЛС, ОКПО — keep them as-is (they have no Spanish equivalent).
+3. If a fragment is already in Spanish or English — return it unchanged. If a fragment is a Jinja template marker like {{ var }} — return unchanged.
 
-4. If a fragment is already in Spanish or English — return it unchanged.
-
-5. If a fragment is a Jinja template marker like {{ var }} — return unchanged.
+4. ALWAYS TRANSLATE THESE LABELS (jurada convention — Russian abbreviations are NEVER kept in Cyrillic in the final document):
+   - ИНН → NIF (always — it's the equivalent for "tax ID")
+   - КПП → KPP (transliteration — Spanish has no equivalent, keep this Latin form)
+   - ОГРН → OGRN (transliteration)
+   - БИК → BIC (Spanish has its own BIC, same letters)
+   - СНИЛС → SNILS (transliteration)
+   - ОКПО → OKPO
+   - р/с / Р/с / расчётный счёт → c/c (cuenta corriente) or "Cuenta corriente"
+   - к/с / К/с / корреспондентский счёт → c/corr or "Cuenta corresponsal"
+   - БИК банка → BIC del banco
 
 ═══ JURADA GLOSSARY (use these exact translations) ═══
 
@@ -68,7 +64,6 @@ Document types:
 - Договор оказания услуг → Contrato de prestación de servicios remunerados
 - Акт об оказании услуг / Акт оказанных услуг → Acta de servicios prestados
 - Счёт на оплату → Factura
-- Счёт-фактура → Factura
 - Резюме → Curriculum Vitae
 - Письмо от компании / Письмо-поручение → Carta de la empresa
 - Выписка по счёту → Extracto de cuenta
@@ -79,7 +74,6 @@ Roles:
 - Заказчик → el Cliente
 - Генеральный директор → Director General
 - Стороны → las Partes
-- Подписавшие ниже / Нижеподписавшиеся → Los abajo firmantes
 
 Citizenship phrases (use exact form, with "el ciudadano de la"):
 - Гражданин Российской Федерации → ciudadano de la Federación de Rusia
@@ -95,15 +89,14 @@ Citizenship phrases (use exact form, with "el ciudadano de la"):
 - Гражданин Республики Армения → ciudadano de la República de Armenia
 - Гражданин Республики Таджикистан → ciudadano de la República de Tayikistán
 
-Use D. before male names, Dña. before female names (Don/Doña form).
+Use D. before male names, Dña. before female names.
 
 Legal terms:
-- ООО (full: Общество с ограниченной ответственностью) → Sociedad Limitada (in body) / S.L. (in details block)
-- АО / ОАО (Акционерное общество) → Sociedad Anónima / S.A.
+- ООО → Sociedad Limitada (in body) / S.L. (after company name in details)
+- АО / ОАО → Sociedad Anónima / S.A.
 - в дальнейшем именуемый → en lo sucesivo, el / en lo sucesivo denominado
 - в лице → representada por
 - именуемые в дальнейшем → denominados conjuntamente
-- настоящим подтверждает → confirma lo siguiente / por el presente confirma
 
 Contract structure (section headings):
 - Предмет договора → Objeto del Contrato
@@ -112,74 +105,63 @@ Contract structure (section headings):
 - Сроки оказания услуг → Plazos de prestación de los Servicios
 - Ответственность сторон → Responsabilidad de las Partes
 - Порядок разрешения споров → Procedimiento de Resolución de Disputas
-- Прочие условия / Иные условия → Otras Condiciones
+- Прочие условия → Otras Condiciones
 - Адреса и реквизиты сторон → Direcciones y datos de las Partes
 - Подписи сторон → Firmas de las Partes
 
-References within document:
-- статья → cláusula
-- пункт / п. → cláusula (or "p.")
-- раздел → sección
-- приложение → anexo
-- настоящего Договора → del presente Contrato
-- настоящий Договор → el presente Contrato
-
 Banking and finance:
-- ИНН → NIF (when listed in details block as company tax ID — leave "ИНН" if standalone label)
-- расчётный счёт / р/с → c/c (cuenta corriente)
-- корреспондентский счёт / к/с → c/corr
-- БИК → BIC
-- ОГРН → OGRN
 - руб. / рублей → rublos
 - 290 000 (двести девяносто тысяч) рублей → 290 000 (doscientos noventa mil) rublos
-- Сбербанк → "SBERBANK", S.A.
+- Сбербанк / Сбер → "SBERBANK", S.A.
 - Альфа-Банк → "ALFA-BANK", S.A.
 - ВТБ → "VTB", S.A.
-- Тинькофф / Т-Банк → "TINKOFF", S.A.
-- Центральный банк Российской Федерации → Banco Central de la Federación Rusa
 - день / дни → día / días
 - рабочий день → día hábil
 - банковский день → día hábil bancario
 
 Addresses:
-- ул. → c/ (calle)
+- ул. / улица → c/ (calle)
 - г. → ciudad de
-- д. (дом) → № (or just keep house number with comma)
+- д. (дом) → № (or just keep house number)
 - кв. → piso
 - область → región
-- район → distrito
-- проспект → avenida / pr.
+- проспект → avenida
 - Москва → Moscú
 - Санкт-Петербург → San Petersburgo
-- For all other Russian city/street names — TRANSLITERATE (Краснодонская → Krasnodonskaya, Каменск-Шахтинский → Kamensk-Shakhtinskiy)
+- Other Russian city/street names — TRANSLITERATE (Краснодонская → Krasnodonskaya)
+- Юрид. адрес / Юридический адрес → Domicilio social
+- Почт. адрес / Почтовый адрес → Dirección postal
 
 Months (translate within dates):
 - января → enero, февраля → febrero, марта → marzo, апреля → abril
 - мая → mayo, июня → junio, июля → julio, августа → agosto
 - сентября → septiembre, октября → octubre, ноября → noviembre, декабря → diciembre
 
-Signature/seal markers in Russian docs:
-- (подпись) / [подпись] → (firma:)
+Markers:
+- (подпись) → (firma:)
 - (печать) / М.П. → (Sello:)
 
 ═══ STYLE ═══
 
-- Use formal Spanish (Spain Spanish, vos forms NEVER).
-- Use Title Case for section headings (1. Objeto del Contrato), but lowercase after numeric prefix in subsections (1.1. El Contratista...).
-- Use "0,1%" style (comma decimal separator) — Spanish convention.
-- Use «» for inner quotes when copying from Russian, "" elsewhere.
+- Use formal Spanish (Spain Spanish).
+- Use "0,1%" style (comma decimal separator).
+- Use «» for inner quotes when copying from Russian.
 
-═══ FEW-SHOT EXAMPLE ═══
+═══ FEW-SHOT EXAMPLES ═══
 
+Example 1 (body):
 Input: ["Граждане Российской Федерации Иванов Иван Иванович, в дальнейшем именуемый «Исполнитель», и ООО «Ромашка», в лице Генерального директора Петрова П.П., именуемое в дальнейшем «Заказчик»"]
-
 Output: ["el ciudadano de la Federación de Rusia D. Ivanov Ivan Ivanovich, en lo sucesivo denominado el «Contratista», y la Sociedad Limitada «Romashka», representada por el Director General D. Petrov P.P., en lo sucesivo denominada el «Cliente»"]
 
-Note how:
-- "Граждане" became "el ciudadano de la Federación de Rusia D." (with D. honorific)
-- Names "Иванов Иван Иванович" stay (in real input they would already be Latin via pre-substitution)
-- "ООО" became "Sociedad Limitada"
-- Quote style preserved
+Example 2 (requisites — multi-line cell):
+Input: ["Заказчик\\nИНЖГЕОСЕРВИС\\nИНН 2320219620, КПП 232001001\\nЮрид. адрес: ул. Ленина, д. 5, г. Сочи\\nР\\\\с: 40702810000000000001\\nСбербанк\\nБИК банка: 044525225\\nК\\\\с: 30101810400000000225"]
+Output: ["El Cliente\\n«INZHGEOSERVIS», S.L.\\nNIF 2320219620, KPP 232001001\\nDomicilio social: c/ Lenina, № 5, ciudad de Sochi\\nc/c: 40702810000000000001\\n«SBERBANK», S.A.\\nBIC del banco: 044525225\\nc/corr: 30101810400000000225"]
+
+Example 3 (requisites with empty fields):
+Input: ["Исполнитель:\\nYuksel Vedat\\nПаспорт U23616456,\\nвыдан 08.10.2020 ELAZIĞ\\nNIF\\n—\\n\\nc/c\\nв\\nBIC del banco:\\nc/corr:"]
+Output: ["el Contratista:\\nYuksel Vedat\\nPasaporte U23616456,\\nexpedido el 08.10.2020 ELAZIĞ\\nNIF\\n—\\n\\nc/c\\nen\\nBIC del banco:\\nc/corr:"]
+
+Note: Latin-script names (Yuksel Vedat) stay unchanged. Russian abbreviation labels (ИНН, КПП, БИК, ОГРН) ALWAYS become Latin labels (NIF, KPP, BIC, OGRN). Empty values stay as "—".
 """
 
 
@@ -190,19 +172,16 @@ def _should_skip(text: str) -> bool:
     for pattern in _SKIP_PATTERNS:
         if pattern.match(text):
             return True
-    # Если в тексте нет ни одной кириллической буквы — не переводим
     if not re.search(r"[А-Яа-яЁё]", text):
         return True
     return False
 
 
 def _extract_paragraph_text(p: Paragraph) -> str:
-    """Собирает текст параграфа из всех runs."""
     return "".join(run.text for run in p.runs)
 
 
 def _set_paragraph_text(p: Paragraph, new_text: str) -> None:
-    """Кладёт переведённый текст в первый run, остальные зачищает."""
     if not p.runs:
         return
     p.runs[0].text = new_text
@@ -211,7 +190,6 @@ def _set_paragraph_text(p: Paragraph, new_text: str) -> None:
 
 
 def _collect_all_paragraphs(doc: Document) -> list[Paragraph]:
-    """Собирает ВСЕ параграфы документа: тело + ячейки таблиц + headers/footers."""
     paragraphs: list[Paragraph] = []
     paragraphs.extend(doc.paragraphs)
 
@@ -236,10 +214,6 @@ def _collect_all_paragraphs(doc: Document) -> list[Paragraph]:
 
 
 async def _translate_batch(texts: list[str]) -> list[str]:
-    """
-    Переводит батч строк через LLM. Возвращает массив переводов той же длины.
-    Если LLM вернул не то количество — fallback на по-одному.
-    """
     if not texts:
         return []
 
@@ -287,13 +261,13 @@ async def _translate_batch(texts: list[str]) -> list[str]:
 
 
 async def _translate_one_by_one(texts: list[str]) -> list[str]:
-    """Fallback: переводит каждую строку отдельным LLM-вызовом."""
     log.info(f"[translation] Falling back to one-by-one translation for {len(texts)} fragments")
     client = get_llm_client()
     results = []
     single_system = (
         "Translate the following Russian business/legal text to formal Spanish (Spain). "
         "Keep all Latin-script text (names, companies) unchanged. "
+        "Translate Russian abbreviations: ИНН→NIF, КПП→KPP, ОГРН→OGRN, БИК→BIC. "
         "Return ONLY the translation, no commentary, no quotes, no markdown."
     )
     for text in texts:
@@ -318,17 +292,8 @@ async def translate_docx(
     """
     Главная функция: переводит DOCX с русского на испанский.
 
-    Args:
-        docx_bytes: содержимое исходного DOCX
-        substitutions: Pack 15.1 — словарь замен ru→lat, применяется к каждому
-                       параграфу ДО отправки в LLM. Если None — работаем как раньше.
-
-    Returns:
-        bytes переведённого DOCX
-
-    Raises:
-        Exception: если LLM упал или DOCX невалидный (вверх по стеку — orchestrator
-                   ловит и помечает Translation.status = FAILED)
+    Pack 15.2: pre-substitution теперь покрывает метки ИНН/КПП/ОГРН/БИК → NIF/KPP/etc
+    + applicant.full_name_native + company.short_name + None → —.
     """
     doc = Document(io.BytesIO(docx_bytes))
     paragraphs = _collect_all_paragraphs(doc)
@@ -337,12 +302,10 @@ async def translate_docx(
         + (f", {len(substitutions)} pre-substitutions" if substitutions else "")
     )
 
-    # Собираем индексы параграфов которые нужно переводить
     targets: list[tuple[int, str]] = []
     for idx, p in enumerate(paragraphs):
         text = _extract_paragraph_text(p)
 
-        # Pack 15.1: применяем pre-substitution до проверки на skip
         if substitutions:
             text = substitutions.apply(text)
 
@@ -357,7 +320,6 @@ async def translate_docx(
 
     log.info(f"[translation] {len(targets)} fragments to translate")
 
-    # Бьём на батчи и переводим
     all_translations: list[str] = []
     for batch_start in range(0, len(targets), BATCH_SIZE):
         batch = targets[batch_start:batch_start + BATCH_SIZE]
@@ -369,11 +331,9 @@ async def translate_docx(
             f"({batch_start + 1}-{batch_start + len(batch)} / {len(targets)}) done"
         )
 
-    # Раскладываем переводы обратно в параграфы
     for (paragraph_idx, _original), translated_text in zip(targets, all_translations):
         _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
 
-    # Сохраняем результат
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
