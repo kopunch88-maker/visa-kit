@@ -161,6 +161,7 @@ export type CompanyResponse = {
   director_full_name_genitive_ru: string;
   director_short_ru: string;
   director_position_ru: string;
+  director_full_name_latin?: string | null;
   director_name_genitive?: string;
   bank_name: string;
   bank_account: string;
@@ -1351,4 +1352,40 @@ export async function downloadTranslationFile(
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.blob();
+}
+// ============================================================================
+// Pack 15.1 — Translit suggest helper
+// ============================================================================
+//
+// ВАЖНО: updateCompany уже существует в этом файле (строка ~4525),
+// я её НЕ дублирую. Только новый translit-suggest endpoint.
+//
+// Также нужно ОТДЕЛЬНО добавить опциональное поле в существующий
+// CompanyResponse (см. INSTRUCTIONS.md, шаг 2a).
+
+export type TranslitField = "director_name" | "company_name";
+
+export type TranslitSuggestResponse = {
+  text: string;
+  suggestion: string;
+};
+
+/**
+ * Pack 15.1: GOST-транслит чернового латинского написания для поля компании.
+ * Менеджер потом может подправить в drawer.
+ */
+export async function getTranslitSuggestion(
+  text: string,
+  field: TranslitField = "director_name",
+): Promise<TranslitSuggestResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/companies/translit-suggest`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ text, field }),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
 }

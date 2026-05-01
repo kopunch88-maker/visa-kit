@@ -1,11 +1,12 @@
 """
-Pack 15 — translation orchestrator.
+Pack 15 — translation orchestrator (v2 — Pack 15.1).
 
 Управляет переводом всего пакета (или одного документа) для заявки:
 1. Создаёт записи Translation со статусом PENDING (если ещё нет)
 2. Параллельно (с ограничением concurrency=3) переводит каждый kind:
    - рендерит русский DOCX через templates_engine
-   - прогоняет через docx_translator.translate_docx
+   - Pack 15.1: строит SubstitutionDict из Application+Applicant+Company
+   - прогоняет через docx_translator.translate_docx с подстановками
    - сохраняет в R2
    - обновляет запись Translation: DONE + storage_key, или FAILED + error_message
 3. Если перевод одного документа упал — остальные продолжают
@@ -23,7 +24,10 @@ from typing import Optional
 from sqlmodel import Session, select
 
 from app.db.session import engine
-from app.models import Application, Translation, TranslationKind, TranslationStatus
+from app.models import (
+    Applicant, Application, Company,
+    Translation, TranslationKind, TranslationStatus,
+)
 from app.services.storage import get_storage
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
@@ -31,12 +35,12 @@ from app.templates_engine import (
 )
 
 from .docx_translator import translate_docx
+from .name_substitution import build_substitution_dict, SubstitutionDict
 
 log = logging.getLogger(__name__)
 
 
-# Параллелизм: одновременно не больше 3 переводов чтобы не упереться
-# в OpenRouter rate limit (особенно если несколько менеджеров жмут кнопку)
+# Параллелизм: одновременно не больше 3 переводов
 MAX_CONCURRENT = 3
 
 
@@ -95,6 +99,31 @@ def _r2_key(application_id: int, kind: TranslationKind) -> str:
     return f"translations/app_{application_id}/{kind.value}_{ts}.docx"
 
 
+def _load_substitutions(session: Session, application_id: int) -> Optional[SubstitutionDict]:
+    """
+    Pack 15.1: загружает Application + Applicant + Company и строит словарь замен.
+
+    Возвращает None если что-то не нашлось — translate_docx тогда работает
+    без pre-substitution (как Pack 15).
+    """
+    application = session.get(Application, application_id)
+    if not application:
+        return None
+
+    applicant: Optional[Applicant] = None
+    if application.applicant_id:
+        applicant = session.get(Applicant, application.applicant_id)
+
+    company: Optional[Company] = None
+    if application.company_id:
+        company = session.get(Company, application.company_id)
+
+    if not applicant and not company:
+        return None
+
+    return build_substitution_dict(application, applicant, company)
+
+
 async def _translate_one(
     application_id: int,
     kind: TranslationKind,
@@ -108,9 +137,10 @@ async def _translate_one(
         log.info(f"[translation:orch] Starting {kind.value} for app {application_id}")
         config = KIND_CONFIG[kind]
 
-        # Используем отдельную сессию для каждого таска
+        ru_bytes: Optional[bytes] = None
+        substitutions: Optional[SubstitutionDict] = None
+
         with Session(engine) as session:
-            # Найдём запись Translation (она уже создана в start_translation)
             tr = session.exec(
                 select(Translation)
                 .where(Translation.application_id == application_id)
@@ -136,8 +166,11 @@ async def _translate_one(
                 ru_bytes = config["render"](application, session)
                 log.info(f"[translation:orch] RU docx rendered: {len(ru_bytes)} bytes")
 
+                # 2. Pack 15.1: строим словарь подстановок имён
+                substitutions = _load_substitutions(session, application_id)
+
             except Exception as e:
-                log.error(f"[translation:orch] Render failed for {kind.value}: {e}", exc_info=True)
+                log.error(f"[translation:orch] Render/substitutions failed for {kind.value}: {e}", exc_info=True)
                 tr.status = TranslationStatus.FAILED
                 tr.error_message = f"Render failed: {str(e)[:500]}"
                 tr.completed_at = datetime.utcnow()
@@ -145,10 +178,10 @@ async def _translate_one(
                 session.commit()
                 return
 
-        # 2. Переводим (вне сессии — долгая LLM-операция, не держим коннект)
+        # 3. Переводим (вне сессии — долгая LLM-операция)
         try:
             log.info(f"[translation:orch] Translating {kind.value} via LLM...")
-            es_bytes = await translate_docx(ru_bytes)
+            es_bytes = await translate_docx(ru_bytes, substitutions=substitutions)
             log.info(f"[translation:orch] Translation done for {kind.value}: {len(es_bytes)} bytes")
         except Exception as e:
             log.error(f"[translation:orch] LLM translation failed for {kind.value}: {e}", exc_info=True)
@@ -166,7 +199,7 @@ async def _translate_one(
                     session.commit()
             return
 
-        # 3. Сохраняем в R2
+        # 4. Сохраняем в R2
         try:
             storage = get_storage()
             key = _r2_key(application_id, kind)
@@ -192,7 +225,7 @@ async def _translate_one(
                     session.commit()
             return
 
-        # 4. Помечаем успех
+        # 5. Помечаем успех
         with Session(engine) as session:
             tr = session.exec(
                 select(Translation)
@@ -220,12 +253,6 @@ async def translate_package(
 
     Переводит указанные типы документов (по умолчанию — все 10).
     Записи Translation должны быть уже созданы в БД (status=PENDING) до вызова.
-
-    Запускает параллельно с ограничением MAX_CONCURRENT,
-    при ошибке одного — продолжает остальные.
-
-    Эта функция async, но вызывается из FastAPI BackgroundTasks как обычная
-    функция — поэтому в api/translations.py мы оборачиваем её в asyncio.run().
     """
     target_kinds = kinds or ALL_KINDS
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
@@ -235,11 +262,9 @@ async def translate_package(
         f"for app {application_id}, kinds={[k.value for k in target_kinds]}"
     )
 
-    # Параллельно с return_exceptions=True — одна ошибка не убивает остальные
     tasks = [_translate_one(application_id, kind, semaphore) for kind in target_kinds]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Логируем сводку
     failures = [r for r in results if isinstance(r, Exception)]
     if failures:
         log.warning(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Sparkles, Loader2, AlertCircle } from "lucide-react";
+import { X, Sparkles, Loader2, AlertCircle, Languages } from "lucide-react";
 import {
   ApplicationResponse,
   ApplicantResponse,
@@ -9,6 +9,8 @@ import {
   PositionResponse,
   requestRecommendation,
   patchApplication,
+  updateCompany,
+  getTranslitSuggestion,
 } from "@/lib/api";
 
 interface Props {
@@ -37,6 +39,25 @@ export function CompanyContractDrawer({
   const [recError, setRecError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Pack 15.1 — поля компании для качественного перевода
+  const selectedCompany = companies.find((c) => c.id === companyId);
+  const [companyFullNameEs, setCompanyFullNameEs] = useState("");
+  const [directorFullNameLatin, setDirectorFullNameLatin] = useState("");
+  const [translitLoading, setTranslitLoading] = useState<"name" | "director" | null>(null);
+  const [companyFieldsDirty, setCompanyFieldsDirty] = useState(false);
+
+  // Когда меняется выбор компании — подгружаем её текущие поля
+  useEffect(() => {
+    if (selectedCompany) {
+      setCompanyFullNameEs(selectedCompany.full_name_es || "");
+      setDirectorFullNameLatin(selectedCompany.director_full_name_latin || "");
+      setCompanyFieldsDirty(false);
+    } else {
+      setCompanyFullNameEs("");
+      setDirectorFullNameLatin("");
+    }
+  }, [companyId, selectedCompany?.id]);
 
   useEffect(() => {
     function handleEsc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
@@ -69,6 +90,35 @@ export function CompanyContractDrawer({
     handlePositionChange(positionIdRec);
   }
 
+  // Pack 15.1: авто-транслит через backend
+  async function handleTranslitName() {
+    if (!selectedCompany?.full_name_ru) return;
+    setTranslitLoading("name");
+    try {
+      const r = await getTranslitSuggestion(selectedCompany.full_name_ru, "company_name");
+      setCompanyFullNameEs(r.suggestion);
+      setCompanyFieldsDirty(true);
+    } catch (e) {
+      alert(`Не удалось получить транслит: ${(e as Error).message}`);
+    } finally {
+      setTranslitLoading(null);
+    }
+  }
+
+  async function handleTranslitDirector() {
+    if (!selectedCompany?.director_full_name_ru) return;
+    setTranslitLoading("director");
+    try {
+      const r = await getTranslitSuggestion(selectedCompany.director_full_name_ru, "director_name");
+      setDirectorFullNameLatin(r.suggestion);
+      setCompanyFieldsDirty(true);
+    } catch (e) {
+      alert(`Не удалось получить транслит: ${(e as Error).message}`);
+    } finally {
+      setTranslitLoading(null);
+    }
+  }
+
   async function handleSave() {
     setSaveError(null);
     const required = {
@@ -81,6 +131,20 @@ export function CompanyContractDrawer({
 
     setSaving(true);
     try {
+      // Pack 15.1: если поля компании менялись — сохраняем компанию
+      if (companyFieldsDirty && companyId && selectedCompany) {
+        const updates: any = {};
+        if (companyFullNameEs !== (selectedCompany.full_name_es || "")) {
+          updates.full_name_es = companyFullNameEs;
+        }
+        if (directorFullNameLatin !== (selectedCompany.director_full_name_latin || "")) {
+          updates.director_full_name_latin = directorFullNameLatin || null;
+        }
+        if (Object.keys(updates).length > 0) {
+          await updateCompany(companyId as number, updates);
+        }
+      }
+
       await patchApplication(application.id, {
         company_id: companyId as number,
         position_id: positionId as number,
@@ -164,6 +228,44 @@ export function CompanyContractDrawer({
                 onChange={(v) => setPaymentsMonths(Number(v) || 3)} placeholder="3" />
             </div>
           </div>
+
+          {/* Pack 15.1 — поля для качественного испанского перевода */}
+          {selectedCompany && (
+            <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1.5">
+                <Languages className="w-3.5 h-3.5" />
+                Поля компании для перевода
+              </h4>
+              <p className="text-[11px] text-tertiary mb-3">
+                Используются Pack 15 при переводе на испанский. Кнопка ✨ — авто-транслит по ГОСТ как черновик, можно подправить.
+              </p>
+              <div className="space-y-3">
+                <TranslitField
+                  label="Название компании на испанском"
+                  ru={selectedCompany.full_name_ru}
+                  value={companyFullNameEs}
+                  onChange={(v) => { setCompanyFullNameEs(v); setCompanyFieldsDirty(true); }}
+                  onTranslit={handleTranslitName}
+                  loading={translitLoading === "name"}
+                  placeholder='напр. «Sociedad Limitada "INZHGEOSERVIS"»'
+                />
+                <TranslitField
+                  label="ФИО директора на латинице"
+                  ru={selectedCompany.director_full_name_ru}
+                  value={directorFullNameLatin}
+                  onChange={(v) => { setDirectorFullNameLatin(v); setCompanyFieldsDirty(true); }}
+                  onTranslit={handleTranslitDirector}
+                  loading={translitLoading === "director"}
+                  placeholder='напр. "Tarakin Yury Aleksandrovich"'
+                />
+              </div>
+              {companyFieldsDirty && (
+                <p className="text-[11px] text-info mt-2">
+                  Изменения применятся ко всей компании при сохранении
+                </p>
+              )}
+            </div>
+          )}
 
           {saveError && (
             <div className="bg-danger text-danger text-sm p-3 rounded-md flex items-start gap-2">
@@ -278,6 +380,48 @@ function NumberField({ label, required, value, onChange, placeholder }: any) {
         placeholder={placeholder}
         className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
         style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+    </div>
+  );
+}
+
+// Pack 15.1
+function TranslitField({ label, ru, value, onChange, onTranslit, loading, placeholder }: {
+  label: string;
+  ru?: string;
+  value: string;
+  onChange: (v: string) => void;
+  onTranslit: () => void;
+  loading: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-secondary mb-1">{label}</label>
+      {ru && (
+        <div className="text-[11px] text-tertiary mb-1 truncate" title={ru}>
+          из русского: {ru}
+        </div>
+      )}
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+          style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+        />
+        <button
+          type="button"
+          onClick={onTranslit}
+          disabled={loading || !ru}
+          className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1"
+          style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+          title="Авто-транслит по ГОСТ (черновик)"
+        >
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+        </button>
+      </div>
     </div>
   );
 }

@@ -107,25 +107,15 @@ def apply_pack11_2_migration():
 
 
 def apply_pack13_migration():
-    """
-    Pack 13: создание таблицы applicant_document для OCR-документов.
-
-    Таблица создаётся через init_db() (SQLModel.metadata.create_all),
-    но если она ещё не существует — мы явно создадим тут как fallback.
-    Также добавим индексы.
-    """
+    """Pack 13: создание таблицы applicant_document для OCR-документов."""
     with engine.begin() as conn:
         if not _table_exists(conn, "applicant_document"):
             log.info(
                 "[migration:pack13] Table applicant_document not found — "
                 "expected to be created by SQLModel.metadata.create_all() in init_db()"
             )
-            # Не создаём руками — пусть init_db() сделает.
-            # Если здесь нет таблицы, значит модель ещё не подцепилась —
-            # это надо поправить отдельно (импортировать модель в app.models.__init__).
             return
 
-        # Создаём индексы (если их нет)
         try:
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_applicant_document_application_id "
@@ -145,12 +135,7 @@ def apply_pack13_migration():
 
 
 def apply_pack15_migration():
-    """
-    Pack 15: создание таблицы translation для испанских переводов.
-
-    Таблица создаётся через init_db() (SQLModel.metadata.create_all).
-    Здесь только индексы для быстрого поиска по application_id и status.
-    """
+    """Pack 15: создание таблицы translation для испанских переводов."""
     with engine.begin() as conn:
         if not _table_exists(conn, "translation"):
             log.info(
@@ -172,7 +157,6 @@ def apply_pack15_migration():
                 "CREATE INDEX IF NOT EXISTS ix_translation_status "
                 "ON translation (status)"
             ))
-            # Композитный индекс — быстрый GET всех переводов заявки
             conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_translation_app_kind "
                 "ON translation (application_id, kind)"
@@ -180,3 +164,28 @@ def apply_pack15_migration():
             log.info("[migration:pack15] Indexes verified on translation")
         except Exception as e:
             log.warning(f"[migration:pack15] Index creation failed: {e}")
+
+
+def apply_pack15_1_migration():
+    """
+    Pack 15.1: добавление колонки company.director_full_name_latin.
+
+    Опциональное поле — если пусто, fallback на GOST-транслит из
+    director_full_name_ru. Менеджер заполняет вручную через CompanyContractDrawer
+    (есть авто-suggest кнопка ✨).
+    """
+    with engine.begin() as conn:
+        if not _column_exists(conn, "company", "director_full_name_latin"):
+            if _is_postgres():
+                conn.execute(text(
+                    "ALTER TABLE company "
+                    "ADD COLUMN director_full_name_latin VARCHAR(128)"
+                ))
+            else:
+                conn.execute(text(
+                    "ALTER TABLE company "
+                    "ADD COLUMN director_full_name_latin VARCHAR(128)"
+                ))
+            log.info("[migration:pack15_1] Added column company.director_full_name_latin")
+        else:
+            log.debug("[migration:pack15_1] Column company.director_full_name_latin already exists")

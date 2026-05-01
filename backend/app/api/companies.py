@@ -11,16 +11,19 @@ Endpoints:
     POST   /api/admin/companies                    create
     PATCH  /api/admin/companies/{id}                update
     DELETE /api/admin/companies/{id}                soft-delete
+    POST   /api/admin/companies/translit-suggest    Pack 15.1: GOST translit helper
 """
 
 from datetime import date, timedelta
-from typing import List
+from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from app.db.session import get_session
 from app.models import Company, CompanyCreate, CompanyUpdate, CompanyRead, Application
+from app.services.transliteration import transliterate_name
 from .dependencies import require_manager  # JWT + role check
 
 router = APIRouter(prefix="/admin/companies", tags=["companies"])
@@ -64,9 +67,7 @@ def list_companies(
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> List[CompanyRead]:
-    """
-    List all companies. By default returns active only.
-    """
+    """List all companies. By default returns active only."""
     query = select(Company)
     if not include_inactive:
         query = query.where(Company.is_active == True)  # noqa: E712
@@ -103,7 +104,7 @@ def create_company(
 
     company = Company(**payload.model_dump())
     session.add(company)
-    session.flush()  # to get the ID before commit
+    session.flush()
     session.refresh(company)
     return _enrich(company, session)
 
@@ -119,7 +120,6 @@ def update_company(
     if not company:
         raise HTTPException(404, "Company not found")
 
-    # Apply only fields that were actually sent (exclude_unset=True)
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(company, key, value)
@@ -136,13 +136,7 @@ def delete_company(
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> None:
-    """
-    Soft delete: set is_active=False.
-
-    Hard delete is forbidden — companies referenced by past applications must
-    remain in the database for historical accuracy. If you really need to
-    purge, do it manually via DB after legal/business approval.
-    """
+    """Soft delete: set is_active=False."""
     company = session.get(Company, company_id)
     if not company:
         raise HTTPException(404, "Company not found")
@@ -151,3 +145,35 @@ def delete_company(
     session.add(company)
     session.flush()
     return None
+
+
+# ============================================================================
+# Pack 15.1 — translit-suggest helper
+# ============================================================================
+
+class TranslitSuggestRequest(BaseModel):
+    text: str
+    field: Literal["director_name", "company_name"] = "director_name"
+
+
+class TranslitSuggestResponse(BaseModel):
+    text: str
+    suggestion: str
+
+
+@router.post("/translit-suggest", response_model=TranslitSuggestResponse)
+def translit_suggest(
+    payload: TranslitSuggestRequest,
+    _user=Depends(require_manager),
+) -> TranslitSuggestResponse:
+    """
+    Pack 15.1: GOST 52535.1-2006 транслит для черновика латинского имени.
+
+    Менеджер потом может подправить — это только starting point.
+
+    Используется кнопками ✨ в CompanyContractDrawer для двух полей:
+    - director_full_name_latin (из director_full_name_ru)
+    - full_name_es (из full_name_ru, обычно просто транслит ядра)
+    """
+    suggestion = transliterate_name(payload.text)
+    return TranslitSuggestResponse(text=payload.text, suggestion=suggestion)
