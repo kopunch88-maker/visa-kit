@@ -85,6 +85,8 @@ export type ClientDocumentType =
   | "passport_national"
   | "residence_card"
   | "criminal_record"
+  // Pack 14b — выписка из ЕГРЮЛ (документ компании)
+  | "egryl_extract"
   | "diploma_main"
   | "diploma_apostille"
   | "other";
@@ -510,6 +512,12 @@ export type ImportFileMeta = {
   extension: string;
   is_pdf: boolean;
   preview_url?: string;
+  // Pack 14c — ИИ-классификация
+  classified_type?: ClientDocumentType | null;
+  classifier_confidence?: "high" | "medium" | "low" | null;
+  classifier_country?: string | null;
+  classifier_reasoning?: string | null;
+  classifier_error?: string | null;
 };
 
 export type ImportSession = {
@@ -531,11 +539,53 @@ export type ImportFinalizeRequest = {
   run_ocr: boolean;
 };
 
+export type EgrylOcrData = {
+  full_name_ru?: string | null;
+  full_name_es?: string | null;
+  short_name_inferred?: string | null;
+  ogrn?: string | null;
+  inn?: string | null;
+  kpp?: string | null;
+  legal_address?: string | null;
+  postal_address?: string | null;
+  director_full_name_ru?: string | null;
+  director_position_ru?: string | null;
+  bank_name?: string | null;
+  bank_account?: string | null;
+  bank_bic?: string | null;
+  bank_correspondent_account?: string | null;
+  egryl_extract_date?: string | null;
+};
+
+export type DirectorDeclensions = {
+  nominative: string;
+  genitive: string;
+  dative: string;
+  accusative: string;
+  instrumental: string;
+  prepositional: string;
+  short_form: string;
+};
+
+export type PendingCompanyData = {
+  ocr_data: EgrylOcrData;
+  director_declensions: DirectorDeclensions;
+  egryl_file_id: string;
+  egryl_pdf_page?: number | null;
+};
+
 export type ImportFinalizeResult = {
-  application_id: number;
-  application_reference: string;
-  documents_created: number;
-  ocr_results: Array<{
+  // Pack 14b — если ЕГРЮЛ найден но компании нет:
+  requires_company_creation?: boolean;
+  pending_company?: PendingCompanyData;
+  session_id?: string;
+
+  // Если всё ок (заявка создана):
+  application_id?: number;
+  application_reference?: string;
+  documents_created?: number;
+  company_attached?: { id: number; short_name: string } | null;
+  ocr_results?: Array<{
     doc_id: number;
     doc_type: string;
     ok: boolean;
@@ -543,6 +593,35 @@ export type ImportFinalizeResult = {
     skipped?: boolean;
     fields?: string[];
   }>;
+};
+
+export type CompanyCreatePayload = {
+  short_name: string;
+  full_name_ru: string;
+  full_name_es: string;
+  country?: string;
+  tax_id_primary: string;
+  tax_id_secondary?: string | null;
+  legal_address: string;
+  postal_address?: string | null;
+  director_full_name_ru: string;
+  director_full_name_genitive_ru: string;
+  director_short_ru: string;
+  director_position_ru?: string;
+  bank_name: string;
+  bank_account: string;
+  bank_bic: string;
+  bank_correspondent_account?: string | null;
+  egryl_extract_date?: string | null;
+  notes?: string | null;
+};
+
+export type ImportFinalizeWithCompanyRequest = {
+  company: CompanyCreatePayload;
+  application_id: number | null;
+  internal_notes?: string | null;
+  files: ImportFileAssignment[];
+  run_ocr: boolean;
 };
 
 /**
@@ -590,6 +669,37 @@ export async function importPackageFinalize(
   if (!res.ok) {
     const errText = await res.text();
     let msg = `Ошибка импорта (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
+ * Финализация импорта с созданием новой компании из ЕГРЮЛ.
+ * Используется когда первый /finalize вернул requires_company_creation=true.
+ */
+export async function importPackageFinalizeWithCompany(
+  sessionId: string,
+  payload: ImportFinalizeWithCompanyRequest,
+): Promise<ImportFinalizeResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize/with-company`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка создания компании (${res.status})`;
     try {
       const errJson = JSON.parse(errText);
       msg = errJson.detail || msg;
@@ -962,6 +1072,8 @@ export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
   passport_national: "Национальный паспорт (не РФ)",
   residence_card: "ВНЖ / Residence card",
   criminal_record: "Справка о несудимости",
+  // Pack 14b — выписка из ЕГРЮЛ
+  egryl_extract: "Выписка из ЕГРЮЛ (компания)",
   diploma_main: "Диплом — основная страница",
   diploma_apostille: "Диплом — апостиль",
   other: "Другой документ",

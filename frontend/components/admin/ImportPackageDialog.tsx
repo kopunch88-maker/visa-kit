@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Loader2, X, Upload, FileText, AlertCircle, CheckCircle2,
-  Sparkles, FileWarning, Package,
+  Sparkles, FileWarning, Package, ArrowLeft, Building2, AlertTriangle,
 } from "lucide-react";
 import {
   ClientDocumentType,
@@ -13,8 +13,11 @@ import {
   ImportFileAssignment,
   ImportFinalizeResult,
   ApplicationResponse,
+  PendingCompanyData,
+  CompanyCreatePayload,
   importPackageUpload,
   importPackageFinalize,
+  importPackageFinalizeWithCompany,
   importPackageCancel,
 } from "@/lib/api";
 import {
@@ -23,7 +26,7 @@ import {
 } from "@/lib/pdfConverter";
 
 interface Props {
-  applications: ApplicationResponse[]; // для выбора существующей заявки
+  applications: ApplicationResponse[];
   onClose: () => void;
   onImported: (result: ImportFinalizeResult) => void;
 }
@@ -31,8 +34,8 @@ interface Props {
 type FileChoice = {
   fileId: string;
   docType: ClientDocumentType | "skip";
-  pdfPage: number; // 1-based, для PDF
-  pdfPagesPreviews?: PdfPagePreview[]; // загружается лениво
+  pdfPage: number;
+  pdfPagesPreviews?: PdfPagePreview[];
   pdfLoading?: boolean;
   pdfError?: string;
 };
@@ -45,24 +48,27 @@ const DOC_TYPE_OPTIONS: Array<{ value: ClientDocumentType | "skip"; label: strin
   { value: "passport_national", label: DOCUMENT_TYPE_LABELS.passport_national },
   { value: "residence_card", label: DOCUMENT_TYPE_LABELS.residence_card },
   { value: "criminal_record", label: DOCUMENT_TYPE_LABELS.criminal_record },
+  { value: "egryl_extract", label: DOCUMENT_TYPE_LABELS.egryl_extract },
   { value: "diploma_main", label: DOCUMENT_TYPE_LABELS.diploma_main },
   { value: "diploma_apostille", label: DOCUMENT_TYPE_LABELS.diploma_apostille },
   { value: "other", label: DOCUMENT_TYPE_LABELS.other },
 ];
 
-type Step = "upload" | "classify" | "submitting" | "done";
+type Step = "upload" | "classify" | "company" | "submitting" | "done";
 
 export function ImportPackageDialog({ applications, onClose, onImported }: Props) {
   const [step, setStep] = useState<Step>("upload");
   const [error, setError] = useState<string | null>(null);
-  const [archive, setArchive] = useState<File | null>(null);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [choices, setChoices] = useState<Record<string, FileChoice>>({});
 
-  // Куда привязываем — новая заявка или существующая
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [internalNotes, setInternalNotes] = useState("");
   const [existingApplicationId, setExistingApplicationId] = useState<number | null>(null);
+
+  // Pack 14b — данные для второго шага (создание компании)
+  const [pendingCompany, setPendingCompany] = useState<PendingCompanyData | null>(null);
+  const [companyForm, setCompanyForm] = useState<CompanyCreatePayload | null>(null);
 
   // Авто-отмена при закрытии диалога
   useEffect(() => {
@@ -87,19 +93,25 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
       return;
     }
 
-    setArchive(file);
     setStep("submitting");
-
     try {
       const session = await importPackageUpload(file);
       setImportSession(session);
 
-      // Инициализируем choices: по умолчанию "skip" для всех
+      // Pack 14c — Автоматически проставляем типы из ИИ-классификатора
       const initialChoices: Record<string, FileChoice> = {};
       session.files.forEach((f) => {
+        let autoType: ClientDocumentType | "skip" = "skip";
+        if (f.classified_type && f.classifier_confidence) {
+          // Проставляем для high и medium (с пометкой)
+          if (f.classifier_confidence === "high" || f.classifier_confidence === "medium") {
+            autoType = f.classified_type;
+          }
+          // low — оставляем skip, менеджер выберет вручную
+        }
         initialChoices[f.file_id] = {
           fileId: f.file_id,
-          docType: "skip",
+          docType: autoType,
           pdfPage: 1,
         };
       });
@@ -124,12 +136,9 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     }));
 
     try {
-      // Скачиваем PDF blob
       const res = await fetch(file.preview_url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-
-      // Конвертируем все страницы (макс 10) в превью
       const pages = await pdfToImagePages(blob, { dpi: 100, maxPages: 10 });
 
       setChoices((prev) => ({
@@ -166,12 +175,9 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     }));
   }
 
-  async function handleFinalize() {
-    if (!importSession) return;
-    setError(null);
-    setStep("submitting");
-
-    const fileAssignments: ImportFileAssignment[] = Object.values(choices).map((c) => {
+  function buildAssignments(): ImportFileAssignment[] {
+    if (!importSession) return [];
+    return Object.values(choices).map((c) => {
       const file = importSession.files.find((f) => f.file_id === c.fileId);
       return {
         file_id: c.fileId,
@@ -179,14 +185,20 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
         pdf_page: file?.is_pdf ? c.pdfPage : null,
       };
     });
+  }
 
-    // Хотя бы один документ должен быть выбран
+  async function handleFinalize() {
+    if (!importSession) return;
+    setError(null);
+
+    const fileAssignments = buildAssignments();
     const usableCount = fileAssignments.filter((a) => a.doc_type !== "skip").length;
     if (usableCount === 0) {
       setError("Выберите тип хотя бы для одного документа.");
-      setStep("classify");
       return;
     }
+
+    setStep("submitting");
 
     try {
       const result = await importPackageFinalize(importSession.session_id, {
@@ -195,14 +207,89 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
         files: fileAssignments,
         run_ocr: true,
       });
+
+      // Pack 14b: если требуется создание компании из ЕГРЮЛ
+      if (result.requires_company_creation && result.pending_company) {
+        setPendingCompany(result.pending_company);
+        // Предзаполняем форму данными из ЕГРЮЛ + склонениями директора
+        const ocr = result.pending_company.ocr_data;
+        const decl = result.pending_company.director_declensions;
+        setCompanyForm({
+          short_name: ocr.short_name_inferred || "",
+          full_name_ru: ocr.full_name_ru || "",
+          full_name_es: ocr.full_name_es || "",
+          country: "RUS",
+          tax_id_primary: ocr.inn || "",
+          tax_id_secondary: ocr.kpp || null,
+          legal_address: ocr.legal_address || "",
+          postal_address: ocr.postal_address || null,
+          director_full_name_ru: decl.nominative || ocr.director_full_name_ru || "",
+          director_full_name_genitive_ru: decl.genitive || "",
+          director_short_ru: decl.short_form || "",
+          director_position_ru: ocr.director_position_ru || "Генерального директора",
+          bank_name: ocr.bank_name || "",
+          bank_account: ocr.bank_account || "",
+          bank_bic: ocr.bank_bic || "",
+          bank_correspondent_account: ocr.bank_correspondent_account || null,
+          egryl_extract_date: ocr.egryl_extract_date || null,
+          notes: null,
+        });
+        setStep("company");
+        return;
+      }
+
+      // Иначе — заявка создана, закрываем
       setStep("done");
-      // Покажем результат и через 2 секунды закроем
       setTimeout(() => {
         onImported(result);
       }, 1200);
     } catch (e) {
       setError((e as Error).message);
       setStep("classify");
+    }
+  }
+
+  async function handleFinalizeWithCompany() {
+    if (!importSession || !companyForm) return;
+    setError(null);
+
+    // Валидация — критичные поля
+    const missing: string[] = [];
+    if (!companyForm.short_name?.trim()) missing.push("Краткое название");
+    if (!companyForm.full_name_ru?.trim()) missing.push("Полное название (рус)");
+    if (!companyForm.full_name_es?.trim()) missing.push("Полное название (исп)");
+    if (!companyForm.tax_id_primary?.trim()) missing.push("ИНН");
+    if (!companyForm.legal_address?.trim()) missing.push("Юр. адрес");
+    if (!companyForm.director_full_name_ru?.trim()) missing.push("ФИО директора");
+    if (!companyForm.director_full_name_genitive_ru?.trim()) missing.push("ФИО директора (родительный)");
+    if (!companyForm.director_short_ru?.trim()) missing.push("ФИО директора (короткая форма)");
+    if (!companyForm.bank_name?.trim()) missing.push("Банк");
+    if (!companyForm.bank_account?.trim()) missing.push("Расчётный счёт");
+    if (!companyForm.bank_bic?.trim()) missing.push("БИК");
+
+    if (missing.length > 0) {
+      setError(`Заполните обязательные поля: ${missing.join(", ")}`);
+      return;
+    }
+
+    setStep("submitting");
+
+    try {
+      const result = await importPackageFinalizeWithCompany(importSession.session_id, {
+        company: companyForm,
+        application_id: target === "existing" ? existingApplicationId : null,
+        internal_notes: target === "new" ? internalNotes : null,
+        files: buildAssignments(),
+        run_ocr: true,
+      });
+
+      setStep("done");
+      setTimeout(() => {
+        onImported(result);
+      }, 1200);
+    } catch (e) {
+      setError((e as Error).message);
+      setStep("company");
     }
   }
 
@@ -236,9 +323,15 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
           }}
         >
           <div className="flex items-center gap-2">
-            <Package className="w-5 h-5" style={{ color: "var(--color-accent)" }} />
+            {step === "company" ? (
+              <Building2 className="w-5 h-5" style={{ color: "var(--color-accent)" }} />
+            ) : (
+              <Package className="w-5 h-5" style={{ color: "var(--color-accent)" }} />
+            )}
             <span className="text-base font-semibold text-primary">
-              Импорт пакета документов
+              {step === "company"
+                ? "Создание компании из ЕГРЮЛ"
+                : "Импорт пакета документов"}
             </span>
           </div>
           <button
@@ -274,7 +367,12 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
           {step === "submitting" && !importSession && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-secondary" />
-              <div className="text-sm text-tertiary">Распаковываем архив...</div>
+              <div className="text-sm text-secondary font-medium">
+                Распаковываем архив...
+              </div>
+              <div className="text-xs text-tertiary">
+                Сейчас ИИ определит тип каждого документа
+              </div>
             </div>
           )}
 
@@ -295,11 +393,21 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
             />
           )}
 
+          {step === "company" && companyForm && pendingCompany && (
+            <CompanyFormStep
+              companyForm={companyForm}
+              setCompanyForm={setCompanyForm}
+              pendingCompany={pendingCompany}
+            />
+          )}
+
           {step === "submitting" && importSession && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-secondary" />
               <div className="text-sm text-secondary font-medium">
-                Загружаем документы и распознаём...
+                {pendingCompany
+                  ? "Создаём компанию и заявку..."
+                  : "Загружаем документы и распознаём..."}
               </div>
               <div className="text-xs text-tertiary">
                 Это может занять до минуты
@@ -355,6 +463,40 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
             </button>
           </div>
         )}
+
+        {step === "company" && (
+          <div
+            className="px-5 py-4 border-t flex justify-between gap-3"
+            style={{
+              borderColor: "var(--color-border-tertiary)",
+              borderTopWidth: 0.5,
+            }}
+          >
+            <button
+              onClick={() => {
+                setPendingCompany(null);
+                setCompanyForm(null);
+                setStep("classify");
+              }}
+              className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center gap-1.5"
+              style={{
+                borderColor: "var(--color-border-tertiary)",
+                borderWidth: 0.5,
+              }}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Назад
+            </button>
+            <button
+              onClick={handleFinalizeWithCompany}
+              className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2"
+              style={{ background: "var(--color-accent)" }}
+            >
+              <Building2 className="w-4 h-4" />
+              Создать компанию и заявку →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -367,7 +509,6 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
 
 function UploadStep({ onFileSelected }: { onFileSelected: (file: File) => void }) {
   const [dragOver, setDragOver] = useState(false);
-  const inputRef = useState<HTMLInputElement | null>(null)[0];
 
   function handleSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -383,7 +524,7 @@ function UploadStep({ onFileSelected }: { onFileSelected: (file: File) => void }
 
   return (
     <div
-      className="rounded-lg border-dashed p-10 text-center transition-colors"
+      className="rounded-lg p-10 text-center transition-colors"
       style={{
         borderWidth: 1.5,
         borderStyle: "dashed",
@@ -402,15 +543,12 @@ function UploadStep({ onFileSelected }: { onFileSelected: (file: File) => void }
       }}
       onDrop={handleDrop}
     >
-      <Package
-        className="w-12 h-12 mx-auto mb-3 text-tertiary"
-        style={{ color: "var(--color-text-tertiary)" }}
-      />
+      <Package className="w-12 h-12 mx-auto mb-3 text-tertiary" />
       <div className="text-base font-medium text-primary mb-1">
         Перетащите архив сюда
       </div>
       <div className="text-sm text-tertiary mb-4">
-        ZIP или RAR с документами клиента (паспорт, ВНЖ, справки, диплом)
+        ZIP или RAR с документами клиента (паспорт, ВНЖ, справки, диплом, ЕГРЮЛ)
       </div>
       <label
         className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-white cursor-pointer transition-colors"
@@ -426,7 +564,7 @@ function UploadStep({ onFileSelected }: { onFileSelected: (file: File) => void }
         />
       </label>
       <div className="mt-4 text-xs text-tertiary">
-        Макс. размер архива: 100 МБ. Внутри: PDF, JPEG, PNG, WebP, HEIC.
+        После загрузки ИИ определит тип каждого документа автоматически
       </div>
     </div>
   );
@@ -464,6 +602,9 @@ function ClassifyStep({
   setExistingApplicationId: (id: number | null) => void;
   applications: ApplicationResponse[];
 }) {
+  // Считаем сколько ЕГРЮЛ выбрано — предупреждаем если несколько
+  const egrylCount = Object.values(choices).filter((c) => c.docType === "egryl_extract").length;
+
   return (
     <div className="space-y-5">
       {/* Куда импортируем */}
@@ -578,12 +719,32 @@ function ClassifyStep({
 
       {/* Файлы */}
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-2">
-          Файлы из архива ({session.files.length})
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+            Файлы из архива ({session.files.length})
+          </div>
+          <div className="text-xs text-tertiary flex items-center gap-1">
+            <Sparkles className="w-3 h-3" />
+            Типы определены ИИ — проверьте перед продолжением
+          </div>
         </div>
-        <div className="text-xs text-tertiary mb-3">
-          Выберите тип каждого документа. Лишние оставьте «Не использовать».
-        </div>
+
+        {egrylCount > 1 && (
+          <div
+            className="mb-3 p-3 rounded-md text-sm flex gap-2 items-start"
+            style={{
+              background: "var(--color-bg-warning)",
+              color: "var(--color-text-warning)",
+              border: "0.5px solid var(--color-border-warning)",
+            }}
+          >
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              Выбрано {egrylCount} файла как ЕГРЮЛ. Будет использован только первый.
+              Остальные пометьте «— Не использовать —».
+            </span>
+          </div>
+        )}
 
         <div className="space-y-2">
           {session.files.map((file) => (
@@ -618,7 +779,6 @@ function FileRow({
 }) {
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
 
-  // Загружаем превью PDF когда менеджер выбрал тип (не "skip")
   const needPdfPages =
     file.is_pdf && choice.docType !== "skip" && !choice.pdfPagesPreviews && !choice.pdfLoading && !choice.pdfError;
 
@@ -628,6 +788,24 @@ function FileRow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needPdfPages]);
+
+  // Pack 14c — индикатор уверенности классификатора
+  const confidence = file.classifier_confidence;
+  const confidenceLabel =
+    confidence === "high" ? "ИИ уверен"
+    : confidence === "medium" ? "ИИ не уверен — проверьте"
+    : confidence === "low" ? "ИИ не смог определить"
+    : null;
+  const confidenceColor =
+    confidence === "high" ? { bg: "var(--color-bg-success)", text: "var(--color-text-success)" }
+    : confidence === "medium" ? { bg: "var(--color-bg-warning)", text: "var(--color-text-warning)" }
+    : { bg: "var(--color-bg-secondary)", text: "var(--color-text-tertiary)" };
+
+  // Цвет рамки селекта зависит от confidence
+  const selectBorderColor =
+    choice.docType === "skip" ? "var(--color-border-tertiary)"
+    : confidence === "medium" ? "var(--color-text-warning)"
+    : "var(--color-accent)";
 
   return (
     <div
@@ -649,7 +827,6 @@ function FileRow({
           {file.is_pdf ? (
             <FileText className="w-6 h-6 text-tertiary" />
           ) : file.preview_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <a href={file.preview_url} target="_blank" rel="noopener noreferrer">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -665,39 +842,50 @@ function FileRow({
 
         {/* Данные */}
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-primary truncate">
-            {file.name}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-primary truncate">
+              {file.name}
+            </span>
+            {confidenceLabel && (
+              <span
+                className="text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{
+                  background: confidenceColor.bg,
+                  color: confidenceColor.text,
+                }}
+              >
+                <Sparkles className="w-3 h-3" />
+                {confidenceLabel}
+                {file.classifier_country ? ` (${file.classifier_country})` : ""}
+              </span>
+            )}
           </div>
+
           <div className="text-xs text-tertiary mb-2">
             {file.is_pdf ? "PDF" : file.extension.replace(".", "").toUpperCase()} ·{" "}
             {sizeMB} МБ
+            {file.classifier_error ? ` · ИИ: ${file.classifier_error}` : ""}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            {/* Селект типа */}
-            <select
-              value={choice.docType}
-              onChange={(e) =>
-                onDocTypeChange(e.target.value as ClientDocumentType | "skip")
-              }
-              className="px-2 py-1.5 rounded-md text-sm border flex-1"
-              style={{
-                borderColor:
-                  choice.docType === "skip"
-                    ? "var(--color-border-tertiary)"
-                    : "var(--color-accent)",
-                borderWidth: 0.5,
-                background: "var(--color-bg-primary)",
-                color: "var(--color-text-primary)",
-              }}
-            >
-              {DOC_TYPE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={choice.docType}
+            onChange={(e) =>
+              onDocTypeChange(e.target.value as ClientDocumentType | "skip")
+            }
+            className="px-2 py-1.5 rounded-md text-sm border w-full"
+            style={{
+              borderColor: selectBorderColor,
+              borderWidth: 0.5,
+              background: "var(--color-bg-primary)",
+              color: "var(--color-text-primary)",
+            }}
+          >
+            {DOC_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
           {/* PDF page picker */}
           {file.is_pdf && choice.docType !== "skip" && (
@@ -768,6 +956,294 @@ function FileRow({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// =============================================================================
+// Step 3: Company creation form (Pack 14b)
+// =============================================================================
+
+function CompanyFormStep({
+  companyForm,
+  setCompanyForm,
+  pendingCompany,
+}: {
+  companyForm: CompanyCreatePayload;
+  setCompanyForm: (c: CompanyCreatePayload) => void;
+  pendingCompany: PendingCompanyData;
+}) {
+  function update<K extends keyof CompanyCreatePayload>(
+    key: K,
+    value: CompanyCreatePayload[K]
+  ) {
+    setCompanyForm({ ...companyForm, [key]: value });
+  }
+
+  const inputStyle = {
+    borderColor: "var(--color-border-tertiary)",
+    borderWidth: 0.5,
+    background: "var(--color-bg-primary)",
+    color: "var(--color-text-primary)",
+  } as const;
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-md p-3 text-sm flex gap-2 items-start"
+        style={{
+          background: "var(--color-bg-info)",
+          color: "var(--color-text-info)",
+          border: "0.5px solid var(--color-border-info)",
+        }}
+      >
+        <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <div>
+          <div className="font-medium mb-0.5">Данные распознаны из ЕГРЮЛ</div>
+          <div className="text-xs">
+            Проверьте поля, заполните недостающее (особенно банковские реквизиты)
+            и нажмите «Создать компанию и заявку».
+          </div>
+        </div>
+      </div>
+
+      {/* Названия */}
+      <FormSection title="Названия компании">
+        <FormField
+          label="Краткое название *"
+          hint="Например: ИНЖГЕОСЕРВИС, СК10"
+          value={companyForm.short_name}
+          onChange={(v) => update("short_name", v)}
+          placeholder={pendingCompany.ocr_data.short_name_inferred || ""}
+        />
+        <FormField
+          label="Полное название (рус) *"
+          value={companyForm.full_name_ru}
+          onChange={(v) => update("full_name_ru", v)}
+        />
+        <FormField
+          label="Полное название (исп) *"
+          hint="Для документов в UGE"
+          value={companyForm.full_name_es}
+          onChange={(v) => update("full_name_es", v)}
+        />
+      </FormSection>
+
+      {/* Идентификаторы */}
+      <FormSection title="Регистрационные данные">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FormField
+            label="ИНН *"
+            value={companyForm.tax_id_primary}
+            onChange={(v) => update("tax_id_primary", v)}
+          />
+          <FormField
+            label="КПП"
+            value={companyForm.tax_id_secondary || ""}
+            onChange={(v) => update("tax_id_secondary", v || null)}
+          />
+        </div>
+        {pendingCompany.ocr_data.ogrn && (
+          <div className="text-xs text-tertiary mt-1">
+            ОГРН (из выписки): {pendingCompany.ocr_data.ogrn}
+          </div>
+        )}
+      </FormSection>
+
+      {/* Адреса */}
+      <FormSection title="Адреса">
+        <FormField
+          label="Юридический адрес *"
+          value={companyForm.legal_address}
+          onChange={(v) => update("legal_address", v)}
+          textarea
+        />
+        <FormField
+          label="Почтовый адрес"
+          hint="Если отличается от юридического"
+          value={companyForm.postal_address || ""}
+          onChange={(v) => update("postal_address", v || null)}
+          textarea
+        />
+      </FormSection>
+
+      {/* Директор */}
+      <FormSection title="Директор">
+        <FormField
+          label="ФИО директора (Им. падеж) *"
+          value={companyForm.director_full_name_ru}
+          onChange={(v) => update("director_full_name_ru", v)}
+        />
+        <FormField
+          label="ФИО директора (Род. падеж) *"
+          hint="Например: Иванова Сергея Петровича"
+          value={companyForm.director_full_name_genitive_ru}
+          onChange={(v) => update("director_full_name_genitive_ru", v)}
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FormField
+            label="Короткая форма *"
+            hint="Например: Иванов С.П."
+            value={companyForm.director_short_ru}
+            onChange={(v) => update("director_short_ru", v)}
+          />
+          <FormField
+            label="Должность (Род. падеж)"
+            value={companyForm.director_position_ru || ""}
+            onChange={(v) => update("director_position_ru", v)}
+          />
+        </div>
+
+        {/* Все остальные склонения — для просмотра */}
+        <details className="mt-2">
+          <summary
+            className="text-xs cursor-pointer hover:text-primary"
+            style={{ color: "var(--color-text-info)" }}
+          >
+            Все склонения (сгенерированы ИИ)
+          </summary>
+          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs text-tertiary">
+            <div>Им.: {pendingCompany.director_declensions.nominative}</div>
+            <div>Род.: {pendingCompany.director_declensions.genitive}</div>
+            <div>Дат.: {pendingCompany.director_declensions.dative}</div>
+            <div>Вин.: {pendingCompany.director_declensions.accusative}</div>
+            <div>Тв.: {pendingCompany.director_declensions.instrumental}</div>
+            <div>Пр.: {pendingCompany.director_declensions.prepositional}</div>
+          </div>
+        </details>
+      </FormSection>
+
+      {/* Банк */}
+      <FormSection
+        title="Банковские реквизиты"
+        warning={
+          !companyForm.bank_name && !companyForm.bank_account
+            ? "ЕГРЮЛ не всегда содержит банковские реквизиты — заполните вручную"
+            : undefined
+        }
+      >
+        <FormField
+          label="Банк *"
+          value={companyForm.bank_name}
+          onChange={(v) => update("bank_name", v)}
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FormField
+            label="Расчётный счёт *"
+            value={companyForm.bank_account}
+            onChange={(v) => update("bank_account", v)}
+          />
+          <FormField
+            label="БИК *"
+            value={companyForm.bank_bic}
+            onChange={(v) => update("bank_bic", v)}
+          />
+        </div>
+        <FormField
+          label="Корреспондентский счёт"
+          value={companyForm.bank_correspondent_account || ""}
+          onChange={(v) => update("bank_correspondent_account", v || null)}
+        />
+      </FormSection>
+
+      {/* ЕГРЮЛ дата */}
+      <FormSection title="Прочее">
+        <FormField
+          label="Дата выдачи ЕГРЮЛ"
+          value={companyForm.egryl_extract_date || ""}
+          onChange={(v) => update("egryl_extract_date", v || null)}
+          placeholder="YYYY-MM-DD"
+        />
+      </FormSection>
+    </div>
+  );
+}
+
+
+function FormSection({
+  title,
+  warning,
+  children,
+}: {
+  title: string;
+  warning?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="rounded-md p-4"
+      style={{
+        background: "var(--color-bg-secondary)",
+        border: "0.5px solid var(--color-border-secondary)",
+      }}
+    >
+      <div className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3">
+        {title}
+      </div>
+      {warning && (
+        <div
+          className="mb-3 p-2 rounded-md text-xs flex gap-1.5 items-start"
+          style={{
+            background: "var(--color-bg-warning)",
+            color: "var(--color-text-warning)",
+          }}
+        >
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          <span>{warning}</span>
+        </div>
+      )}
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+
+function FormField({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  textarea,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  textarea?: boolean;
+}) {
+  const style = {
+    borderColor: "var(--color-border-tertiary)",
+    borderWidth: 0.5,
+    background: "var(--color-bg-primary)",
+    color: "var(--color-text-primary)",
+  } as const;
+
+  return (
+    <div>
+      <label className="block text-xs text-tertiary mb-1">{label}</label>
+      {textarea ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={2}
+          className="w-full px-2 py-1.5 rounded-md text-sm border"
+          style={style}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full px-2 py-1.5 rounded-md text-sm border"
+          style={style}
+        />
+      )}
+      {hint && <div className="text-xs text-tertiary mt-0.5">{hint}</div>}
     </div>
   );
 }

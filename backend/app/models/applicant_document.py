@@ -1,17 +1,14 @@
 """
 ApplicantDocument — документы, загруженные клиентом для OCR-распознавания.
 
-Это отдельная модель от старой UploadedFile (которая в _supporting.py
-для GeneratedDocument). Renamed enums чтобы не конфликтовать.
-
 Pack 13.1.3: добавлено поле original_storage_key для хранения оригинала PDF.
 
 Pack 14a: добавлены типы документов для иностранных клиентов:
-- passport_national — национальный паспорт любой страны (не РФ)
-- residence_card — ВНЖ / Residence permit любой страны
-- criminal_record — справка о несудимости
+- passport_national, residence_card, criminal_record
 
-ЕГРЮЛ выписка (egryl_extract) будет добавлена в Pack 14b.
+Pack 14b: добавлен тип egryl_extract — выписка из ЕГРЮЛ компании.
+Этот тип помечает архивный документ компании, а не клиента.
+Распознанные данные используются для создания/привязки Company в справочнике.
 """
 
 from datetime import datetime
@@ -34,6 +31,8 @@ class ApplicantDocumentType(str, Enum):
     PASSPORT_NATIONAL = "passport_national"
     RESIDENCE_CARD = "residence_card"
     CRIMINAL_RECORD = "criminal_record"
+    # Pack 14b — выписка из ЕГРЮЛ для компании-работодателя
+    EGRYL_EXTRACT = "egryl_extract"
     # Прочее
     OTHER = "other"
 
@@ -50,12 +49,8 @@ class ApplicantDocument(SQLModel, table=True):
     """
     Документ клиента, загруженный для распознавания.
 
-    Привязан к Application (заявке). Файл хранится в storage backend
-    (Cloudflare R2 в production, LocalStorage в dev).
-
     Pack 13.1.3: storage_key всегда указывает на JPEG для OCR (он же используется
-    для превью). original_storage_key опционально содержит оригинальный PDF
-    (когда клиент загрузил PDF и мы конвертировали его в JPEG).
+    для превью). original_storage_key опционально содержит оригинальный PDF.
     """
     __tablename__ = "applicant_document"
 

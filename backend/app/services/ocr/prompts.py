@@ -1,17 +1,17 @@
 """
 OCR prompts for different document types.
 
+Pack 14a: passport_national, residence_card, criminal_record
+Pack 14b/c:
+- DOCUMENT_CLASSIFIER_PROMPT — ИИ определяет тип любого документа по первой странице
+- EGRYL_EXTRACT_PROMPT — распознавание ЕГРЮЛ выписки
+- DIRECTOR_DECLENSIONS_PROMPT — генерация русских склонений ФИО директора
+
 Strategy:
 - Instructions in English (canonical for LLM)
 - Output values preserved in source language (Cyrillic stays Cyrillic, Latin stays Latin)
 - Output is strict JSON, no markdown wrapping
 - All fields nullable — return null if not visible/unclear
-- No hallucinations: if uncertain, return null instead of guessing
-
-Pack 14a: added prompts for foreign-client documents:
-- PASSPORT_NATIONAL_PROMPT — national passport of any country (not Russian)
-- RESIDENCE_CARD_PROMPT — residence permit / residence card
-- CRIMINAL_RECORD_PROMPT — criminal record certificate
 """
 
 
@@ -179,7 +179,7 @@ Return ONLY the JSON object."""
 
 
 # ============================================================================
-# Pack 14a — новые промпты для иностранных документов
+# Pack 14a — иностранные документы
 # ============================================================================
 
 PASSPORT_NATIONAL_PROMPT = """You are an expert OCR system specialized in NATIONAL passports of various countries (NOT Russian internal passports — those have their own specialized prompt).
@@ -214,10 +214,7 @@ Rules:
 - For sex: passports use various conventions:
   - "M" / "MALE" / "ER" (Turkish for male) / "Мужской" → "H"
   - "F" / "FEMALE" / "K" (Turkish for female "Kadın") / "Женский" → "M"
-- For 3-letter country codes — use ISO 3166-1 alpha-3:
-  - Turkey → TUR, Kazakhstan → KAZ, Ukraine → UKR, Belarus → BLR
-  - Armenia → ARM, Azerbaijan → AZE, Georgia → GEO, Israel → ISR
-  - Germany → DEU, Poland → POL, Serbia → SRB, Moldova → MDA
+- For 3-letter country codes — use ISO 3166-1 alpha-3
 - Dates: convert from any format to YYYY-MM-DD
 
 Output schema:
@@ -246,8 +243,6 @@ Examples: Polish "Karta Pobytu", German "Aufenthaltstitel", Czech "Povolení k p
 
 Look at the attached image — this is a residence permit / residence card.
 
-The card identifies a person who is a foreigner residing in the issuing country. Often there's a holder photo, name, nationality, and validity dates.
-
 Return STRICTLY a JSON object. No markdown, no preamble — only raw JSON.
 
 Fields to extract:
@@ -266,8 +261,6 @@ Rules:
 - nationality is the HOLDER's nationality (e.g. "TUR" for Turkish citizen with Polish residence card)
 - residence_country is who ISSUED the card (e.g. "POL" for Karta Pobytu)
 - For sex: "M" → "H", "F"/"K" → "M"
-- For 3-letter country codes — use ISO 3166-1 alpha-3
-- If permit_type is bilingual (e.g. native + English), prefer the native language version
 
 Output schema:
 {
@@ -292,8 +285,6 @@ Examples: Russian "справка об отсутствии судимости",
 
 Look at the attached image — this is a criminal record certificate (apostilled or notarized for use abroad).
 
-The document confirms whether the person has any criminal record. For visa purposes — usually it confirms NO criminal record.
-
 Return STRICTLY a JSON object. No markdown, no preamble — only raw JSON.
 
 Fields to extract:
@@ -302,21 +293,17 @@ Fields to extract:
 - last_name_native: Surname in native script if shown — null if document is fully in Latin
 - first_name_native: Given name in native script — null otherwise
 - birth_date: Date of birth in ISO format YYYY-MM-DD
-- nationality: 3-letter ISO country code if visible (often shown as "Citizenship" / "Nationality" / "Vatandaşlık")
+- nationality: 3-letter ISO country code if visible
 - issuing_country: 3-letter ISO country code of country that issued the certificate (TUR, RUS, POL, etc.)
 - issuing_authority: Name of the authority that issued the certificate as written
 - certificate_number: Certificate / document number if shown
 - issue_date: Date of issue in ISO format YYYY-MM-DD
 - has_criminal_record: boolean — false if certificate confirms NO record (most common case), true if record is present, null if unclear
-- expiry_date: Date of expiry in ISO format YYYY-MM-DD if specified (some certificates are valid for a limited time)
+- expiry_date: Date of expiry in ISO format YYYY-MM-DD if specified
 
 Rules:
-- The "has_criminal_record" field — read the document carefully:
-  - "Has no criminal record" / "не имеет судимости" / "kayıt bulunamamıştır" → false
-  - "Has criminal record" / "имеется судимость" → true
-  - Unclear → null
-- For 3-letter country codes — use ISO 3166-1 alpha-3
-- nationality and issuing_country MAY differ (e.g. Turkish citizen got certificate in Poland)
+- "Has no criminal record" / "не имеет судимости" / "kayıt bulunamamıştır" → false
+- "Has criminal record" / "имеется судимость" → true
 
 Output schema:
 {
@@ -338,19 +325,190 @@ Return ONLY the JSON object."""
 
 
 # ============================================================================
+# Pack 14b — ЕГРЮЛ выписка
+# ============================================================================
+
+EGRYL_EXTRACT_PROMPT = """You are an expert OCR system specialized in Russian company registry extracts (ЕГРЮЛ / EGRYL — Единый государственный реестр юридических лиц).
+
+The document may be in Russian (original) OR translated into Spanish/English (for visa purposes).
+
+Look at the attached image — this is a page from an EGRYL extract that contains company registration data.
+
+Extract the following fields and return STRICTLY a JSON object. No markdown, no preamble.
+
+Fields to extract:
+
+NAMES:
+- full_name_ru: Full company name in Russian, in canonical form (e.g. "Общество с ограниченной ответственностью \\"ИНЖГЕОСЕРВИС\\""). If document is translated to Spanish, reconstruct the Russian name from quotes (e.g. "ИНЖГЕОСЕРВИС" → "Общество с ограниченной ответственностью \\"ИНЖГЕОСЕРВИС\\"")
+- full_name_es: Full name in Spanish if document is translated. Otherwise null.
+- short_name_inferred: Best guess at a short name from the company's distinctive part (the trademark/brand name in quotes, e.g. "ИНЖГЕОСЕРВИС", "БУКИ ВЕДИ"). NOT the legal form.
+
+REGISTRATION:
+- ogrn: ОГРН — Main State Registration Number, exactly 13 digits as a string. Look for "ОГРН", "OGRN", "Número Principal de Registro Estatal".
+- inn: ИНН — Tax ID, exactly 10 digits for legal entities. Look for "ИНН", "INN", "NIF".
+- kpp: КПП — Tax registration code, 9 digits. Look for "КПП", "KPP".
+
+ADDRESSES:
+- legal_address: Legal address as written (the official juridical address). Single line, with all abbreviations preserved.
+- postal_address: Postal address if different from legal. null if same.
+
+DIRECTOR:
+- director_full_name_ru: ФИО директора в именительном падеже (Cyrillic, e.g. "Иванов Сергей Петрович"). Reconstruct from any case if needed.
+- director_position_ru: Position in genitive case for documents (e.g. "Генерального директора", "Директора"). If found in nominative case ("Генеральный директор") — convert to genitive.
+
+BANK (often present in EGRYL but not always):
+- bank_name: Bank name as written (e.g. "ПАО Сбербанк", "Филиал \\"ЦЕНТРАЛЬНЫЙ\\" БАНКА ВТБ (ПАО)"). null if not in document.
+- bank_account: Расчётный счёт (20 digits). null if not present.
+- bank_bic: БИК (9 digits). null if not present.
+- bank_correspondent_account: Корреспондентский счёт (20 digits, starts with 30101). null if not present.
+
+DATES:
+- egryl_extract_date: Date of the EGRYL extract issuance, ISO format YYYY-MM-DD.
+
+Rules:
+- If a field is unclear → null
+- ALWAYS preserve Russian text in Cyrillic, even if the source is a Spanish translation
+- For Spanish-translated documents, look for the original Russian text in quotes
+- For 13/10/9-digit IDs — return as strings (preserves leading zeros if any)
+
+Output schema:
+{
+  "full_name_ru": "Общество с ограниченной ответственностью \\"ИНЖГЕОСЕРВИС\\"" or null,
+  "full_name_es": "SOCIEDAD LIMITADA \\"INZHGEOSERVIS\\"" or null,
+  "short_name_inferred": "ИНЖГЕОСЕРВИС" or null,
+  "ogrn": "1142366003471" or null,
+  "inn": "2320234123" or null,
+  "kpp": "232001001" or null,
+  "legal_address": "354000, г. Сочи, ул. ..., д. ..." or null,
+  "postal_address": null,
+  "director_full_name_ru": "Иванов Сергей Петрович" or null,
+  "director_position_ru": "Генерального директора" or null,
+  "bank_name": null,
+  "bank_account": null,
+  "bank_bic": null,
+  "bank_correspondent_account": null,
+  "egryl_extract_date": "2025-11-29" or null
+}
+
+Return ONLY the JSON object."""
+
+
+# ============================================================================
+# Pack 14c — ИИ-классификатор документа
+# ============================================================================
+
+DOCUMENT_CLASSIFIER_PROMPT = """You are a document type classifier. Look at the first page of the attached document and determine its type.
+
+Possible types (return one of these exact strings):
+- "passport_internal_main" — Russian internal passport (общегражданский паспорт РФ), main page with photo. Has Cyrillic-only text, double-headed eagle, bilingual title "ПАСПОРТ".
+- "passport_internal_address" — Russian internal passport, registration page (страница 5 — прописка). Shows "Место жительства" stamps.
+- "passport_foreign" — Russian INTERNATIONAL passport (загранпаспорт РФ). Has BOTH Cyrillic and Latin transliteration. MRZ at bottom starts with "P<RUS".
+- "passport_national" — National passport of any OTHER country (not Russia). Examples: Turkish (TÜRKİYE), Kazakh, Ukrainian, Belarusian, German, Polish, Israeli passports. MRZ starts with country code other than RUS.
+- "residence_card" — Residence permit / residence card from any country. Examples: Polish "Karta Pobytu", German "Aufenthaltstitel", Spanish "TIE". Card-format document (not a booklet) with photo.
+- "criminal_record" — Criminal record certificate / Police clearance / Background check. Russian "справка о несудимости", Turkish "Adli Sicil Kaydı", etc.
+- "diploma_main" — Higher education diploma main page (institution name, specialty, year)
+- "diploma_apostille" — Apostille stamp on a diploma. Has square stamp with "APOSTILLE" or "Apostille (Convention de La Haye)".
+- "egryl_extract" — Russian company registry extract (ЕГРЮЛ / Выписка из ЕГРЮЛ). Contains ОГРН, ИНН, KPP for a legal entity. May be translated to Spanish (Extracto del Registro Estatal Unificado).
+- "other" — Anything else (medical records, contracts, photos of people, etc.)
+
+Confidence levels:
+- "high" — you are 95%+ confident based on clear visual cues
+- "medium" — you see some signs but a few elements are ambiguous (~70-90%)
+- "low" — you can only guess based on partial info (~50-70%)
+
+If you really cannot tell — return type "other" with confidence "low".
+
+Return STRICTLY a JSON object:
+
+{
+  "type": "passport_national" or other type from list,
+  "confidence": "high" or "medium" or "low",
+  "country_hint": "TUR" or "RUS" or "POL" or null,
+  "reasoning": "Short explanation in English why you chose this type"
+}
+
+Return ONLY the JSON object. No markdown."""
+
+
+# ============================================================================
+# Pack 14b — генерация русских склонений ФИО
+# ============================================================================
+
+DECLENSIONS_PROMPT = """You are a Russian language expert. Generate declensions of a person's full name in Russian (ФИО).
+
+Input: a Russian full name in Nominative case (Именительный падеж), like "Иванов Сергей Петрович".
+
+Generate the following forms and return STRICTLY a JSON object. No markdown, no preamble.
+
+Fields:
+- nominative: Именительный — original input as-is (Иванов Сергей Петрович)
+- genitive: Родительный (кого? чего?) — for legal documents (Иванова Сергея Петровича)
+- dative: Дательный (кому? чему?) (Иванову Сергею Петровичу)
+- accusative: Винительный (кого? что?) (Иванова Сергея Петровича)
+- instrumental: Творительный (кем? чем?) (Ивановым Сергеем Петровичем)
+- prepositional: Предложный (о ком? о чём?) (об Иванове Сергее Петровиче — but WITHOUT the preposition "о/об")
+- short_form: Сокращённая форма (Surname + initials, e.g. "Иванов С.П.")
+
+Rules:
+- Apply Russian grammar rules for each surname/name/patronymic
+- Preserve original capitalization (usually Title Case in legal documents)
+- Handle non-standard surnames carefully:
+  - Foreign-origin surnames may not decline (e.g. "Дюма" stays "Дюма" in all cases)
+  - Surnames ending in -ин/-ов decline regularly for males
+  - Female surnames ending in -ина/-ова decline as feminine adjectives
+- For prepositional case: do NOT include the "о/об" preposition
+
+Examples:
+
+Input: "Иванов Сергей Петрович"
+{
+  "nominative": "Иванов Сергей Петрович",
+  "genitive": "Иванова Сергея Петровича",
+  "dative": "Иванову Сергею Петровичу",
+  "accusative": "Иванова Сергея Петровича",
+  "instrumental": "Ивановым Сергеем Петровичем",
+  "prepositional": "Иванове Сергее Петровиче",
+  "short_form": "Иванов С.П."
+}
+
+Input: "Тараскин Юрий Александрович"
+{
+  "nominative": "Тараскин Юрий Александрович",
+  "genitive": "Тараскина Юрия Александровича",
+  "dative": "Тараскину Юрию Александровичу",
+  "accusative": "Тараскина Юрия Александровича",
+  "instrumental": "Тараскиным Юрием Александровичем",
+  "prepositional": "Тараскине Юрии Александровиче",
+  "short_form": "Тараскин Ю.А."
+}
+
+Input: "Петрова Мария Ивановна"
+{
+  "nominative": "Петрова Мария Ивановна",
+  "genitive": "Петровой Марии Ивановны",
+  "dative": "Петровой Марии Ивановне",
+  "accusative": "Петрову Марию Ивановну",
+  "instrumental": "Петровой Марией Ивановной",
+  "prepositional": "Петровой Марии Ивановне",
+  "short_form": "Петрова М.И."
+}
+
+Now generate declensions for the input that will be provided in the user message.
+
+Return ONLY the JSON object."""
+
+
+# ============================================================================
 # Map document type → prompt
 # ============================================================================
 
 PROMPT_BY_DOC_TYPE = {
-    # Российские документы
     "passport_internal_main": RUSSIAN_PASSPORT_MAIN_PROMPT,
     "passport_internal_address": RUSSIAN_PASSPORT_ADDRESS_PROMPT,
     "passport_foreign": FOREIGN_PASSPORT_PROMPT,
     "diploma_main": DIPLOMA_PROMPT,
-    # diploma_apostille — no OCR (just stored), the apostille text is not needed for the form
-
-    # Pack 14a — иностранные документы
     "passport_national": PASSPORT_NATIONAL_PROMPT,
     "residence_card": RESIDENCE_CARD_PROMPT,
     "criminal_record": CRIMINAL_RECORD_PROMPT,
+    "egryl_extract": EGRYL_EXTRACT_PROMPT,
 }
