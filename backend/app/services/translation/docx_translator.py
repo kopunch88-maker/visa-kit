@@ -297,10 +297,22 @@ async def translate_docx(
     """
     doc = Document(io.BytesIO(docx_bytes))
     paragraphs = _collect_all_paragraphs(doc)
-    log.info(
+    log.warning(
         f"[translation] DOCX has {len(paragraphs)} paragraphs"
-        + (f", {len(substitutions)} pre-substitutions" if substitutions else "")
+        + (f", {len(substitutions)} pre-substitutions ACTIVE" if substitutions else ", NO substitutions")
     )
+
+    # Pack 15.3: диагностика — найдём в DOCX параграф с «ИНЖГЕОСЕРВИС» или «Юксел»
+    # и покажем что с ним делает substitutions.apply()
+    if substitutions:
+        for p in paragraphs:
+            txt = _extract_paragraph_text(p)
+            if "ИНЖГЕОСЕРВИС" in txt or "Юксел" in txt or "ИНН" in txt:
+                applied = substitutions.apply(txt)
+                if applied != txt:
+                    log.warning(f"[translation:DIAG] BEFORE: {txt[:200]!r}")
+                    log.warning(f"[translation:DIAG] AFTER:  {applied[:200]!r}")
+                    break
 
     targets: list[tuple[int, str]] = []
     for idx, p in enumerate(paragraphs):
