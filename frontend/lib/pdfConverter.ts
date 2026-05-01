@@ -1,57 +1,124 @@
 /**
- * Pack 13.1.3 — конвертация PDF → JPEG на клиенте через PDF.js.
+ * Pack 13.1.3 (fix) — конвертация PDF → JPEG на клиенте через PDF.js.
  *
- * Стратегия:
- * - PDF.js загружается lazy (только при необходимости)
- * - Используем CDN-версию (cloudflare cdnjs) чтобы не тащить в bundle
- * - DPI 200 для хорошего качества OCR при разумном размере
- * - Worker подключается с того же CDN
+ * История:
+ * - Изначально использовали cdnjs с версией 4.0.379, но клиент получал
+ *   "Failed to load PDF.js from CDN" — возможно cdnjs блокировался адблокером
+ *   или конкретный путь был недоступен.
  *
- * Использование:
- *   const pages = await pdfToImagePages(pdfFile, { dpi: 200 });
- *   // pages: [{ pageNum: 1, dataUrl: "data:image/jpeg;base64,...", blob: Blob }, ...]
+ * Текущая стратегия:
+ * - Используем unpkg.com (npm зеркало) — отдаёт UMD-build надёжно
+ * - Версия 3.11.174 — последняя UMD-версия PDF.js которая работает через <script>
+ *   (5.x перешли на ES modules, через <script> не подключаются)
+ * - Если unpkg недоступен — fallback на jsdelivr
+ * - Если оба недоступны — fallback на cdnjs
+ * - Worker подгружается с того же CDN откуда основной файл
  *
- *   const jpegFile = await blobToFile(pages[0].blob, "passport.jpg");
+ * DPI 200 — золотая середина для OCR.
  */
 
-const PDFJS_VERSION = "4.0.379";
-const PDFJS_CDN = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
+interface CdnSource {
+  name: string;
+  scriptUrl: string;
+  workerUrl: string;
+}
+
+const PDFJS_VERSION = "3.11.174";
+
+// Список CDN в порядке приоритета — каждый пробуем по очереди
+const CDN_SOURCES: CdnSource[] = [
+  {
+    name: "unpkg",
+    scriptUrl: `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.min.js`,
+    workerUrl: `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.worker.min.js`,
+  },
+  {
+    name: "jsdelivr",
+    scriptUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.min.js`,
+    workerUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.worker.min.js`,
+  },
+  {
+    name: "cdnjs",
+    scriptUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`,
+    workerUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`,
+  },
+];
 
 let pdfjsLibPromise: Promise<any> | null = null;
 
-/**
- * Lazy-load PDF.js из CDN. Кеширует промис чтобы не загружать дважды.
- */
-async function loadPdfJs(): Promise<any> {
-  if (pdfjsLibPromise) return pdfjsLibPromise;
 
-  pdfjsLibPromise = new Promise((resolve, reject) => {
-    // Проверим если уже загружен
+function loadScriptFrom(source: CdnSource, timeoutMs = 15000): Promise<any> {
+  return new Promise((resolve, reject) => {
     if (typeof window !== "undefined" && (window as any).pdfjsLib) {
       resolve((window as any).pdfjsLib);
       return;
     }
-
     if (typeof document === "undefined") {
-      reject(new Error("PDF.js can only be loaded in a browser environment"));
+      reject(new Error("Not in browser environment"));
       return;
     }
 
     const script = document.createElement("script");
-    script.src = `${PDFJS_CDN}/pdf.min.js`;
+    script.src = source.scriptUrl;
     script.async = true;
+
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error(`${source.name}: timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
     script.onload = () => {
+      clearTimeout(timeout);
       const pdfjsLib = (window as any).pdfjsLib;
       if (!pdfjsLib) {
-        reject(new Error("PDF.js loaded but pdfjsLib is undefined"));
+        reject(new Error(`${source.name}: loaded but window.pdfjsLib undefined`));
         return;
       }
-      // Setup worker
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.js`;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = source.workerUrl;
+      console.log(`[pdfConverter] PDF.js ${PDFJS_VERSION} loaded from ${source.name}`);
       resolve(pdfjsLib);
     };
-    script.onerror = () => reject(new Error("Failed to load PDF.js from CDN"));
+
+    script.onerror = () => {
+      clearTimeout(timeout);
+      script.remove();
+      reject(new Error(`${source.name}: script load failed`));
+    };
+
     document.head.appendChild(script);
+  });
+}
+
+
+/**
+ * Lazy-load PDF.js. Пробует CDN из CDN_SOURCES по очереди.
+ * Кеширует результат — повторный вызов вернёт тот же промис.
+ */
+async function loadPdfJs(): Promise<any> {
+  if (pdfjsLibPromise) return pdfjsLibPromise;
+
+  pdfjsLibPromise = (async () => {
+    const errors: string[] = [];
+    for (const source of CDN_SOURCES) {
+      try {
+        const lib = await loadScriptFrom(source);
+        return lib;
+      } catch (e) {
+        const msg = (e as Error).message;
+        errors.push(msg);
+        console.warn(`[pdfConverter] ${msg} — trying next CDN`);
+      }
+    }
+    // Все CDN провалились
+    throw new Error(
+      `Не удалось загрузить PDF.js ни с одного CDN. Возможно, блокирует расширение браузера ` +
+        `или сетевой фильтр. Попытки: ${errors.join("; ")}`
+    );
+  })();
+
+  // Если все CDN провалились — сбросим кеш чтобы при следующей попытке снова попробовать
+  pdfjsLibPromise.catch(() => {
+    pdfjsLibPromise = null;
   });
 
   return pdfjsLibPromise;
@@ -60,25 +127,20 @@ async function loadPdfJs(): Promise<any> {
 
 export interface PdfPagePreview {
   pageNum: number;
-  dataUrl: string;       // для <img src=...>
-  blob: Blob;            // для отправки
-  width: number;         // в пикселях
+  dataUrl: string;
+  blob: Blob;
+  width: number;
   height: number;
 }
 
 
 export interface PdfConversionOptions {
-  dpi?: number;          // default 200
-  maxPages?: number;     // default 10 (защита от огромных PDF)
-  jpegQuality?: number;  // 0-1, default 0.92
+  dpi?: number;
+  maxPages?: number;
+  jpegQuality?: number;
 }
 
 
-/**
- * Конвертирует PDF в массив JPEG-страниц.
- *
- * @throws Error если PDF не валидный или браузер не поддерживает canvas
- */
 export async function pdfToImagePages(
   pdfFile: File | Blob,
   options: PdfConversionOptions = {},
@@ -87,24 +149,20 @@ export async function pdfToImagePages(
 
   const pdfjsLib = await loadPdfJs();
 
-  // Читаем PDF в ArrayBuffer
   const arrayBuffer = await pdfFile.arrayBuffer();
 
-  // Загружаем PDF
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
 
   const totalPages = Math.min(pdf.numPages, maxPages);
   const pages: PdfPagePreview[] = [];
 
-  // PDF.js использует viewport.scale = 1.0 = 72 DPI (стандартный PDF DPI)
-  // Чтобы получить N DPI, нужен scale = N / 72
+  // PDF.js: scale = 1.0 = 72 DPI (стандарт PDF)
   const scale = dpi / 72;
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale });
 
-    // Создаём canvas нужного размера
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -117,10 +175,8 @@ export async function pdfToImagePages(
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Рендерим страницу
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    // Конвертируем в Blob (JPEG)
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
         (b) => {
@@ -132,7 +188,6 @@ export async function pdfToImagePages(
       );
     });
 
-    // dataUrl для превью
     const dataUrl = canvas.toDataURL("image/jpeg", jpegQuality);
 
     pages.push({
@@ -148,9 +203,6 @@ export async function pdfToImagePages(
 }
 
 
-/**
- * Конвертирует Blob в File (для отправки через FormData).
- */
 export function blobToFile(blob: Blob, fileName: string): File {
   return new File([blob], fileName, {
     type: blob.type,
@@ -159,20 +211,12 @@ export function blobToFile(blob: Blob, fileName: string): File {
 }
 
 
-/**
- * Возвращает true если файл — PDF (по MIME или расширению).
- */
 export function isPdfFile(file: File): boolean {
   if (file.type === "application/pdf") return true;
   return file.name.toLowerCase().endsWith(".pdf");
 }
 
 
-/**
- * Возвращает true если файл — HEIC/HEIF (формат iPhone).
- * Браузеры пока не умеют рендерить HEIC, но мы можем их отправить
- * как оригинал, а primary конвертирует backend через pillow-heif.
- */
 export function isHeicFile(file: File): boolean {
   const lowerType = file.type.toLowerCase();
   if (lowerType === "image/heic" || lowerType === "image/heif") return true;
