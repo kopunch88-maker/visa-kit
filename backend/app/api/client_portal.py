@@ -3,18 +3,16 @@ Client portal — эндпоинты для самого клиента.
 
 Авторизация — по токену в URL.
 
-Pack 13.1.1: preview-apply (показ конфликтов) и overrides в apply-to-applicant
-для гранулярного контроля что заменять, а что нет.
-
-Pack 13.1.2: автоматическая транслитерация *_native → *_latin при apply,
-если из загранпаспорта не пришли свои латинские (или клиент их не подтвердил).
+Pack 13.1.1: preview-apply (показ конфликтов) и overrides
+Pack 13.1.2: автоматическая ГОСТ-транслитерация *_native → *_latin при apply
+Pack 13.1.3: хранение оригинального PDF + генерация JPEG для OCR на клиенте
 """
 
 import logging
 import re
 import time
-from datetime import datetime, date
-from typing import Optional, List, Any
+from datetime import datetime
+from typing import Optional, List
 from pathlib import Path as PathLib
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
@@ -46,14 +44,23 @@ router = APIRouter(prefix="/client", tags=["client-portal"])
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MIN_FILE_SIZE = 100 * 1024
 
-ALLOWED_CONTENT_TYPES = {
+# Pack 13.1.3: основной файл (для OCR + превью) — только изображения
+ALLOWED_PRIMARY_CONTENT_TYPES = {
     "image/jpeg",
     "image/jpg",
     "image/png",
     "image/webp",
+}
+
+# Оригинал — может быть PDF или HEIC (если клиент решил их сохранить как есть)
+ALLOWED_ORIGINAL_CONTENT_TYPES = {
+    "application/pdf",
     "image/heic",
     "image/heif",
-    "application/pdf",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
 }
 
 
@@ -96,12 +103,22 @@ def _enrich_application(application: Application) -> dict:
 
 
 def _enrich_document(doc: ApplicantDocument) -> dict:
+    """Pack 13.1.3: расширено полями про оригинал."""
     storage = get_storage()
     download_url = None
+    original_download_url = None
+
     try:
         download_url = storage.get_url(doc.storage_key, expires_in=3600)
     except Exception as e:
         log.warning(f"Failed to generate URL for {doc.storage_key}: {e}")
+
+    has_original = bool(doc.original_storage_key)
+    if has_original:
+        try:
+            original_download_url = storage.get_url(doc.original_storage_key, expires_in=3600)
+        except Exception as e:
+            log.warning(f"Failed to generate URL for original {doc.original_storage_key}: {e}")
 
     return {
         "id": doc.id,
@@ -116,6 +133,10 @@ def _enrich_document(doc: ApplicantDocument) -> dict:
         "applied_to_applicant": doc.applied_to_applicant,
         "created_at": doc.created_at,
         "download_url": download_url,
+        # Pack 13.1.3
+        "has_original": has_original,
+        "original_download_url": original_download_url,
+        "original_file_name": doc.original_file_name,
     }
 
 
@@ -215,8 +236,23 @@ async def upload_document(
     token: str,
     doc_type: str = Form(...),
     file: UploadFile = File(...),
+    # Pack 13.1.3: опциональный второй файл — оригинал PDF (или HEIC)
+    original_file: Optional[UploadFile] = File(default=None),
     session: Session = Depends(get_session),
 ):
+    """
+    Загрузка документа клиентом.
+
+    Pack 13.1.3:
+    - file — основной (всегда JPEG/PNG/WebP, для OCR + превью).
+      Если клиент загружает PDF, frontend сам конвертирует выбранную страницу
+      в JPEG и отправляет её сюда.
+    - original_file — опциональный оригинал (PDF), хранится для финальной
+      отправки в инстанцию.
+
+    Старые клиенты могут продолжать слать только один файл (без original_file) —
+    это работает как раньше.
+    """
     application = _get_application_by_token(token, session)
 
     try:
@@ -224,6 +260,7 @@ async def upload_document(
     except ValueError:
         raise HTTPException(422, f"Invalid doc_type: {doc_type}")
 
+    # === Валидация основного файла ===
     contents = await file.read()
     file_size = len(contents)
 
@@ -238,9 +275,42 @@ async def upload_document(
         )
 
     content_type = file.content_type or "application/octet-stream"
-    if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(415, f"Unsupported file type: {content_type}")
+    if content_type not in ALLOWED_PRIMARY_CONTENT_TYPES:
+        raise HTTPException(
+            415,
+            f"Primary file must be an image (JPEG/PNG/WebP). Got: {content_type}. "
+            f"For PDF — frontend should convert it to JPEG before upload."
+        )
 
+    # === Валидация оригинала (опционально) ===
+    original_contents = None
+    original_size = None
+    original_content_type = None
+    original_name = None
+
+    if original_file is not None:
+        original_contents = await original_file.read()
+        original_size = len(original_contents)
+
+        if original_size == 0:
+            # Пустой original — игнорируем
+            original_contents = None
+        else:
+            if original_size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    413,
+                    f"Original file too large: {original_size} bytes (max 10 MB)"
+                )
+
+            original_content_type = original_file.content_type or "application/octet-stream"
+            if original_content_type not in ALLOWED_ORIGINAL_CONTENT_TYPES:
+                raise HTTPException(
+                    415,
+                    f"Original file type not supported: {original_content_type}"
+                )
+            original_name = original_file.filename or f"{doc_type}_original.bin"
+
+    # === Удаление старого документа того же типа ===
     existing = session.exec(
         select(ApplicantDocument)
         .where(ApplicantDocument.application_id == application.id)
@@ -253,31 +323,65 @@ async def upload_document(
         try:
             storage.delete(existing.storage_key)
         except Exception as e:
-            log.warning(f"Failed to delete old file: {e}")
+            log.warning(f"Failed to delete old primary file: {e}")
+        if existing.original_storage_key:
+            try:
+                storage.delete(existing.original_storage_key)
+            except Exception as e:
+                log.warning(f"Failed to delete old original file: {e}")
         session.delete(existing)
         session.flush()
 
+    # === Сохраняем основной файл (JPEG для OCR) ===
     timestamp = int(time.time())
-    original_name = file.filename or f"{doc_type}.bin"
-    extension = PathLib(original_name).suffix.lower() or ".bin"
+    primary_filename = file.filename or f"{doc_type}.jpg"
+    primary_extension = PathLib(primary_filename).suffix.lower() or ".jpg"
     storage_key = (
         f"applications/{application.id}/documents/"
-        f"{doc_type}_{timestamp}{extension}"
+        f"{doc_type}_{timestamp}{primary_extension}"
     )
 
     try:
         storage.save(storage_key, contents, content_type=content_type)
     except Exception as e:
-        log.error(f"Failed to save to storage: {e}")
+        log.error(f"Failed to save primary file: {e}")
         raise HTTPException(500, f"Failed to save file: {e}")
 
+    # === Сохраняем оригинал (если был передан) ===
+    original_storage_key = None
+    if original_contents:
+        original_extension = PathLib(original_name).suffix.lower() or ".pdf"
+        original_storage_key = (
+            f"applications/{application.id}/documents/"
+            f"{doc_type}_{timestamp}_original{original_extension}"
+        )
+        try:
+            storage.save(
+                original_storage_key,
+                original_contents,
+                content_type=original_content_type,
+            )
+        except Exception as e:
+            log.error(f"Failed to save original file: {e}")
+            # Если оригинал не сохранился — удаляем и primary, чтобы не было рассинхрона
+            try:
+                storage.delete(storage_key)
+            except Exception:
+                pass
+            raise HTTPException(500, f"Failed to save original file: {e}")
+
+    # === Создаём запись в БД ===
     doc = ApplicantDocument(
         application_id=application.id,
         doc_type=doc_type_enum,
         storage_key=storage_key,
-        file_name=original_name,
+        file_name=primary_filename,
         file_size=file_size,
         content_type=content_type,
+        original_storage_key=original_storage_key,
+        original_file_name=original_name,
+        original_file_size=original_size,
+        original_content_type=original_content_type,
         status=ApplicantDocumentStatus.UPLOADED,
         parsed_data={},
     )
@@ -286,8 +390,8 @@ async def upload_document(
     session.refresh(doc)
 
     log.info(
-        f"Uploaded document: app={application.id} "
-        f"type={doc_type} size={file_size}"
+        f"Uploaded document: app={application.id} type={doc_type} "
+        f"primary_size={file_size} original_size={original_size}"
     )
 
     return _enrich_document(doc)
@@ -311,7 +415,12 @@ def delete_document(
     try:
         storage.delete(doc.storage_key)
     except Exception as e:
-        log.warning(f"Failed to delete from storage: {e}")
+        log.warning(f"Failed to delete primary from storage: {e}")
+    if doc.original_storage_key:
+        try:
+            storage.delete(doc.original_storage_key)
+        except Exception as e:
+            log.warning(f"Failed to delete original from storage: {e}")
 
     session.delete(doc)
     session.commit()
@@ -320,7 +429,7 @@ def delete_document(
 
 
 # ============================================================================
-# OCR
+# OCR (без изменений — работает с storage_key — это всегда JPEG/PNG/WebP)
 # ============================================================================
 
 @router.post("/{token}/documents/{doc_id}/recognize")
@@ -391,24 +500,15 @@ async def recognize_one_document(
 
 
 # ============================================================================
-# Field-by-field comparison helpers
+# Field-by-field comparison helpers (без изменений из 13.1.1)
 # ============================================================================
 
 FLAT_OCR_FIELDS = [
-    "last_name_native",
-    "first_name_native",
-    "middle_name_native",
-    "last_name_latin",
-    "first_name_latin",
-    "birth_date",
-    "birth_place_latin",
-    "nationality",
-    "sex",
-    "passport_number",
-    "passport_issue_date",
-    "passport_issuer",
-    "home_address",
-    "home_country",
+    "last_name_native", "first_name_native", "middle_name_native",
+    "last_name_latin", "first_name_latin",
+    "birth_date", "birth_place_latin", "nationality", "sex",
+    "passport_number", "passport_issue_date", "passport_issuer",
+    "home_address", "home_country",
 ]
 
 
@@ -424,18 +524,14 @@ def _normalize_for_compare(field: str, value) -> str:
     if value is None:
         return ""
     s = str(value).strip()
-
     if field in (
         "last_name_native", "first_name_native", "middle_name_native",
         "last_name_latin", "first_name_latin",
-        "birth_place_latin", "passport_issuer",
-        "home_address",
+        "birth_place_latin", "passport_issuer", "home_address",
     ):
         return s.lower()
-
     if field in ("passport_number", "passport_series"):
         return re.sub(r"\D", "", s)
-
     return s
 
 
@@ -448,12 +544,6 @@ def _values_match(field: str, current, ocr) -> bool:
 
 
 def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
-    """
-    Собирает все распознанные плоские поля из всех документов в один dict.
-
-    Также помечает - откуда пришли latin поля, чтобы знать когда нужен
-    автотранслит, а когда есть авторитетный источник (загранпаспорт).
-    """
     priority = {
         ApplicantDocumentType.PASSPORT_INTERNAL_MAIN: 1,
         ApplicantDocumentType.PASSPORT_FOREIGN: 2,
@@ -463,7 +553,6 @@ def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
         ApplicantDocumentType.OTHER: 99,
     }
     sorted_docs = sorted(documents, key=lambda d: priority.get(d.doc_type, 99))
-
     result = {}
 
     for doc in sorted_docs:
@@ -507,16 +596,6 @@ def _collect_ocr_data(documents: List[ApplicantDocument]) -> dict:
     return result
 
 
-def _has_foreign_passport_done(documents: List[ApplicantDocument]) -> bool:
-    """True если загранпаспорт распознан (есть авторитетный источник латиницы)."""
-    for d in documents:
-        if (d.doc_type == ApplicantDocumentType.PASSPORT_FOREIGN
-                and d.status == ApplicantDocumentStatus.OCR_DONE
-                and d.parsed_data):
-            return True
-    return False
-
-
 def _build_education_from_diploma(documents: List[ApplicantDocument]) -> Optional[dict]:
     for doc in documents:
         if (doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN
@@ -537,7 +616,7 @@ def _build_education_from_diploma(documents: List[ApplicantDocument]) -> Optiona
 
 
 # ============================================================================
-# Pack 13.1.1: Preview apply
+# Preview-apply
 # ============================================================================
 
 @router.post("/{token}/documents/preview-apply")
@@ -554,12 +633,7 @@ def preview_apply(
     ).all()
 
     if not docs:
-        return {
-            "auto_fill": [],
-            "conflicts": [],
-            "same": [],
-            "education": None,
-        }
+        return {"auto_fill": [], "conflicts": [], "same": [], "education": None}
 
     existing = None
     if application.applicant_id:
@@ -579,15 +653,9 @@ def preview_apply(
             continue
 
         if _is_empty(current_value):
-            auto_fill.append({
-                "field": field,
-                "ocr_value": ocr_value,
-            })
+            auto_fill.append({"field": field, "ocr_value": ocr_value})
         elif _values_match(field, current_value, ocr_value):
-            same.append({
-                "field": field,
-                "value": current_value,
-            })
+            same.append({"field": field, "value": current_value})
         else:
             conflicts.append({
                 "field": field,
@@ -600,10 +668,7 @@ def preview_apply(
     if edu_record:
         existing_edu = (existing.education if existing else []) or []
         if not existing_edu:
-            education_info = {
-                "type": "auto_fill",
-                "ocr_value": edu_record,
-            }
+            education_info = {"type": "auto_fill", "ocr_value": edu_record}
         else:
             education_info = {
                 "type": "conflict",
@@ -621,7 +686,7 @@ def preview_apply(
 
 
 # ============================================================================
-# Pack 13.1.2: Apply with overrides + auto-transliteration
+# Apply with overrides + auto-transliteration (Pack 13.1.2)
 # ============================================================================
 
 @router.post("/{token}/documents/apply-to-applicant")
@@ -630,27 +695,6 @@ def apply_documents_to_applicant(
     body: dict = Body(default={}),
     session: Session = Depends(get_session),
 ):
-    """
-    Применить распознанные данные из всех документов к Applicant.
-
-    Body (опционально):
-    {
-        "overrides": ["field_name1", ...],         // поля которые ТОЧНО перезаписать
-        "education_action": "skip"|"replace"|"add" // что делать с education
-    }
-
-    Pack 13.1.2: после применения изменений в *_native полях автоматически
-    обновляются *_latin через ГОСТ-транслитерацию, если:
-    - latin поле обновлять не нужно (загранпаспорт сам его обновил с авторитетным значением)
-    - И: native поле было обновлено (не осталось как было)
-    - И: текущее latin не выглядит как ручной ввод клиента (дальше — эвристика)
-
-    Точный алгоритм:
-    1. Собираем update_data как обычно (с учётом overrides)
-    2. ПЕРЕД сохранением: для last_name_native и first_name_native проверяем —
-       если поле обновляется и в update_data НЕТ соответствующего latin от загранпаспорта —
-       генерируем latin через транслитерацию и добавляем в update_data
-    """
     application = _get_application_by_token(token, session)
 
     overrides = set(body.get("overrides") or [])
@@ -663,10 +707,7 @@ def apply_documents_to_applicant(
     ).all()
 
     if not docs:
-        raise HTTPException(
-            422,
-            "No recognized documents to apply. Run /recognize first."
-        )
+        raise HTTPException(422, "No recognized documents to apply.")
 
     existing = None
     if application.applicant_id:
@@ -674,58 +715,38 @@ def apply_documents_to_applicant(
 
     ocr_data = _collect_ocr_data(docs)
 
-    # Шаг 1. Собираем плоские update_data
     update_data = {}
 
     for field, ocr_value in ocr_data.items():
         if _is_empty(ocr_value):
             continue
-
         current_value = getattr(existing, field, None) if existing else None
-
         if _is_empty(current_value):
             update_data[field] = ocr_value
         elif field in overrides:
             update_data[field] = ocr_value
 
-    # Шаг 2. Pack 13.1.2 — автоматическая транслитерация ФИО
-    # После того как мы применили все изменения native + latin из OCR,
-    # проверяем — есть ли native которое поменялось без соответствующего latin.
-    # Если да → транслитерируем.
-
+    # Pack 13.1.2: автотранслит
     NATIVE_TO_LATIN_PAIRS = [
         ("last_name_native", "last_name_latin"),
         ("first_name_native", "first_name_latin"),
     ]
 
     for native_field, latin_field in NATIVE_TO_LATIN_PAIRS:
-        # native_field обновляется в этом запросе?
         native_will_change = native_field in update_data
-
-        # latin_field уже задан в update_data (например из загранпаспорта)?
         latin_will_change = latin_field in update_data
 
-        # Если меняется native и при этом latin ИЗ OCR не пришёл — транслитерируем
         if native_will_change and not latin_will_change:
             new_native = update_data[native_field]
             if not _is_empty(new_native):
                 generated_latin = transliterate_name(new_native)
-
-                # Текущее значение latin (что сейчас в БД)
                 current_latin = getattr(existing, latin_field, None) if existing else None
-
-                # Перезаписываем latin если:
-                # - текущее latin пустое (никакого риска затереть ручной ввод), ИЛИ
-                # - native_field попало в overrides (клиент явно сказал заменить)
-                # Иначе — оставляем текущее latin как есть (клиент мог его править вручную)
                 if _is_empty(current_latin):
                     update_data[latin_field] = generated_latin
                 elif native_field in overrides:
                     update_data[latin_field] = generated_latin
-                # else: native поменялся через auto_fill (был пустой),
-                # но latin был непустой — оставляем что есть
 
-    # Шаг 3. Education
+    # Education
     edu_record = _build_education_from_diploma(docs)
     if edu_record:
         existing_edu = (existing.education if existing else []) or []

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Loader2, Upload, Camera, CheckCircle2, AlertCircle, Sparkles, FileSearch, AlertTriangle, ChevronRight } from "lucide-react";
+import { Loader2, Upload, Camera, CheckCircle2, AlertCircle, Sparkles, AlertTriangle, FileText, Download } from "lucide-react";
 import {
   ClientDocument,
   ClientDocumentType,
@@ -15,7 +15,9 @@ import {
   previewApplyDocuments,
   applyDocumentsToApplicant,
 } from "@/lib/api";
+import { isPdfFile, isHeicFile } from "@/lib/pdfConverter";
 import { StepHeader } from "@/components/ui/Form";
+import { PdfPageSelector } from "./PdfPageSelector";
 
 interface Props {
   token: string;
@@ -101,10 +103,14 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
   const findDoc = (type: ClientDocumentType) =>
     documents.find((d) => d.doc_type === type);
 
-  async function handleUpload(type: ClientDocumentType, file: File) {
+  async function handleUpload(
+    type: ClientDocumentType,
+    primaryFile: File,
+    originalFile?: File | null,
+  ) {
     setError(null);
     try {
-      const newDoc = await uploadDocument(token, type, file);
+      const newDoc = await uploadDocument(token, type, primaryFile, originalFile);
       setDocuments((prev) => [
         ...prev.filter((d) => d.doc_type !== type),
         newDoc,
@@ -133,9 +139,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
 
     const ocrEnabledTypes = SLOTS.filter((s) => s.ocrEnabled).map((s) => s.type);
     const docsToRecognize = documents.filter(
-      (d) =>
-        ocrEnabledTypes.includes(d.doc_type) &&
-        d.status !== "ocr_done"
+      (d) => ocrEnabledTypes.includes(d.doc_type) && d.status !== "ocr_done"
     );
 
     for (const doc of docsToRecognize) {
@@ -171,7 +175,6 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
       return;
     }
 
-    // Получаем preview-apply
     setPreviewLoading(true);
     try {
       const p = await previewApplyDocuments(token);
@@ -222,7 +225,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
     <div>
       <StepHeader
         title="Документы"
-        subtitle="Загрузите фотографии документов — мы автоматически заполним анкету за вас. Этот шаг можно пропустить."
+        subtitle="Загрузите фотографии или сканы документов — мы автоматически заполним анкету за вас. Этот шаг можно пропустить."
       />
 
       {error && (
@@ -249,24 +252,24 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
         <Sparkles className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: "var(--color-accent)" }} />
         <div className="text-sm text-secondary">
           <strong className="text-primary">Магия автозаполнения:</strong> загрузите фото
-          паспортов и диплома — мы их распознаем и заполним анкету за вас. Вы сможете
-          проверить и поправить любые поля. Если документов под рукой нет — нажмите
-          «Пропустить» и заполните вручную.
+          или PDF-сканы паспортов и диплома — мы их распознаем и заполним анкету за вас. Вы сможете
+          проверить и поправить любые поля.
         </div>
       </div>
 
       <div className="space-y-3">
         {SLOTS.map((slot) => {
           const doc = findDoc(slot.type);
-          const isThisRecognizing =
-            recognizing && recognizingDocId === doc?.id;
+          const isThisRecognizing = recognizing && recognizingDocId === doc?.id;
           return (
             <DocumentSlot
               key={slot.type}
               slot={slot}
               doc={doc}
               isRecognizing={isThisRecognizing}
-              onUpload={(file) => handleUpload(slot.type, file)}
+              onUpload={(primaryFile, originalFile) =>
+                handleUpload(slot.type, primaryFile, originalFile)
+              }
               onDelete={(docId) => handleDelete(docId)}
             />
           );
@@ -317,7 +320,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
 }
 
 // =============================================================================
-// REVIEW MODE — показ распознанных полей с разрешением конфликтов
+// REVIEW MODE
 // =============================================================================
 
 interface ReviewProps {
@@ -329,17 +332,18 @@ interface ReviewProps {
   error: string | null;
 }
 
-const SEX_LABELS: Record<string, string> = {
-  H: "Мужской",
-  M: "Женский",
-};
-
+const SEX_LABELS: Record<string, string> = { H: "Мужской", M: "Женский" };
 const DEGREE_LABELS: Record<string, string> = {
-  bachelor: "Бакалавр",
-  specialist: "Специалист",
-  master: "Магистр",
-  phd: "Кандидат / Доктор наук",
-  secondary: "Среднее специальное",
+  bachelor: "Бакалавр", specialist: "Специалист", master: "Магистр",
+  phd: "Кандидат / Доктор наук", secondary: "Среднее специальное",
+};
+const DOC_SECTION_TITLES: Record<ClientDocumentType, string> = {
+  passport_internal_main: "Паспорт РФ — главная",
+  passport_internal_address: "Паспорт РФ — прописка",
+  passport_foreign: "Загранпаспорт",
+  diploma_main: "Диплом",
+  diploma_apostille: "Апостиль",
+  other: "Другое",
 };
 
 function formatValue(field: string, value: any): string {
@@ -350,23 +354,16 @@ function formatValue(field: string, value: any): string {
 }
 
 function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: ReviewProps) {
-  // Состояние выбора для каждого конфликта: true = использовать OCR, false = оставить текущее
   const [conflictChoices, setConflictChoices] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     preview.conflicts.forEach((c) => {
-      initial[c.field] = false; // по умолчанию ОСТАВИТЬ текущее (безопасный выбор)
+      initial[c.field] = false;
     });
     return initial;
   });
 
-  // Education action
   const [educationAction, setEducationAction] = useState<"auto" | "skip" | "replace" | "add">(
-    () => {
-      if (preview.education?.type === "conflict") {
-        return "skip"; // по умолчанию НЕ трогать существующее
-      }
-      return "auto";
-    }
+    () => (preview.education?.type === "conflict" ? "skip" : "auto")
   );
 
   const [submitting, setSubmitting] = useState(false);
@@ -379,10 +376,7 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
       const overrides = Object.entries(conflictChoices)
         .filter(([_, useOcr]) => useOcr)
         .map(([field]) => field);
-      await onConfirm({
-        overrides,
-        education_action: educationAction,
-      });
+      await onConfirm({ overrides, education_action: educationAction });
     } finally {
       setSubmitting(false);
     }
@@ -415,7 +409,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Конфликты — нужны решения === */}
       {preview.conflicts.length > 0 && (
         <div className="mb-6">
           <div
@@ -432,7 +425,7 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
               </span>
             </div>
             <div className="text-xs text-tertiary">
-              В этих полях ваши текущие данные отличаются от распознанных. Выберите для каждого поля.
+              В этих полях ваши текущие данные отличаются от распознанных.
             </div>
           </div>
 
@@ -455,7 +448,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
                     {fieldLabel}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {/* Оставить текущее */}
                     <label
                       className="rounded-md p-3 cursor-pointer transition-colors"
                       style={{
@@ -484,7 +476,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
                       </div>
                     </label>
 
-                    {/* Заменить распознанным */}
                     <label
                       className="rounded-md p-3 cursor-pointer transition-colors"
                       style={{
@@ -520,7 +511,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Education конфликт === */}
       {preview.education?.type === "conflict" && (
         <div className="mb-6">
           <div
@@ -541,18 +531,9 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
             <div className="space-y-2">
               {(["skip", "add", "replace"] as const).map((action) => {
                 const labels: Record<typeof action, { title: string; desc: string }> = {
-                  skip: {
-                    title: "Не трогать",
-                    desc: "Оставить только мои существующие записи",
-                  },
-                  add: {
-                    title: "Добавить",
-                    desc: "Добавить распознанный диплом к существующим записям",
-                  },
-                  replace: {
-                    title: "Заменить",
-                    desc: "Удалить мои записи и оставить только распознанный диплом",
-                  },
+                  skip: { title: "Не трогать", desc: "Оставить только мои существующие записи" },
+                  add: { title: "Добавить", desc: "Добавить распознанный диплом к существующим записям" },
+                  replace: { title: "Заменить", desc: "Удалить мои записи и оставить только распознанный диплом" },
                 };
                 const l = labels[action];
                 const checked = educationAction === action;
@@ -586,7 +567,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Auto-fill — пустые поля будут заполнены === */}
       {(preview.auto_fill.length > 0 || preview.education?.type === "auto_fill") && (
         <div className="mb-6">
           <div className="text-xs font-semibold text-tertiary uppercase tracking-wide mb-2">
@@ -628,7 +608,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Совпадения — компактный блок === */}
       {preview.same.length > 0 && (
         <div className="mb-6">
           <details>
@@ -646,7 +625,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Если ничего не распозналось вообще === */}
       {preview.auto_fill.length === 0 &&
        preview.conflicts.length === 0 &&
        !preview.education && (
@@ -658,11 +636,10 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
           }}
         >
           Ничего нового из документов извлечь не удалось. Все поля у вас уже совпадают
-          с распознанным или OCR не справился. Можно продолжать заполнение анкеты.
+          с распознанным. Можно продолжать заполнение анкеты.
         </div>
       )}
 
-      {/* === Провалившиеся документы === */}
       {ocrFailedDocs.length > 0 && (
         <div className="mt-4 mb-4 space-y-2">
           {ocrFailedDocs.map((doc) => (
@@ -684,7 +661,6 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
         </div>
       )}
 
-      {/* === Кнопки === */}
       <div
         className="mt-8 pt-6 border-t border-tertiary flex flex-col sm:flex-row gap-3 justify-between"
         style={{ borderTopWidth: 0.5 }}
@@ -723,17 +699,8 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
   );
 }
 
-const DOC_SECTION_TITLES: Record<ClientDocumentType, string> = {
-  passport_internal_main: "Паспорт РФ — главная",
-  passport_internal_address: "Паспорт РФ — прописка",
-  passport_foreign: "Загранпаспорт",
-  diploma_main: "Диплом",
-  diploma_apostille: "Апостиль",
-  other: "Другое",
-};
-
 // =============================================================================
-// DocumentSlot
+// DocumentSlot — Pack 13.1.3: с поддержкой PDF
 // =============================================================================
 
 interface DocumentSlotProps {
@@ -746,7 +713,7 @@ interface DocumentSlotProps {
   };
   doc?: ClientDocument;
   isRecognizing: boolean;
-  onUpload: (file: File) => Promise<void>;
+  onUpload: (primaryFile: File, originalFile?: File | null) => Promise<void>;
   onDelete: (docId: number) => void;
 }
 
@@ -754,11 +721,29 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
   const [uploading, setUploading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [pdfPickerFile, setPdfPickerFile] = useState<File | null>(null); // открыть PdfPageSelector?
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
     setLocalError(null);
+
+    // PDF — открываем модалку выбора страницы (конвертация на клиенте)
+    if (isPdfFile(file)) {
+      const MAX_SIZE = 10 * 1024 * 1024;
+      if (file.size > MAX_SIZE) {
+        setLocalError("PDF слишком большой. Максимум 10 МБ.");
+        return;
+      }
+      setPdfPickerFile(file);
+      return;
+    }
+
+    // HEIC — пока не конвертируем на клиенте, отправляем как есть (backend конвертирует)
+    if (isHeicFile(file)) {
+      // У HEIC может быть проблема с отображением превью в браузере
+      // Но загрузить и распознать — можно
+    }
 
     const MAX_SIZE = 10 * 1024 * 1024;
     const MIN_SIZE = 100 * 1024;
@@ -773,13 +758,8 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     }
 
     const allowedTypes = [
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/webp",
-      "image/heic",
-      "image/heif",
-      "application/pdf",
+      "image/jpeg", "image/jpg", "image/png", "image/webp",
+      "image/heic", "image/heif",
     ];
     if (!allowedTypes.includes(file.type)) {
       setLocalError(`Неподдерживаемый формат: ${file.type}.`);
@@ -788,12 +768,30 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
 
     setUploading(true);
     try {
-      await onUpload(file);
+      await onUpload(file, null);
     } catch (e) {
       setLocalError((e as Error).message);
     } finally {
       setUploading(false);
     }
+  }
+
+  // Результат выбора страницы PDF
+  async function handlePdfPageSelected(primaryFile: File, originalFile: File) {
+    setPdfPickerFile(null);
+    setUploading(true);
+    setLocalError(null);
+    try {
+      await onUpload(primaryFile, originalFile);
+    } catch (e) {
+      setLocalError((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handlePdfPickerCancel() {
+    setPdfPickerFile(null);
   }
 
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -806,18 +804,25 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     e.preventDefault();
     setDragOver(true);
   }
-
   function handleDragLeave(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
   }
-
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (file) handleFile(file);
   }
+
+  // Если открыта модалка выбора PDF — рендерим её сверху
+  const pdfPickerModal = pdfPickerFile ? (
+    <PdfPageSelector
+      pdfFile={pdfPickerFile}
+      onSelect={handlePdfPageSelected}
+      onCancel={handlePdfPickerCancel}
+    />
+  ) : null;
 
   if (doc) {
     const isImage = doc.content_type.startsWith("image/");
@@ -851,65 +856,159 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     }
 
     return (
-      <div
-        className="rounded-lg border border-tertiary p-3 flex gap-3 items-start"
-        style={{ borderWidth: 0.5, background: "var(--color-bg-primary)" }}
-      >
+      <>
+        {pdfPickerModal}
         <div
-          className="w-20 h-20 flex-shrink-0 rounded-md overflow-hidden flex items-center justify-center"
-          style={{
-            background: "var(--color-bg-secondary)",
-            border: "0.5px solid var(--color-border-secondary)",
-          }}
+          className="rounded-lg border border-tertiary p-3 flex gap-3 items-start"
+          style={{ borderWidth: 0.5, background: "var(--color-bg-primary)" }}
         >
-          {isImage && doc.download_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={doc.download_url}
-              alt={slot.title}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="text-center text-tertiary text-xs p-2">
-              📄<br />
-              {doc.content_type.split("/")[1]?.toUpperCase() || "FILE"}
+          <div
+            className="w-20 h-20 flex-shrink-0 rounded-md overflow-hidden flex items-center justify-center"
+            style={{
+              background: "var(--color-bg-secondary)",
+              border: "0.5px solid var(--color-border-secondary)",
+            }}
+          >
+            {isImage && doc.download_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={doc.download_url}
+                alt={slot.title}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="text-center text-tertiary text-xs p-2">
+                📄<br />
+                {doc.content_type.split("/")[1]?.toUpperCase() || "FILE"}
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "var(--color-text-success)" }} />
+              <span className="text-sm font-medium text-primary truncate">
+                {slot.title}
+              </span>
+              {statusBadge}
+              {doc.has_original && (
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+                      style={{ background: "var(--color-bg-secondary)", color: "var(--color-text-secondary)" }}>
+                  <FileText className="w-3 h-3" />
+                  PDF сохранён
+                </span>
+              )}
             </div>
-          )}
+            <div className="text-xs text-tertiary mt-1 truncate">
+              {doc.file_name} · {fileSizeKB} КБ
+            </div>
+            {doc.has_original && doc.original_download_url && (
+              <a
+                href={doc.original_download_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                download={doc.original_file_name || undefined}
+                className="text-xs mt-1 inline-flex items-center gap-1 hover:underline"
+                style={{ color: "var(--color-accent)" }}
+              >
+                <Download className="w-3 h-3" />
+                Скачать оригинал PDF
+              </a>
+            )}
+            {doc.status === "ocr_failed" && doc.ocr_error && (
+              <div className="text-xs mt-1" style={{ color: "var(--color-text-danger)" }}>
+                {doc.ocr_error}
+              </div>
+            )}
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || isRecognizing}
+                className="text-xs px-2.5 py-1 rounded-md border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
+                style={{ borderWidth: 0.5 }}
+              >
+                {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Заменить"}
+              </button>
+              <button
+                onClick={() => onDelete(doc.id)}
+                disabled={uploading || isRecognizing}
+                className="text-xs px-2.5 py-1 rounded-md text-danger hover:bg-secondary disabled:opacity-50 transition-colors"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
+            onChange={handleFileInputChange}
+            className="hidden"
+          />
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {pdfPickerModal}
+      <div
+        className="rounded-lg border-dashed p-4 transition-colors"
+        style={{
+          borderWidth: 1.5,
+          borderStyle: "dashed",
+          borderColor: dragOver ? "var(--color-accent)" : "var(--color-border-secondary)",
+          background: dragOver ? "var(--color-bg-secondary)" : "var(--color-bg-primary)",
+        }}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <div className="text-sm font-medium text-primary mb-1">{slot.title}</div>
+        <div className="text-xs text-tertiary mb-3">{slot.description}</div>
+
+        {localError && (
+          <div className="text-xs mb-2 flex gap-1.5 items-start" style={{ color: "var(--color-text-danger)" }}>
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>{localError}</span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            style={{ background: "var(--color-accent)" }}
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Загружается...
+              </>
+            ) : (
+              <>
+                <Upload className="w-3.5 h-3.5" />
+                Выбрать файл
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs px-3 py-1.5 rounded-md border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            style={{ borderWidth: 0.5 }}
+          >
+            <Camera className="w-3.5 h-3.5" />
+            Снять камерой
+          </button>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "var(--color-text-success)" }} />
-            <span className="text-sm font-medium text-primary truncate">
-              {slot.title}
-            </span>
-            {statusBadge}
-          </div>
-          <div className="text-xs text-tertiary mt-1 truncate">
-            {doc.file_name} · {fileSizeKB} КБ
-          </div>
-          {doc.status === "ocr_failed" && doc.ocr_error && (
-            <div className="text-xs mt-1" style={{ color: "var(--color-text-danger)" }}>
-              {doc.ocr_error}
-            </div>
-          )}
-          <div className="flex gap-2 mt-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading || isRecognizing}
-              className="text-xs px-2.5 py-1 rounded-md border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
-              style={{ borderWidth: 0.5 }}
-            >
-              {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : "Заменить"}
-            </button>
-            <button
-              onClick={() => onDelete(doc.id)}
-              disabled={uploading || isRecognizing}
-              className="text-xs px-2.5 py-1 rounded-md text-danger hover:bg-secondary disabled:opacity-50 transition-colors"
-            >
-              Удалить
-            </button>
-          </div>
+        <div className="text-xs text-tertiary mt-2">
+          {slot.hint} <span className="text-secondary">Можно загрузить PDF — выберете нужную страницу.</span>
         </div>
 
         <input
@@ -919,88 +1018,15 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
           onChange={handleFileInputChange}
           className="hidden"
         />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileInputChange}
+          className="hidden"
+        />
       </div>
-    );
-  }
-
-  return (
-    <div
-      className="rounded-lg border-dashed p-4 transition-colors"
-      style={{
-        borderWidth: 1.5,
-        borderStyle: "dashed",
-        borderColor: dragOver
-          ? "var(--color-accent)"
-          : "var(--color-border-secondary)",
-        background: dragOver
-          ? "var(--color-bg-secondary)"
-          : "var(--color-bg-primary)",
-      }}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      <div className="text-sm font-medium text-primary mb-1">{slot.title}</div>
-      <div className="text-xs text-tertiary mb-3">{slot.description}</div>
-
-      {localError && (
-        <div
-          className="text-xs mb-2 flex gap-1.5 items-start"
-          style={{ color: "var(--color-text-danger)" }}
-        >
-          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-          <span>{localError}</span>
-        </div>
-      )}
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50 transition-colors flex items-center gap-1.5"
-          style={{ background: "var(--color-accent)" }}
-        >
-          {uploading ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Загружается...
-            </>
-          ) : (
-            <>
-              <Upload className="w-3.5 h-3.5" />
-              Выбрать файл
-            </>
-          )}
-        </button>
-
-        <button
-          onClick={() => cameraInputRef.current?.click()}
-          disabled={uploading}
-          className="text-xs px-3 py-1.5 rounded-md border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
-          style={{ borderWidth: 0.5 }}
-        >
-          <Camera className="w-3.5 h-3.5" />
-          Снять камерой
-        </button>
-      </div>
-
-      <div className="text-xs text-tertiary mt-2">{slot.hint}</div>
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
-        onChange={handleFileInputChange}
-        className="hidden"
-      />
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleFileInputChange}
-        className="hidden"
-      />
-    </div>
+    </>
   );
 }

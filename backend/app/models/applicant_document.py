@@ -1,109 +1,93 @@
 """
-ApplicantDocument — документы клиента (паспорт, диплом и т.д.) для OCR.
+ApplicantDocument — документы, загруженные клиентом для OCR-распознавания.
 
-Pack 13: клиент загружает фото документов через клиентский кабинет.
-- Файл сохраняется в R2 (storage backend)
-- Storage_key — путь в R2 (для скачивания)
-- doc_type — тип документа (passport_internal_main / passport_foreign / diploma_main и т.д.)
-- status — uploaded / ocr_pending / ocr_done / ocr_failed
-- parsed_data — JSON с распознанными полями (Pack 13.1)
+Это отдельная модель от старой UploadedFile (которая в _supporting.py
+для GeneratedDocument). Renamed enums чтобы не конфликтовать.
 
-Связан с Application 1:N (одна заявка — много документов).
-
-ВАЖНО: классы здесь называются ApplicantDocumentType / ApplicantDocumentStatus
-чтобы НЕ конфликтовать с существующим DocumentType из _supporting.py
-(он используется для GeneratedDocument — генерируемых нами документов).
+Pack 13.1.3: добавлено поле original_storage_key для хранения оригинала PDF
+(когда клиент загружает PDF, на сервере хранятся оба файла: PDF + конвертированный JPEG).
 """
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
-from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, JSON
-
-from ._base import TimestampMixin
-
-if TYPE_CHECKING:
-    from .application import Application
+from sqlmodel import Column, Field, SQLModel
+from sqlalchemy import JSON
 
 
 class ApplicantDocumentType(str, Enum):
-    """Типы документов которые загружает клиент."""
-    PASSPORT_INTERNAL_MAIN = "passport_internal_main"        # Российский паспорт — главный разворот
-    PASSPORT_INTERNAL_ADDRESS = "passport_internal_address"  # Российский паспорт — прописка
-    PASSPORT_FOREIGN = "passport_foreign"                    # Загранпаспорт
-    DIPLOMA_MAIN = "diploma_main"                            # Диплом — основная страница
-    DIPLOMA_APOSTILLE = "diploma_apostille"                  # Диплом — апостиль
-    OTHER = "other"                                          # Прочее
+    """Тип документа клиента — для OCR/автозаполнения."""
+    PASSPORT_INTERNAL_MAIN = "passport_internal_main"
+    PASSPORT_INTERNAL_ADDRESS = "passport_internal_address"
+    PASSPORT_FOREIGN = "passport_foreign"
+    DIPLOMA_MAIN = "diploma_main"
+    DIPLOMA_APOSTILLE = "diploma_apostille"
+    OTHER = "other"
 
 
 class ApplicantDocumentStatus(str, Enum):
-    """Статус документа в pipeline OCR."""
-    UPLOADED = "uploaded"          # Загружен, OCR ещё не запускался
-    OCR_PENDING = "ocr_pending"    # OCR в процессе
-    OCR_DONE = "ocr_done"          # OCR успешно
-    OCR_FAILED = "ocr_failed"      # OCR провалился (плохое качество и т.п.)
+    """Статус OCR-обработки документа."""
+    UPLOADED = "uploaded"
+    OCR_PENDING = "ocr_pending"
+    OCR_DONE = "ocr_done"
+    OCR_FAILED = "ocr_failed"
 
 
-class ApplicantDocument(TimestampMixin, table=True):
+class ApplicantDocument(SQLModel, table=True):
+    """
+    Документ клиента, загруженный для распознавания.
+
+    Привязан к Application (заявке). Файл хранится в storage backend
+    (Cloudflare R2 в production, LocalStorage в dev).
+
+    Pack 13.1.3: storage_key всегда указывает на JPEG для OCR (он же используется
+    для превью). original_storage_key опционально содержит оригинальный PDF
+    (когда клиент загрузил PDF и мы конвертировали его в JPEG).
+    """
     __tablename__ = "applicant_document"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(foreign_key="application.id", index=True)
 
-    application_id: int = Field(
-        foreign_key="application.id",
-        index=True,
-        description="К какой заявке привязан документ",
-    )
+    doc_type: ApplicantDocumentType = Field(index=True)
+    status: ApplicantDocumentStatus = Field(default=ApplicantDocumentStatus.UPLOADED)
 
-    doc_type: ApplicantDocumentType = Field(
-        index=True,
-        description="Тип документа (паспорт/диплом/...)",
-    )
+    # Storage
+    # storage_key — основной файл для OCR + превью (всегда JPEG/PNG/WebP)
+    storage_key: str = Field(max_length=500)
+    # original_storage_key — оригинал, если был PDF (опционально)
+    original_storage_key: Optional[str] = Field(default=None, max_length=500)
 
-    # Хранилище файла
-    storage_key: str = Field(
-        max_length=512,
-        description="Путь в R2/local storage",
-    )
-    file_name: str = Field(
-        max_length=256,
-        description="Оригинальное имя файла как у клиента",
-    )
-    file_size: int = Field(description="Размер файла в байтах")
-    content_type: str = Field(
-        max_length=64,
-        description="MIME type, например 'image/jpeg'",
-    )
+    file_name: str = Field(max_length=255)
+    file_size: int  # размер основного файла (storage_key) в байтах
+    content_type: str = Field(max_length=100)  # content_type основного файла
 
-    # OCR pipeline
-    status: ApplicantDocumentStatus = Field(
-        default=ApplicantDocumentStatus.UPLOADED,
-        index=True,
-    )
-    parsed_data: dict = Field(
-        default_factory=dict,
-        sa_column=Column(JSON),
-        description="JSON с распознанными полями (Pack 13.1)",
-    )
-    ocr_error: Optional[str] = Field(
-        default=None,
-        max_length=512,
-        description="Текст ошибки если OCR провалился",
-    )
-    ocr_completed_at: Optional[datetime] = Field(default=None)
+    # Pack 13.1.3: метаданные оригинала (если был PDF)
+    original_file_name: Optional[str] = Field(default=None, max_length=255)
+    original_file_size: Optional[int] = None
+    original_content_type: Optional[str] = Field(default=None, max_length=100)
 
-    # Применение к Applicant — было ли применено?
-    applied_to_applicant: bool = Field(
-        default=False,
-        description="Были ли распознанные данные применены к анкете",
+    # OCR результаты
+    parsed_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    ocr_error: Optional[str] = Field(default=None, max_length=1000)
+    ocr_completed_at: Optional[datetime] = None
+
+    # Применены ли распознанные данные к Applicant
+    applied_to_applicant: bool = Field(default=False)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column_kwargs={"onupdate": datetime.utcnow},
     )
 
 
-# === API schemas ===
+# Pydantic схемы для API
 
-class ApplicantDocumentRead(SQLModel):
+
+class ApplicantDocumentResponse(SQLModel):
+    """Ответ API с документом + signed URL для скачивания."""
     id: int
     doc_type: ApplicantDocumentType
     file_name: str
@@ -115,12 +99,8 @@ class ApplicantDocumentRead(SQLModel):
     ocr_completed_at: Optional[datetime] = None
     applied_to_applicant: bool
     created_at: datetime
-    download_url: Optional[str] = None  # signed URL для скачивания
-
-
-class ApplicantDocumentUploadResponse(SQLModel):
-    id: int
-    doc_type: ApplicantDocumentType
-    file_name: str
-    status: ApplicantDocumentStatus
-    download_url: Optional[str] = None
+    download_url: Optional[str] = None  # signed URL основного файла (JPEG)
+    # Pack 13.1.3: оригинальный PDF
+    has_original: bool = False
+    original_download_url: Optional[str] = None
+    original_file_name: Optional[str] = None
