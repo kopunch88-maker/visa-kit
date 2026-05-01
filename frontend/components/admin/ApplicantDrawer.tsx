@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { X, Loader2, Sparkles, AlertCircle, Save, User } from "lucide-react";
-import { ApplicantResponse, updateApplicant } from "@/lib/api";
+import { X, Loader2, Sparkles, AlertCircle, Save, User, Wand2 } from "lucide-react";
+import {
+  ApplicantResponse,
+  updateApplicant,
+  transliterateLatToRu,
+} from "@/lib/api";
 
 interface Props {
   applicant: ApplicantResponse;
@@ -16,7 +20,6 @@ const SEX_OPTIONS = [
   { value: "M", label: "Женский" },
 ];
 
-// Самые частые страны для DN-визы (полный список — в CandidateCard)
 const COUNTRY_OPTIONS = [
   { value: "", label: "— Не указано —" },
   { value: "RUS", label: "Россия (RUS)" },
@@ -50,8 +53,21 @@ const COUNTRY_OPTIONS = [
   { value: "ARE", label: "ОАЭ (ARE)" },
 ];
 
+/**
+ * Title Case для русского имени — клиентская версия для onBlur.
+ * Менеджер ввёл "ИВАНОВ" или "иванов" → автоматически "Иванов".
+ */
+function toTitleCase(text: string): string {
+  if (!text) return "";
+  return text
+    .trim()
+    .toLowerCase()
+    .split(/(\s+|-)/)
+    .map((p) => (p.match(/[a-zа-яё]/i) ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+    .join("");
+}
+
 export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
-  // Все поля локально хранятся как строки (для управляемых input'ов)
   const [last_name_native, setLastNameNative] = useState(applicant.last_name_native || "");
   const [first_name_native, setFirstNameNative] = useState(applicant.first_name_native || "");
   const [middle_name_native, setMiddleNameNative] = useState(applicant.middle_name_native || "");
@@ -71,11 +87,34 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [inn, setInn] = useState(applicant.inn || "");
 
   const [saving, setSaving] = useState(false);
+  const [translitLoading, setTranslitLoading] = useState(false);
+  const [translitWarning, setTranslitWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Латинская версия для подсказки если рус ещё не вписан
   const fullNameNativeEmpty = !last_name_native?.trim() && !first_name_native?.trim();
   const hasLatin = !!(last_name_latin?.trim() && first_name_latin?.trim());
+  const canTransliterate = hasLatin && !translitLoading;
+
+  async function handleTransliterate() {
+    if (!canTransliterate) return;
+    setTranslitLoading(true);
+    setError(null);
+    setTranslitWarning(null);
+    try {
+      const result = await transliterateLatToRu(
+        last_name_latin.trim(),
+        first_name_latin.trim(),
+        nationality || undefined,
+      );
+      setLastNameNative(result.last_name_native);
+      setFirstNameNative(result.first_name_native);
+      setTranslitWarning(result.warning);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTranslitLoading(false);
+    }
+  }
 
   async function handleSave() {
     setError(null);
@@ -169,7 +208,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
           )}
 
           {/* Подсказка для иностранцев */}
-          {fullNameNativeEmpty && hasLatin && (
+          {fullNameNativeEmpty && hasLatin && !translitWarning && (
             <div
               className="p-3 rounded-md text-sm flex gap-2 items-start"
               style={{
@@ -184,31 +223,80 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                   У клиента не заполнены ФИО на русском
                 </div>
                 <div className="text-xs">
-                  Впишите русскую транслитерацию имени из паспорта
-                  (<b>{last_name_latin} {first_name_latin}</b>) — это нужно для договора и других русских документов.
+                  Нажмите <b>«✨ Транслитерировать»</b> ниже — система предложит черновик.
+                  После этого проверьте и при необходимости поправьте.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Предупреждение о черновике после транслитерации */}
+          {translitWarning && (
+            <div
+              className="p-3 rounded-md text-sm flex gap-2 items-start"
+              style={{
+                background: "var(--color-bg-warning)",
+                color: "var(--color-text-warning)",
+                border: "0.5px solid var(--color-border-warning)",
+              }}
+            >
+              <Wand2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium mb-0.5">Черновик транслитерации</div>
+                <div className="text-xs">
+                  {translitWarning} Например, <b>YUKSEL</b> может быть «Юксель» или «Юксел» —
+                  система не всегда угадывает мягкий знак.
                 </div>
               </div>
             </div>
           )}
 
           {/* ФИО на русском */}
-          <Section title="ФИО на русском">
+          <Section
+            title="ФИО на русском"
+            action={
+              hasLatin ? (
+                <button
+                  onClick={handleTransliterate}
+                  disabled={!canTransliterate}
+                  className="text-xs px-2.5 py-1 rounded-md text-white disabled:opacity-50 transition-colors flex items-center gap-1"
+                  style={{ background: "var(--color-accent)" }}
+                  title="Сгенерировать черновик с латиницы"
+                >
+                  {translitLoading ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Транслитерация...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3 h-3" />
+                      Транслитерировать
+                    </>
+                  )}
+                </button>
+              ) : null
+            }
+          >
             <Field
               label="Фамилия (рус) *"
               value={last_name_native}
               onChange={setLastNameNative}
+              onBlur={() => setLastNameNative(toTitleCase(last_name_native))}
               placeholder={hasLatin ? `Например: Юксель (от ${last_name_latin})` : "Иванов"}
             />
             <Field
               label="Имя (рус) *"
               value={first_name_native}
               onChange={setFirstNameNative}
+              onBlur={() => setFirstNameNative(toTitleCase(first_name_native))}
               placeholder={hasLatin ? `Например: Ведат (от ${first_name_latin})` : "Сергей"}
             />
             <Field
               label="Отчество (если есть)"
               value={middle_name_native}
               onChange={setMiddleNameNative}
+              onBlur={() => setMiddleNameNative(toTitleCase(middle_name_native))}
               placeholder="Петрович — для русских клиентов"
             />
           </Section>
@@ -368,9 +456,11 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
 
 function Section({
   title,
+  action,
   children,
 }: {
   title: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -381,8 +471,11 @@ function Section({
         border: "0.5px solid var(--color-border-secondary)",
       }}
     >
-      <div className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3">
-        {title}
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+          {title}
+        </div>
+        {action}
       </div>
       <div className="space-y-3">{children}</div>
     </div>
@@ -394,6 +487,7 @@ function Field({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   textarea,
   type,
@@ -401,6 +495,7 @@ function Field({
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   textarea?: boolean;
   type?: string;
@@ -419,6 +514,7 @@ function Field({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           placeholder={placeholder}
           rows={2}
           className="w-full px-2 py-1.5 rounded-md text-sm border"
@@ -429,6 +525,7 @@ function Field({
           type={type || "text"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           placeholder={placeholder}
           className="w-full px-2 py-1.5 rounded-md text-sm border"
           style={style}

@@ -855,6 +855,46 @@ export async function updateApplicant(
   return res.json();
 }
 
+
+/**
+ * Pack 14 finishing — транслитерирует латинское ФИО в русский черновик.
+ *
+ * Используется в ApplicantDrawer — кнопка «✨ Транслитерировать с латиницы».
+ * Возвращает черновик который менеджер может поправить.
+ */
+export async function transliterateLatToRu(
+  lastNameLatin: string,
+  firstNameLatin: string,
+  nationality?: string,
+): Promise<{
+  last_name_native: string;
+  first_name_native: string;
+  warning: string;
+}> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applicants/transliterate`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      last_name_latin: lastNameLatin,
+      first_name_latin: firstNameLatin,
+      nationality: nationality || null,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка транслитерации (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export async function requestRecommendation(appId: number): Promise<any> {
   const res = await fetch(
     `${API_BASE_URL}/api/admin/applications/${appId}/recommendation`,

@@ -1,14 +1,18 @@
 """
-Applicants admin endpoints — для админки чтобы получать данные клиента.
+Applicants admin endpoints — для админки чтобы получать и редактировать данные клиента.
 
 Pack 8: эндпоинты возвращают dict (без валидации Pydantic), как в client_portal.
+Pack 14 finishing: добавлены PATCH endpoint и /transliterate для иностранцев.
 """
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlmodel import Session
 
 from app.db.session import get_session
 from app.models import Applicant
+from app.services.transliteration import transliterate_lat_to_ru, normalize_russian_case
+
 from .dependencies import require_manager
 
 router = APIRouter(prefix="/admin/applicants", tags=["applicants"])
@@ -42,3 +46,137 @@ def get_applicant(
     if not applicant:
         raise HTTPException(404, "Applicant not found")
     return _enrich(applicant)
+
+
+# ============================================================================
+# Pack 14 finishing — PATCH endpoint
+# ============================================================================
+
+# Поля которые менеджер может редактировать через ApplicantDrawer
+_PATCHABLE_FIELDS = {
+    "last_name_native", "first_name_native", "middle_name_native",
+    "last_name_latin", "first_name_latin",
+    "birth_date", "birth_place_latin",
+    "nationality", "sex",
+    "passport_number", "passport_issue_date", "passport_expiry_date", "passport_issuer",
+    "inn",
+    "home_address", "home_address_line1", "home_address_line2",
+    "home_country",
+    "email", "phone",
+}
+
+# Поля русского ФИО — к ним применяется normalize_russian_case при сохранении
+_NATIVE_NAME_FIELDS = {"last_name_native", "first_name_native", "middle_name_native"}
+
+# Поля латинского ФИО — оставляем uppercase как в паспорте
+_LATIN_NAME_FIELDS = {"last_name_latin", "first_name_latin"}
+
+
+@router.patch("/{applicant_id}")
+def update_applicant(
+    applicant_id: int,
+    patch: dict = Body(...),
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """
+    Обновляет данные кандидата от имени менеджера.
+
+    Pack 14 finishing: позволяет менеджеру вписать русские ФИО для иностранцев,
+    исправить гражданство и т.д.
+
+    Применяет нормализацию:
+    - Русские ФИО → Title Case (Иванов, не ИВАНОВ)
+    - Латинские ФИО → как есть, но trim (паспорт обычно UPPERCASE — оставляем)
+
+    Body — dict с любыми полями из _PATCHABLE_FIELDS.
+    """
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(404, "Applicant not found")
+
+    if not isinstance(patch, dict):
+        raise HTTPException(400, "Body must be a JSON object")
+
+    # Валидация — только разрешённые поля
+    unknown = set(patch.keys()) - _PATCHABLE_FIELDS
+    if unknown:
+        raise HTTPException(400, f"Unknown fields: {sorted(unknown)}")
+
+    # Применяем изменения
+    for field, value in patch.items():
+        if value is None or value == "":
+            # Пустое значение → null (для опциональных полей)
+            # КРОМЕ обязательных
+            if field in ("last_name_native", "first_name_native",
+                          "last_name_latin", "first_name_latin"):
+                # Не позволяем затирать обязательные поля
+                continue
+            setattr(applicant, field, None)
+            continue
+
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+
+            # Нормализация русских ФИО
+            if field in _NATIVE_NAME_FIELDS:
+                value = normalize_russian_case(value)
+
+            # Латинские ФИО — оставляем как менеджер ввёл, только trim
+            # (обычно UPPERCASE, как в паспорте)
+
+        setattr(applicant, field, value)
+
+    session.add(applicant)
+    session.commit()
+    session.refresh(applicant)
+
+    return _enrich(applicant)
+
+
+# ============================================================================
+# Pack 14 finishing — Транслитерация Latin → русский (черновик для менеджера)
+# ============================================================================
+
+@router.post("/transliterate")
+def transliterate(
+    body: dict = Body(...),
+    _user=Depends(require_manager),
+) -> dict:
+    """
+    Транслитерирует латинское ФИО в русский черновик с учётом языка.
+
+    Менеджер использует это в ApplicantDrawer — кнопка «✨ Транслитерировать»
+    рядом с полями русского ФИО.
+
+    Body:
+        {
+            "last_name_latin": "YUKSEL",
+            "first_name_latin": "VEDAT",
+            "nationality": "TUR"  // опционально, ISO-3
+        }
+
+    Returns:
+        {
+            "last_name_native": "Юксел",   // черновик! менеджер может поправить
+            "first_name_native": "Ведат",
+            "warning": "Это автоматический черновик, проверьте правильность"
+        }
+    """
+    last_lat = (body.get("last_name_latin") or "").strip()
+    first_lat = (body.get("first_name_latin") or "").strip()
+    nationality = (body.get("nationality") or "").strip().upper() or None
+
+    if not last_lat or not first_lat:
+        raise HTTPException(400, "Both last_name_latin and first_name_latin are required")
+
+    last_ru = transliterate_lat_to_ru(last_lat, nationality)
+    first_ru = transliterate_lat_to_ru(first_lat, nationality)
+
+    return {
+        "last_name_native": last_ru,
+        "first_name_native": first_ru,
+        "warning": "Автоматический черновик транслитерации. Проверьте и поправьте если нужно.",
+    }
