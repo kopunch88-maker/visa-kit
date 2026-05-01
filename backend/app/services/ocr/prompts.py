@@ -8,8 +8,10 @@ Strategy:
 - All fields nullable — return null if not visible/unclear
 - No hallucinations: if uncertain, return null instead of guessing
 
-Each prompt returns a flat JSON object with snake_case keys.
-The recognizer parses this JSON and maps fields to ApplicantData / education entries.
+Pack 14a: added prompts for foreign-client documents:
+- PASSPORT_NATIONAL_PROMPT — national passport of any country (not Russian)
+- RESIDENCE_CARD_PROMPT — residence permit / residence card
+- CRIMINAL_RECORD_PROMPT — criminal record certificate
 """
 
 
@@ -145,7 +147,7 @@ Fields to extract:
 - graduation_year: Год окончания (4-digit year as integer)
 - degree: Степень — one of these exact values:
   - "bachelor" (бакалавр)
-  - "specialist" (специалист, dipломированный специалист)
+  - "specialist" (специалист, дipломированный специалист)
   - "master" (магистр)
   - "phd" (кандидат наук, доктор наук)
   - "secondary" (средне-специальное / колледж / техникум)
@@ -176,11 +178,179 @@ Output schema:
 Return ONLY the JSON object."""
 
 
+# ============================================================================
+# Pack 14a — новые промпты для иностранных документов
+# ============================================================================
+
+PASSPORT_NATIONAL_PROMPT = """You are an expert OCR system specialized in NATIONAL passports of various countries (NOT Russian internal passports — those have their own specialized prompt).
+
+Examples of countries: Turkey, Kazakhstan, Ukraine, Belarus, Armenia, Azerbaijan, Tajikistan, Uzbekistan, Kyrgyzstan, Georgia, Moldova, Israel, Germany, Poland, Serbia, etc.
+
+Look at the attached image — this is a passport data page (with photo and personal information).
+
+Most modern passports have data in dual format: native script + Latin transliteration. ALWAYS prefer Latin/Roman script for name fields.
+
+Many passports also have an MRZ (machine-readable zone) at the bottom — two lines of text with "<<<<" separators. If MRZ is visible, use it to verify name spelling.
+
+Return STRICTLY a JSON object. No markdown, no preamble — only raw JSON.
+
+Fields to extract:
+- last_name_latin: Surname in Latin (e.g. "YUKSEL", "NAZARBAYEV", "MULLER")
+- first_name_latin: Given name(s) in Latin (e.g. "VEDAT", "NURSULTAN", "HANS-PETER")
+- last_name_native: Surname in native script (Cyrillic / Arabic / Hebrew / etc.) — null if passport only shows Latin
+- first_name_native: Given name in native script — null if passport only shows Latin
+- birth_date: Date of birth in ISO format YYYY-MM-DD
+- birth_place: Place of birth as written (in whichever script appears)
+- sex: "H" for male, "M" for female (matches our DB enum)
+- nationality: 3-letter ISO 3166-1 alpha-3 country code (TUR, KAZ, UKR, BLR, ARM, AZE, GEO, ISR, DEU, POL, SRB, etc.)
+- passport_country: 3-letter country code of issuing country (often same as nationality)
+- passport_number: Passport number as written (format varies by country)
+- passport_issue_date: Date of issue in ISO format YYYY-MM-DD
+- passport_expiry_date: Date of expiry in ISO format YYYY-MM-DD
+- passport_issuer: Issuing authority as written (e.g. "Ministry of Internal Affairs", "Министерство иностранных дел")
+
+Rules:
+- If a field is unclear or not visible → return null
+- For sex: passports use various conventions:
+  - "M" / "MALE" / "ER" (Turkish for male) / "Мужской" → "H"
+  - "F" / "FEMALE" / "K" (Turkish for female "Kadın") / "Женский" → "M"
+- For 3-letter country codes — use ISO 3166-1 alpha-3:
+  - Turkey → TUR, Kazakhstan → KAZ, Ukraine → UKR, Belarus → BLR
+  - Armenia → ARM, Azerbaijan → AZE, Georgia → GEO, Israel → ISR
+  - Germany → DEU, Poland → POL, Serbia → SRB, Moldova → MDA
+- Dates: convert from any format to YYYY-MM-DD
+
+Output schema:
+{
+  "last_name_latin": "YUKSEL" or null,
+  "first_name_latin": "VEDAT" or null,
+  "last_name_native": null,
+  "first_name_native": null,
+  "birth_date": "1972-01-01" or null,
+  "birth_place": "EDIRNE" or null,
+  "sex": "H" or "M" or null,
+  "nationality": "TUR" or null,
+  "passport_country": "TUR" or null,
+  "passport_number": "U12345678" or null,
+  "passport_issue_date": "2020-05-15" or null,
+  "passport_expiry_date": "2030-05-14" or null,
+  "passport_issuer": "Ministry of Internal Affairs" or null
+}
+
+Return ONLY the JSON object."""
+
+
+RESIDENCE_CARD_PROMPT = """You are an expert OCR system specialized in residence permits and residence cards from various countries.
+
+Examples: Polish "Karta Pobytu", German "Aufenthaltstitel", Czech "Povolení k pobytu", Spanish "TIE", Italian "Permesso di Soggiorno", Hungarian residence card, etc.
+
+Look at the attached image — this is a residence permit / residence card.
+
+The card identifies a person who is a foreigner residing in the issuing country. Often there's a holder photo, name, nationality, and validity dates.
+
+Return STRICTLY a JSON object. No markdown, no preamble — only raw JSON.
+
+Fields to extract:
+- last_name_latin: Surname in Latin (e.g. "YUKSEL")
+- first_name_latin: Given name(s) in Latin (e.g. "VEDAT")
+- birth_date: Date of birth in ISO format YYYY-MM-DD
+- sex: "H" for male, "M" for female
+- nationality: 3-letter ISO country code of holder's nationality (NOT the issuing country)
+- residence_country: 3-letter ISO country code of country that issued this card (POL, DEU, CZE, ESP, ITA, HUN, etc.)
+- card_number: Card number / document number as written
+- permit_type: Type of residence permit as written (e.g. "ZEZWOLENIE NA POBYT CZASOWY", "PERMANENT RESIDENCE", "EU LONG-TERM RESIDENT", "TIE", "STUDENT VISA")
+- issue_date: Date of issue in ISO format YYYY-MM-DD (if visible)
+- expiry_date: Date of expiry in ISO format YYYY-MM-DD
+
+Rules:
+- nationality is the HOLDER's nationality (e.g. "TUR" for Turkish citizen with Polish residence card)
+- residence_country is who ISSUED the card (e.g. "POL" for Karta Pobytu)
+- For sex: "M" → "H", "F"/"K" → "M"
+- For 3-letter country codes — use ISO 3166-1 alpha-3
+- If permit_type is bilingual (e.g. native + English), prefer the native language version
+
+Output schema:
+{
+  "last_name_latin": "YUKSEL" or null,
+  "first_name_latin": "VEDAT" or null,
+  "birth_date": "1972-01-01" or null,
+  "sex": "H" or "M" or null,
+  "nationality": "TUR" or null,
+  "residence_country": "POL" or null,
+  "card_number": "RR7996940" or null,
+  "permit_type": "ZEZWOLENIE NA POBYT CZASOWY" or null,
+  "issue_date": null,
+  "expiry_date": "2026-06-02" or null
+}
+
+Return ONLY the JSON object."""
+
+
+CRIMINAL_RECORD_PROMPT = """You are an expert OCR system specialized in criminal record certificates (справка о несудимости / police clearance certificate).
+
+Examples: Russian "справка об отсутствии судимости", Turkish "Adli Sicil Kaydı", Polish "Zaświadczenie o niekaralności", Spanish "Certificado de Antecedentes Penales", US "Background check", etc.
+
+Look at the attached image — this is a criminal record certificate (apostilled or notarized for use abroad).
+
+The document confirms whether the person has any criminal record. For visa purposes — usually it confirms NO criminal record.
+
+Return STRICTLY a JSON object. No markdown, no preamble — only raw JSON.
+
+Fields to extract:
+- last_name_latin: Surname of the person in Latin (transliterated if needed)
+- first_name_latin: Given name in Latin
+- last_name_native: Surname in native script if shown — null if document is fully in Latin
+- first_name_native: Given name in native script — null otherwise
+- birth_date: Date of birth in ISO format YYYY-MM-DD
+- nationality: 3-letter ISO country code if visible (often shown as "Citizenship" / "Nationality" / "Vatandaşlık")
+- issuing_country: 3-letter ISO country code of country that issued the certificate (TUR, RUS, POL, etc.)
+- issuing_authority: Name of the authority that issued the certificate as written
+- certificate_number: Certificate / document number if shown
+- issue_date: Date of issue in ISO format YYYY-MM-DD
+- has_criminal_record: boolean — false if certificate confirms NO record (most common case), true if record is present, null if unclear
+- expiry_date: Date of expiry in ISO format YYYY-MM-DD if specified (some certificates are valid for a limited time)
+
+Rules:
+- The "has_criminal_record" field — read the document carefully:
+  - "Has no criminal record" / "не имеет судимости" / "kayıt bulunamamıştır" → false
+  - "Has criminal record" / "имеется судимость" → true
+  - Unclear → null
+- For 3-letter country codes — use ISO 3166-1 alpha-3
+- nationality and issuing_country MAY differ (e.g. Turkish citizen got certificate in Poland)
+
+Output schema:
+{
+  "last_name_latin": "YUKSEL" or null,
+  "first_name_latin": "VEDAT" or null,
+  "last_name_native": null,
+  "first_name_native": null,
+  "birth_date": "1972-01-01" or null,
+  "nationality": "TUR" or null,
+  "issuing_country": "TUR" or null,
+  "issuing_authority": "Ministry of Justice" or null,
+  "certificate_number": "12345-2025" or null,
+  "issue_date": "2025-11-17" or null,
+  "has_criminal_record": false,
+  "expiry_date": null
+}
+
+Return ONLY the JSON object."""
+
+
+# ============================================================================
 # Map document type → prompt
+# ============================================================================
+
 PROMPT_BY_DOC_TYPE = {
+    # Российские документы
     "passport_internal_main": RUSSIAN_PASSPORT_MAIN_PROMPT,
     "passport_internal_address": RUSSIAN_PASSPORT_ADDRESS_PROMPT,
     "passport_foreign": FOREIGN_PASSPORT_PROMPT,
     "diploma_main": DIPLOMA_PROMPT,
     # diploma_apostille — no OCR (just stored), the apostille text is not needed for the form
+
+    # Pack 14a — иностранные документы
+    "passport_national": PASSPORT_NATIONAL_PROMPT,
+    "residence_card": RESIDENCE_CARD_PROMPT,
+    "criminal_record": CRIMINAL_RECORD_PROMPT,
 }

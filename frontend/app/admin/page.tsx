@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Search, Loader2, Settings, Archive } from "lucide-react";
+import { Plus, Search, Loader2, Settings, Archive, Package } from "lucide-react";
 import {
   listApplications,
   ApplicationResponse,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { ApplicationsList } from "@/components/admin/ApplicationsList";
 import { ApplicationDetail } from "@/components/admin/ApplicationDetail";
+import { ImportPackageDialog } from "@/components/admin/ImportPackageDialog";
 
 function AdminPageContent() {
   const router = useRouter();
@@ -21,6 +22,7 @@ function AdminPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   async function loadApplications() {
     setError(null);
@@ -122,6 +124,18 @@ function AdminPageContent() {
             <Settings className="w-4 h-4" />
             Настройки
           </button>
+
+          {/* Pack 14a — Импорт пакета документов */}
+          <button
+            onClick={() => setShowImportDialog(true)}
+            className="px-3 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center gap-1.5"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+            title="Загрузить ZIP/RAR с документами клиента — система распакует, распознает и создаст заявку"
+          >
+            <Package className="w-4 h-4" />
+            Импорт пакета
+          </button>
+
           <button
             onClick={() => router.push("/admin/applications/new")}
             className="px-4 py-2 rounded-md text-sm font-medium text-white flex items-center gap-2 transition-colors"
@@ -192,6 +206,20 @@ function AdminPageContent() {
           )}
         </div>
       </div>
+
+      {/* Pack 14a — диалог импорта пакета */}
+      {showImportDialog && (
+        <ImportPackageDialog
+          applications={applications}
+          onClose={() => setShowImportDialog(false)}
+          onImported={(result) => {
+            setShowImportDialog(false);
+            loadApplications();
+            // Переходим на созданную заявку
+            router.push(`/admin?id=${result.application_id}`);
+          }}
+        />
+      )}
     </div>
   );
 }

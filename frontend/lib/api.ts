@@ -81,6 +81,10 @@ export type ClientDocumentType =
   | "passport_internal_main"
   | "passport_internal_address"
   | "passport_foreign"
+  // Pack 14a — для иностранных клиентов
+  | "passport_national"
+  | "residence_card"
+  | "criminal_record"
   | "diploma_main"
   | "diploma_apostille"
   | "other";
@@ -104,10 +108,6 @@ export type ClientDocument = {
   applied_to_applicant: boolean;
   created_at: string;
   download_url?: string;
-  // Pack 13.1.3
-  has_original?: boolean;
-  original_download_url?: string;
-  original_file_name?: string;
 };
 
 // Pack 13.1.1: типы для preview-apply
@@ -452,52 +452,120 @@ export async function applyDocumentsToApplicant(
   return res.json();
 }
 
+// ============================================================================
 
 // ============================================================================
-// Pack 13.2: Admin — Client documents
+// Pack 14a: Bulk import — пакет документов от менеджера
 // ============================================================================
+
+export type ImportFileMeta = {
+  file_id: string;
+  name: string;
+  size: number;
+  mime: string;
+  extension: string;
+  is_pdf: boolean;
+  preview_url?: string;
+};
+
+export type ImportSession = {
+  session_id: string;
+  archive_name: string;
+  files: ImportFileMeta[];
+};
+
+export type ImportFileAssignment = {
+  file_id: string;
+  doc_type: ClientDocumentType | "skip";
+  pdf_page?: number | null;
+};
+
+export type ImportFinalizeRequest = {
+  application_id: number | null;
+  internal_notes?: string | null;
+  files: ImportFileAssignment[];
+  run_ocr: boolean;
+};
+
+export type ImportFinalizeResult = {
+  application_id: number;
+  application_reference: string;
+  documents_created: number;
+  ocr_results: Array<{
+    doc_id: number;
+    doc_type: string;
+    ok: boolean;
+    error?: string;
+    skipped?: boolean;
+    fields?: string[];
+  }>;
+};
 
 /**
- * Получить документы клиента (от имени менеджера).
+ * Загрузить архив (ZIP/RAR) — backend распакует и вернёт список файлов.
  */
-export async function adminListClientDocuments(
-  applicationId: number,
-): Promise<ClientDocument[]> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents`,
-    { headers: authHeaders() },
-  );
+export async function importPackageUpload(file: File): Promise<ImportSession> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/api/admin/import-package/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: formData,
+  });
   if (!res.ok) {
-    throw new Error(`Не удалось получить документы: ${res.status} ${await res.text()}`);
+    const errText = await res.text();
+    let msg = `Ошибка загрузки архива (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
   }
   return res.json();
 }
 
 /**
- * Запустить OCR заново для документа клиента (от имени менеджера).
+ * Финализировать импорт — менеджер указал типы документов и заявку.
  */
-export async function adminRecognizeClientDocument(
-  applicationId: number,
-  docId: number,
-): Promise<ClientDocument> {
+export async function importPackageFinalize(
+  sessionId: string,
+  payload: ImportFinalizeRequest,
+): Promise<ImportFinalizeResult> {
   const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,
-    { method: "POST", headers: authHeaders() },
+    `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
   );
   if (!res.ok) {
     const errText = await res.text();
-    let errMessage = `Не удалось распознать (${res.status})`;
+    let msg = `Ошибка импорта (${res.status})`;
     try {
       const errJson = JSON.parse(errText);
-      errMessage = errJson.detail || errMessage;
+      msg = errJson.detail || msg;
     } catch {}
-    throw new Error(errMessage);
+    throw new Error(msg);
   }
   return res.json();
 }
 
+/**
+ * Отменить сессию импорта (удаляет временные файлы на сервере).
+ */
+export async function importPackageCancel(sessionId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/admin/import-package/${sessionId}/cancel`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
 
-// ============================================================================
+
 // Admin Applications
 // ============================================================================
 
@@ -845,7 +913,11 @@ export function getClientLink(token: string): string {
 export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
   passport_internal_main: "Паспорт РФ — главный разворот",
   passport_internal_address: "Паспорт РФ — страница прописки",
-  passport_foreign: "Загранпаспорт",
+  passport_foreign: "Загранпаспорт РФ",
+  // Pack 14a — для иностранных клиентов
+  passport_national: "Национальный паспорт (не РФ)",
+  residence_card: "ВНЖ / Residence card",
+  criminal_record: "Справка о несудимости",
   diploma_main: "Диплом — основная страница",
   diploma_apostille: "Диплом — апостиль",
   other: "Другой документ",

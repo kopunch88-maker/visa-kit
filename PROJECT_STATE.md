@@ -1,7 +1,7 @@
 # VISA KIT — Project State
 
-**Last updated:** Session 12 end (Apr 30, 2026)
-**Status:** Pack 13.1.1 in production. Pack 13.1.2 ready for push (transliteration fix).
+**Last updated:** Session 13 end (May 1, 2026)
+**Status:** Pack 13.x complete. Ready to start Pack 14 (auto-validation of generated documents).
 
 ---
 
@@ -9,7 +9,7 @@
 
 - Spain Digital Nomad visa agency
 - ~50 заявок/месяц
-- 4 менеджера + 1 владелец
+- 4 менеджера + 1 владелец (Костя)
 - Локально: Windows, Python 3.14 (.venv), Node 24
 - Production: Python 3.12 (Docker), PostgreSQL, Cloudflare R2
 
@@ -33,67 +33,81 @@
 
 ---
 
-## CURRENT FEATURES
+## ЧТО УЖЕ В PRODUCTION (накопительно по всем сессиям)
 
-### Pack 1-9 (стабильные, в production)
-- Управление заявками (CRUD, статусы, архив)
-- Справочники: компании, должности, представители, испанские адреса
-- Генерация PDF/DOCX документов из шаблонов (compromiso, declaracion, contract, и т.д.)
-- Bank statement generator (CBR курсы)
-- Recommendation engine (auto-suggest assignment)
-- Admin auth (JWT + bcrypt)
-- Status machine с правилами переходов
+### Базовая функциональность
+- ✅ Управление заявками (CRUD, статусы, архив)
+- ✅ Справочники: компании (10), должности (10+), представители (2), испанские адреса (3)
+- ✅ Двухпанельный layout (список слева + детали справа)
+- ✅ Bilingual ФИО (русский + латиница) во всём UI
+- ✅ Status machine с правилами переходов
 
-### Pack 10-11 (стабильные, в production)
-- ZIP packaging для скачивания всех документов
-- Production deployment на Railway + R2
-- Admin user management
+### Генерация документов
+- ✅ DOCX: договор, 3 акта, 3 счёта, письмо работодателя, CV, выписка
+- ✅ PDF испанские формы: MI-T, Designación, Compromiso, Declaración
+- ✅ ZIP package для скачивания всех документов
 
-### Pack 13.0a (в production)
-- LLM service abstraction (`backend/app/services/llm/`):
-  - `base.py` — интерфейс
-  - `openrouter.py` — клиент OpenRouter
-  - `anthropic_direct.py` — клиент Anthropic API (резервный)
-  - `factory.py` — выбор по env `LLM_PROVIDER`
-- Модель `ApplicantDocument` (renamed enums: `ApplicantDocumentType`, `ApplicantDocumentStatus` чтобы не конфликтовать с `DocumentType`/`DocumentStatus` из `_supporting.py`)
-- Endpoints для документов: `GET/POST/DELETE /api/client/{token}/documents/...`
+### Финансы и валидация
+- ✅ Bank statement generator с курсами ЦБ РФ
+- ✅ Чек-лист бизнес-правил (договор > 90 дней, зарплата выше порога, и т.д.)
+- ✅ Recommendation engine (auto-suggest assignment)
 
-### Pack 13.0b (в production)
-- Frontend UI загрузки документов
-- Шаг 0 «Документы» в `ClientWizard.tsx` (первый, опциональный)
-- 5 слотов: passport_internal_main, passport_internal_address, passport_foreign, diploma_main, diploma_apostille
-- Drag-drop, click upload, capture="environment" для камеры на mobile
-- Thumbnails, replace/delete
+### Production deployment
+- ✅ Vercel + Railway + R2 + OpenRouter
+- ✅ JWT + bcrypt admin auth
+- ✅ Magic-link для клиентов
 
-### Pack 13.1 (в production)
-- Реальный OCR через Claude Sonnet 4.6 (OpenRouter)
-- 4 промпта (английские инструкции, native-language values):
-  - RUSSIAN_PASSPORT_MAIN_PROMPT
-  - RUSSIAN_PASSPORT_ADDRESS_PROMPT
-  - FOREIGN_PASSPORT_PROMPT
-  - DIPLOMA_PROMPT
+### Pack 13.x — Клиентский кабинет с OCR (текущая сессия)
+
+**Pack 13.0a/b** — инфраструктура:
+- LLM service abstraction (`backend/app/services/llm/`)
+- Модель ApplicantDocument (renamed enums чтобы не конфликтовать с DocumentType)
+- Storage endpoints
+- Frontend Step 0 «Документы» в ClientWizard.tsx (первый шаг, опциональный)
+- 5 слотов документов с drag-drop, capture камерой
+
+**Pack 13.1** — реальный OCR:
+- Claude Sonnet 4.6 через OpenRouter
+- 4 промпта (английские инструкции, native-language values)
 - HEIC → JPEG конвертация (pillow-heif)
 - Auto-resize больших изображений
-- JSON parsing с обработкой markdown fences
-- Endpoint `POST /documents/{id}/recognize`
-- Endpoint `POST /documents/apply-to-applicant`
+- Endpoint POST /documents/{id}/recognize
+- Endpoint POST /documents/apply-to-applicant
 
-### Pack 13.1.1 (в production)
-- Conflict resolution UI:
-  - 3 категории: auto_fill, conflicts, same
-  - Radio buttons для конфликтов (default: оставить ручной ввод)
-  - Education actions: skip / replace / add (default: skip)
-- Endpoint `POST /documents/preview-apply` — план применения
-- Endpoint `POST /documents/apply-to-applicant` принимает body `{overrides, education_action}`
-- Smart matching: case-insensitive для имён/адресов, digits-only для номеров
+**Pack 13.1.1** — conflict resolution UI:
+- 3 категории: auto_fill, conflicts, same
+- Radio buttons для конфликтов (default: оставить ручной ввод)
+- Education actions: skip / replace / add (default: skip)
+- Endpoint POST /documents/preview-apply
+- Smart matching: case-insensitive имена, digits-only номера
 
-### Pack 13.1.2 (READY TO PUSH — НЕ В PRODUCTION)
-- ГОСТ 52535.1-2006 транслитерация на сервере
-- Файлы готовы в `/mnt/user-data/outputs/`:
-  - `transliteration.py` (новый)
-  - `client_portal.py` (заменить существующий)
-- Логика: при apply OCR данных, если `*_native` поле обновляется и `*_latin` НЕ пришло из загранпаспорта — генерируем latin через ГОСТ
-- Решает баг: «Иван» → «IVAN» руками, потом OCR заменил на «Константин», но latin остался «IVAN»
+**Pack 13.1.2** — ГОСТ транслитерация:
+- Файл `backend/app/services/transliteration.py` с таблицей ГОСТ 52535.1-2006
+- Backend автоматически генерирует *_latin поля при apply OCR данных
+- Решает: «Иван» → «IVAN» руками, потом OCR заменил на «Константин» — latin тоже обновится в Konstantin
+
+**Pack 13.1.3** — поддержка PDF:
+- Конвертация PDF → JPEG на клиенте через PDF.js (lazy load с unpkg/jsdelivr/cdnjs fallback)
+- Версия PDF.js: 3.11.174 (последняя UMD-version, 5.x уже только ES modules)
+- Многостраничный PDF — клиент выбирает нужную страницу через модалку
+- Backend хранит ОБА файла: JPEG (для OCR + превью) + оригинальный PDF (для финальной отправки)
+- Поля в applicant_document: `original_storage_key`, `original_file_name`, `original_file_size`, `original_content_type`
+
+**Pack 13.2** — Админский UI документов клиента:
+- Новый роутер `backend/app/api/client_documents_admin.py`
+- Endpoints: GET /admin/applications/{id}/client-documents, POST .../recognize
+- Frontend: компонент `AdminClientDocuments.tsx` встраивается в `ApplicationDetail.tsx`
+- Менеджер видит миниатюры, статус OCR, распознанные поля (collapsed), может скачать оригинал PDF, может перезапустить OCR
+
+**Sidebar fix** — приоритет имени:
+- В ApplicationsList.tsx: applicant_name_native → internal_notes → "Заявка #N"
+- Раньше показывался internal_notes даже когда есть ФИО клиента
+- Добавлен subtitle с латинским ФИО под русским
+
+**Миграция справочников из dev.db в production:**
+- Скрипт `migrate_catalogs_to_prod.py` (одноразовый, удалён после использования)
+- Перенесены: 9 компаний, 9 должностей, 1 представитель (ANASTASIIA KORENEVA), 2 адреса
+- Решение проблемы SQLite int 0/1 → PostgreSQL bool
 
 ---
 
@@ -115,14 +129,14 @@
 | OPENROUTER_MODEL | `anthropic/claude-sonnet-4.6` |
 | LLM_VISION_MODEL | `anthropic/claude-sonnet-4.6` |
 
-⚠️ **ВАЖНО:** R2_ACCOUNT_ID — это **hex строка из Cloudflare Account details**, НЕ API Token Identifier (cfat_...). Эта ошибка была причиной краша production в session 12.
+⚠️ **R2_ACCOUNT_ID** — это hex строка из Cloudflare Account details, НЕ API Token Identifier (cfat_...).
 
 ---
 
-## DATABASE_PUBLIC_URL (для create_admin.py)
+## DATABASE_PUBLIC_URL
 
 ```
-postgresql://postgres:<password>@switchyard.proxy.rlwy.net:34408/railway
+postgresql://postgres:uxGVZsShKKnbOZuHyiFpEaufEAnKjYXI@switchyard.proxy.rlwy.net:34408/railway
 ```
 
 ⚠️ Может ротироваться — брать актуальное из Railway → Postgres → Variables → `DATABASE_PUBLIC_URL`
@@ -136,52 +150,49 @@ D:\VISA\visa_kit\
 ├── backend\
 │   ├── app\
 │   │   ├── api\
-│   │   │   ├── admin.py                  ← admin endpoints
-│   │   │   ├── auth.py                   ← JWT login
-│   │   │   ├── client_portal.py          ← клиентский кабинет (Pack 13.1.1, ждёт 13.1.2)
-│   │   │   └── ...
+│   │   │   ├── applicants.py
+│   │   │   ├── applications.py            ← admin app endpoints (НЕ admin.py!)
+│   │   │   ├── auth.py
+│   │   │   ├── bank_transactions.py
+│   │   │   ├── client_portal.py           ← Pack 13.1.1/.2/.3 — client OCR
+│   │   │   ├── client_documents_admin.py  ← Pack 13.2 — admin UI for docs
+│   │   │   ├── companies.py
+│   │   │   ├── dependencies.py            ← require_manager отсюда
+│   │   │   ├── positions.py
+│   │   │   ├── render_endpoints.py
+│   │   │   ├── representatives.py
+│   │   │   └── spain_addresses.py
 │   │   ├── models\
-│   │   │   ├── applicant.py              ← основная модель клиента
-│   │   │   ├── applicant_document.py     ← Pack 13.0a (renamed enums!)
-│   │   │   ├── application.py
-│   │   │   └── _supporting.py            ← DocumentType/Status (для GeneratedDocument)
+│   │   │   ├── applicant_document.py      ← Pack 13.1.3 (4 original_* fields)
+│   │   │   └── ...
 │   │   ├── services\
-│   │   │   ├── llm\                      ← Pack 13.0a (5 файлов)
-│   │   │   ├── ocr\                      ← Pack 13.1 (3 файла)
-│   │   │   ├── storage\                  ← (5 файлов: base, factory, local, r2, __init__)
-│   │   │   ├── transliteration.py        ← Pack 13.1.2 (ЕЩЁ НЕ ДОБАВЛЕН локально!)
-│   │   │   ├── rendering.py
-│   │   │   ├── recommendation.py
-│   │   │   ├── status_machine.py
-│   │   │   ├── cbr_client.py
-│   │   │   └── bank_statement_generator.py
-│   │   ├── db\
-│   │   ├── config.py
-│   │   ├── main.py                       ← FastAPI app + migrations
-│   │   └── migrations.py
-│   ├── requirements.txt                  ← должен содержать pillow-heif==0.18.0
-│   └── dev.db                            ← SQLite для локальной разработки
+│   │   │   ├── llm\                       ← Pack 13.0a (5 файлов)
+│   │   │   ├── ocr\                       ← Pack 13.1 (3 файла)
+│   │   │   ├── storage\                   ← (5 файлов: base/factory/local/r2/__init__)
+│   │   │   ├── transliteration.py         ← Pack 13.1.2 GOST
+│   │   │   └── ...
+│   │   ├── main.py                        ← FastAPI app + migrations
+│   │   └── ...
+│   ├── requirements.txt                   ← contains pillow-heif==0.18.0
+│   └── dev.db                             ← локальная SQLite
 ├── frontend\
 │   ├── components\
-│   │   ├── wizard\
-│   │   │   ├── ClientWizard.tsx          ← Pack 13.1 (Step 0 first, async handleDocumentsContinue)
-│   │   │   ├── StepDocuments.tsx         ← Pack 13.1.1 (с conflict resolution UI)
-│   │   │   ├── StepPersonalInfo.tsx      ← имеет lastAutoFill ref + GOST translit map
-│   │   │   ├── StepPassport.tsx
-│   │   │   ├── StepAddress.tsx
-│   │   │   ├── StepEducation.tsx
-│   │   │   └── StepWorkHistory.tsx
-│   │   └── admin\
-│   ├── lib\
-│   │   └── api.ts                        ← Pack 13.1.1 (preview/apply types)
-│   └── ...
-├── templates\
-│   ├── pdf\
-│   └── docx\
-├── Dockerfile
-├── .dockerignore                         ← /storage/ и /backend/storage/ (НЕ **/storage/!)
-├── .gitignore                            ← /storage/ и /backend/storage/ (НЕ storage/!)
-└── PROJECT_STATE.md                      ← этот файл
+│   │   ├── admin\
+│   │   │   ├── ApplicationDetail.tsx      ← включает AdminClientDocuments
+│   │   │   ├── ApplicationsList.tsx       ← FIXED sidebar priority
+│   │   │   ├── AdminClientDocuments.tsx   ← Pack 13.2
+│   │   │   ├── DocumentsGrid.tsx          ← генерируемые DOCX/PDF
+│   │   │   └── ...
+│   │   └── wizard\
+│   │       ├── ClientWizard.tsx           ← Step 0 first
+│   │       ├── StepDocuments.tsx          ← Pack 13.1.1 conflict UI + 13.1.3 PDF
+│   │       ├── StepPersonalInfo.tsx
+│   │       ├── PdfPageSelector.tsx        ← Pack 13.1.3
+│   │       └── ...
+│   └── lib\
+│       ├── api.ts                         ← все Pack 13 функции
+│       └── pdfConverter.ts                ← Pack 13.1.3 + 3-CDN fallback
+└── PROJECT_STATE.md                       ← этот файл
 ```
 
 ---
@@ -191,39 +202,37 @@ D:\VISA\visa_kit\
 ### .gitignore / .dockerignore
 - `**/storage/` ловит ВСЕ папки `storage` где угодно — включая `services/storage/`
 - Правильно: `/storage/` (anchor к корню) и `/backend/storage/`
-- Это случилось в session 12 — production упал, починилось через правку обоих ignore-файлов
 
 ### R2 Account ID
 - Cloudflare даёт **2 разных идентификатора**:
   - **Account ID** — hex 32 символа (для R2 endpoint URL)
-  - **API Token Identifier** — начинается с `cfat_...` (для авторизации API tokens)
-- Для `R2_ACCOUNT_ID` env нужен **первый**, иначе boto3 падает на `create_endpoint`
+  - **API Token Identifier** — начинается с `cfat_...` (для авторизации)
+- Для `R2_ACCOUNT_ID` env нужен **первый**
 
 ### Renamed enums
 - `applicant_document.py` использует `ApplicantDocumentType` / `ApplicantDocumentStatus`
-- Если попробовать назвать их просто `DocumentType` / `DocumentStatus` — конфликт с `_supporting.py`
-- При импорте всегда писать полное имя
+- Конфликт с `_supporting.py` (DocumentType/DocumentStatus для GeneratedDocument)
 
-### Docker layer cache на Railway
-- Иногда Railway показывает `cached` для COPY слоя — это нормально если файлы не менялись
-- Если папка не попала в коммит, добавление её через `git add -f` решает проблему
-- Не надо мудрить с CACHEBUST — обычно достаточно правильно настроить ignore-файлы
+### PDF.js
+- Версия 3.11.174 — последняя UMD (через `<script>` тег). 5.x только ES modules
+- 3-CDN fallback: unpkg → jsdelivr → cdnjs
 
-### LF/CRLF warnings
-- Windows + Git постоянно ругается на line endings
-- Это **не ошибка**, можно игнорировать
-- Git автоматически конвертирует при checkout
+### SQLite → PostgreSQL миграция
+- SQLite хранит boolean как INTEGER (0/1)
+- PostgreSQL требует настоящий BOOLEAN (true/false)
+- Нужна явная конвертация при переносе данных
 
 ### PowerShell quirks
-- `python -c "..."` с вложенными кавычками → проблемы. Использовать here-string `@"..."@ | Out-File`
+- `python -c "..."` с вложенными кавычками → проблемы. Использовать here-string `@"..."@`
 - `$env:DATABASE_URL` может протекать в дочерние процессы — обнулять `$env:DATABASE_URL=$null`
-- Перед командами Python убедиться что `.venv` активирован
+- НЕ устанавливать в качестве пароля плейсхолдер `ПАРОЛЬ` — копировать значение целиком из Railway
 
-### Pack 13.1.2 (transliteration) bug context
-- В `StepPersonalInfo.tsx` есть `useEffect` который автотранслитерирует `*_native` → `*_latin`
-- Логика «не перезаписывать если клиент редактировал» через `lastAutoFill` ref
-- Когда OCR применяет данные, `lastAutoFill` остаётся со старым значением
-- Решение: backend сам генерирует latin через ГОСТ при apply
+### Railway Postgres
+- Усыпляется при неактивности — клик на карточку Postgres в Railway будит его
+- Нет встроенной вкладки Query — миграции через Python скрипт с DATABASE_PUBLIC_URL
+
+### LF/CRLF warnings
+- Windows + Git постоянно ругается — игнорировать, Git автоматически конвертирует
 
 ---
 
@@ -258,49 +267,66 @@ Vercel + Railway auto-redeploy за 2-5 минут.
 
 ---
 
-## NEXT STEPS — что делать когда вернёшься
+## РОДМАП — ЧТО ОСТАЛОСЬ ИЗ СТАРОГО ПЛАНА (5 паков)
 
-### Шаг 1. Применить Pack 13.1.2 (готов, не задеплоен)
+В порядке приоритета по окупаемости:
 
-Скачать из `/mnt/user-data/outputs/`:
+### 🚀 Pack 14 — Авто-проверка пакета документов (СЛЕДУЮЩИЙ)
 
-| Файл | Куда |
-|---|---|
-| `transliteration.py` (новый) | `D:\VISA\visa_kit\backend\app\services\transliteration.py` |
-| `client_portal.py` (заменить) | `D:\VISA\visa_kit\backend\app\api\client_portal.py` |
+ИИ читает все 10 сгенерированных DOCX + 4 PDF и проверяет согласованность:
+- Даты в договоре совпадают с датами в актах?
+- Суммы в счетах = суммам в актах?
+- ФИО склоняется правильно (Им., Род., Дат., Вин., Тв., Пред.)?
+- Номер паспорта в одном формате во всех документах?
+- Орфография имён, склонения, формат дат?
 
-```powershell
-cd D:\VISA\visa_kit
-git add .
-git commit -m "Pack 13.1.2: GOST-based auto-transliteration for *_latin fields on OCR apply"
-git push
-```
+**Окупаемость:** одна избегнутая ошибка = одобрение визы клиенту. Менеджер не пропустит ляп.
+**Стоимость:** ~$0.10 за пакет (один LLM запрос).
+**Сложность:** 3-4 дня. Parser DOCX/PDF → промпт для LLM → результат с пометкой проблем.
 
-### Шаг 2. Тест транслитерации
+### Pack 15 — Перевод-черновик на испанский (быстрый, ~1-2 дня)
 
-Проверить сценарий:
-1. Шаг 1 → написать «Иван» → latin auto = «IVAN»
-2. Шаг 0 → загрузить паспорт РФ с именем «Константин»
-3. «Распознать всё» → Review
-4. В конфликте `first_name_native`: выбрать «Из документа»
-5. Применить → проверить Шаг 1: должно быть «Константин» / «Konstantin»
+Claude переводит DOCX на испанский на уровне присяжного переводчика. **Черновик** — финальную проверку и подпись делает живой переводчик (юридическое требование UGE).
+**Окупаемость:** ускоряет pipeline с 3-5 дней до 1 дня на этапе «у переводчика».
 
-### Шаг 3. Дальше — Pack 13.2 (планируется)
+### Pack 16 — Авто-распределение по компаниям (~2 дня)
 
-**Backend:**
-- Интеграция с ФНС API для получения ИНН по паспортным данным
-- Endpoint `POST /api/client/{token}/lookup-inn` — после OCR паспорта РФ
-- Кеширование результата
+Балансировка нагрузки между 10 компаниями. Учёт географии и пересечений.
+**Окупаемость:** убирает один шаг ручного распределения.
 
-**Frontend:**
-- Кнопка «Получить ИНН автоматически» в StepPersonalInfo (рядом с полем ИНН)
-- Auto-trigger после применения OCR с паспортными данными
+### Pack 17 — Email-агент (~5-7 дней)
 
-**Admin UI документов клиента:**
-- В `ApplicationDetail.tsx` — блок «Документы клиента»
-- Миниатюры всех загруженных документов
-- Кнопки скачивания через signed URL
-- Возможность для менеджера запустить OCR из админки если клиент пропустил Шаг 0
+Авто-ответы клиенту на типовые вопросы. Notify-уведомления. Модерация менеджером.
+**Окупаемость:** освобождает 2-3 часа менеджера в день.
+**Условие:** делать когда поток заявок вырастет до 100+/мес.
+
+### Pack 18 — Мониторинг статусов в UGE (хрупкое, ~5-10 дней)
+
+Browser-агент через Computer Use открывает портал UGE. **Только чтение**, не подача.
+**Риски:** UGE может ломать UI, блокировать IP.
+**Условие:** делать когда станет реально критично.
+
+---
+
+## ЧТО НЕ АВТОМАТИЗИРУЕМ (намеренно)
+
+- **Итоговое решение менеджера перед подачей** — юридическая ответственность лежит на агентстве
+- **Личная коммуникация в сложных кейсах** (развод с детьми, отказы в прошлом) — ИИ помогает, но решение и эмпатия за человеком
+- **Оценка рисков отказа** — требует юридической экспертизы
+- **Подача документов в UGE** — UGE не имеет API, серая зона
+- **Подписание документов (ЭП)** — юридическое действие
+
+---
+
+## ЦЕЛИ АВТОМАТИЗАЦИИ
+
+После всех Pack 14-18:
+- Время менеджера на одну заявку: с 4-6 часов → до 30 минут
+- Один менеджер ведёт: с 50 → до 200+ заявок/мес
+- Возможные сценарии:
+  - Рост выручки в 4-6 раз без увеличения штата
+  - ИЛИ снижение цены клиенту в 2-3 раза при сохранении маржи
+  - ИЛИ комбинация (умеренный рост штата + снижение цены + рост маржи)
 
 ---
 
@@ -308,39 +334,44 @@ git push
 
 - [DECISION] Промпты на английском, output в исходном языке (Cyrillic stays Cyrillic, Latin stays Latin)
 - [DECISION] Soft warning policy: OCR fail → файл сохранён, менеджер проверит вручную
-- [DECISION] PDF не распознаётся через OCR (только хранится). Только JPEG/PNG/WebP/HEIC.
-- [DECISION] Promo screen «Что мы извлекли» обязательный после OCR (даёт клиенту контроль)
+- [DECISION] Promo screen «Что мы извлекли» обязательный после OCR
 - [DECISION] Conflict UI: только реальные конфликты, default «оставить ручной ввод»
 - [DECISION] Education conflict: 3 опции (skip/add/replace), default skip
-- [DECISION] Транслитерация на backend через ГОСТ 52535.1-2006 (стандарт паспортов с 2010 года)
-- [DECISION] PROJECT_STATE.md: НЕ хранить значения секретов, только имена env-переменных
-- [DECISION] Stack final: Vercel + Railway + R2 + OpenRouter (никаких изменений в обозримом будущем)
+- [DECISION] Транслитерация на backend через ГОСТ 52535.1-2006
+- [DECISION] PDF: гибрид (конвертация на клиенте) + клиент выбирает страницу + хранить оригинал PDF + DPI 200
+- [DECISION] PDF.js: версия 3.11.174 UMD + 3-CDN fallback (unpkg → jsdelivr → cdnjs)
+- [DECISION] Admin UI документов: базовый набор (просмотр, скачивание, перезапуск OCR), без upload/delete пока
+- [DECISION] Sidebar list priority: applicant_name_native > internal_notes > "Заявка #N"
+- [DECISION] PROJECT_STATE.md: НЕ хранить значения секретов
+- [DECISION] Stack final: Vercel + Railway + R2 + OpenRouter
+- [DECISION] Следующий пак — Pack 14 (авто-проверка пакета)
 
 ---
 
 ## USER PREFERENCES
 
-- Язык общения: **русский**, casual technical tone («ок», «идём дальше», «хорошо»)
-- Production-first deployment philosophy (тестирование на проде ОК для maker stage)
-- Команда: 4 менеджера, нужна админская роль
-- Reaction to manual diff edits: **«вообще ничего не понял»** → всегда давать **готовые файлы целиком на замену**, не diff-инструкции
-- Reaction to готовым файлам: **«идём дальше»** → значит работает
-- Format predпочтений: концентрированные ответы, мало formatting, прямо к делу
-- Ошибки и баги: показывать логи Railway (Build Logs vs Deploy Logs vs HTTP Logs — важно!)
+- Язык общения: **русский**, casual technical tone («ок», «идём дальше»)
+- Production-first deployment philosophy
+- Команда: 4 менеджера + Костя (владелец)
+- Reaction to manual diff edits: **«вообще ничего не понял»** → **готовые файлы целиком**
+- Reaction to готовым файлам: «идём дальше» → значит работает
+- Format предпочтений: концентрированные ответы, мало formatting, прямо к делу
+- Ошибки и баги: показывать логи Railway (Build Logs vs Deploy Logs vs HTTP Logs)
 
 ---
 
-## SESSION HISTORY (краткое)
+## SESSION HISTORY
 
 - Sessions 1-9: базовая разработка (модели, генерация, админка)
 - Session 10: ZIP packaging
 - Session 11: production deploy (Vercel + Railway + R2)
-- Session 12 (текущая): **Pack 13** family — клиентский кабинет с OCR
-  - 13.0a/b: infrastructure + UI
-  - 13.1: реальный OCR
-  - 13.1.1: conflict resolution
-  - 13.1.2: ГОСТ транслит (готов, не задеплоен)
-  - Решённые проблемы: .dockerignore `**/storage/`, R2_ACCOUNT_ID `cfat_...`
+- Session 12: Pack 13.0/13.1/13.1.1 — клиентский кабинет с OCR
+- **Session 13** (текущая):
+  - Pack 13.1.2 — ГОСТ-транслит
+  - Pack 13.1.3 — PDF поддержка через PDF.js на клиенте + хранение оригинала
+  - Pack 13.2 — админский UI документов клиента
+  - Sidebar fix (приоритет имени)
+  - Миграция справочников (9 компаний + 9 позиций + 1 представитель + 2 адреса) из dev.db в production
 
 ---
 
