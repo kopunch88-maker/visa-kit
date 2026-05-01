@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Loader2, X, Upload, FileText, AlertCircle, CheckCircle2,
   Sparkles, FileWarning, Package, ArrowLeft, Building2, AlertTriangle,
+  SkipForward,
 } from "lucide-react";
 import {
   ClientDocumentType,
@@ -18,6 +19,7 @@ import {
   importPackageUpload,
   importPackageFinalize,
   importPackageFinalizeWithCompany,
+  importPackageFinalizeSkipCompany,
   importPackageCancel,
 } from "@/lib/api";
 import {
@@ -293,6 +295,29 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     }
   }
 
+  async function handleSkipCompany() {
+    if (!importSession) return;
+    setError(null);
+    setStep("submitting");
+
+    try {
+      const result = await importPackageFinalizeSkipCompany(importSession.session_id, {
+        application_id: target === "existing" ? existingApplicationId : null,
+        internal_notes: target === "new" ? internalNotes : null,
+        files: buildAssignments(),
+        run_ocr: true,
+      });
+
+      setStep("done");
+      setTimeout(() => {
+        onImported(result);
+      }, 1200);
+    } catch (e) {
+      setError((e as Error).message);
+      setStep("company");
+    }
+  }
+
   async function handleCancel() {
     if (importSession?.session_id) {
       try {
@@ -466,7 +491,7 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
 
         {step === "company" && (
           <div
-            className="px-5 py-4 border-t flex justify-between gap-3"
+            className="px-5 py-4 border-t flex justify-between gap-3 flex-wrap"
             style={{
               borderColor: "var(--color-border-tertiary)",
               borderTopWidth: 0.5,
@@ -487,14 +512,28 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
               <ArrowLeft className="w-4 h-4" />
               Назад
             </button>
-            <button
-              onClick={handleFinalizeWithCompany}
-              className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2"
-              style={{ background: "var(--color-accent)" }}
-            >
-              <Building2 className="w-4 h-4" />
-              Создать компанию и заявку →
-            </button>
+            <div className="flex gap-2 ml-auto">
+              <button
+                onClick={handleSkipCompany}
+                className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center gap-1.5"
+                style={{
+                  borderColor: "var(--color-border-tertiary)",
+                  borderWidth: 0.5,
+                }}
+                title="Создать заявку без компании. ЕГРЮЛ-файл будет пропущен. Компанию можно будет добавить позже вручную."
+              >
+                <SkipForward className="w-4 h-4" />
+                Пропустить компанию
+              </button>
+              <button
+                onClick={handleFinalizeWithCompany}
+                className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2"
+                style={{ background: "var(--color-accent)" }}
+              >
+                <Building2 className="w-4 h-4" />
+                Создать компанию и заявку →
+              </button>
+            </div>
           </div>
         )}
       </div>

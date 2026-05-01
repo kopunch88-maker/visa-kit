@@ -710,6 +710,37 @@ export async function importPackageFinalizeWithCompany(
 }
 
 /**
+ * Финализация импорта БЕЗ компании — менеджер пропускает создание компании из ЕГРЮЛ.
+ * Создаст заявку без company_id. ЕГРЮЛ-файлы будут пропущены.
+ */
+export async function importPackageFinalizeSkipCompany(
+  sessionId: string,
+  payload: ImportFinalizeRequest,
+): Promise<ImportFinalizeResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize/skip-company`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка импорта без компании (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
  * Отменить сессию импорта (удаляет временные файлы на сервере).
  */
 export async function importPackageCancel(sessionId: string): Promise<void> {
