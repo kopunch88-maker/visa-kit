@@ -297,35 +297,29 @@ async def translate_docx(
     """
     doc = Document(io.BytesIO(docx_bytes))
     paragraphs = _collect_all_paragraphs(doc)
-    log.warning(
+    log.info(
         f"[translation] DOCX has {len(paragraphs)} paragraphs"
-        + (f", {len(substitutions)} pre-substitutions ACTIVE" if substitutions else ", NO substitutions")
+        + (f", {len(substitutions)} pre-substitutions" if substitutions else "")
     )
-
-    # Pack 15.4: расширенная диагностика — отметим ВСЕ параграфы где есть
-    # критичные русские маркеры, и потом проследим что с ними стало после LLM
-    diag_marker_indices: list[int] = []  # paragraph indices to track
 
     targets: list[tuple[int, str]] = []
     for idx, p in enumerate(paragraphs):
         text = _extract_paragraph_text(p)
-        original_text = text  # сохраняем для DIAG
+        original_text = text  # для сравнения с результатом подстановки
 
         if substitutions:
             text = substitutions.apply(text)
 
-        # Pack 15.4 DIAG: трекаем параграфы с проблемными маркерами
-        is_diag = (
-            "ИНЖГЕОСЕРВИС" in original_text
-            or "Юксел" in original_text
-            or "Ведат" in original_text
-            or ("ИНН" in original_text and any(c.isdigit() for c in original_text))
-        )
-        if is_diag:
-            log.warning(f"[DIAG p{idx}] BEFORE_SUB: {original_text[:300]!r}")
-            log.warning(f"[DIAG p{idx}] AFTER_SUB:  {text[:300]!r}")
-            log.warning(f"[DIAG p{idx}] WILL_SKIP: {_should_skip(text)}")
-            diag_marker_indices.append(idx)
+        # Pack 15.5: КРИТИЧНЫЙ ФИКС.
+        # Если pre-substitution что-то заменила, но текст после неё уже не нужно
+        # отправлять в LLM (нет кириллицы) — мы ОБЯЗАНЫ записать его в DOCX
+        # сейчас. Иначе параграф останется в исходном русском виде, потому что
+        # _set_paragraph_text() позже вызывается только для targets (тех что
+        # пошли в LLM).
+        if text != original_text and _should_skip(text):
+            _set_paragraph_text(p, text)
+            log.info(f"[translation] Pre-sub-only update for paragraph {idx}")
+            continue
 
         if not _should_skip(text):
             targets.append((idx, text))
@@ -350,9 +344,6 @@ async def translate_docx(
         )
 
     for (paragraph_idx, _original), translated_text in zip(targets, all_translations):
-        # Pack 15.4 DIAG
-        if paragraph_idx in diag_marker_indices:
-            log.warning(f"[DIAG p{paragraph_idx}] AFTER_LLM:  {translated_text[:300]!r}")
         _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
 
     out = io.BytesIO()

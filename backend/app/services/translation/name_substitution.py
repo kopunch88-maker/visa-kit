@@ -276,8 +276,7 @@ def build_substitution_dict(
     # но универсальные. В порядке как написаны (ИНН → NIF до КПП → KPP).
     final_pairs = deduped + LABEL_SUBSTITUTIONS
 
-    # Pack 15.3: WARNING чтобы было видно в Railway logs (INFO там не выводится)
-    log.warning(
+    log.info(
         f"[name_sub] Built {len(final_pairs)} substitutions for app {application.id} "
         f"({len(deduped)} dynamic + {len(LABEL_SUBSTITUTIONS)} labels): "
         f"top={[(ru[:30], lat[:30]) for ru, lat in deduped[:5]]}"
