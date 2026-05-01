@@ -36,7 +36,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from sqlmodel import Session, select
 
 from app.db.session import get_session, engine
-from app.models import Application, ApplicationStatus, Company
+from app.models import Application, ApplicationStatus, Company, Applicant
 from app.models.applicant_document import (
     ApplicantDocument,
     ApplicantDocumentType,
@@ -49,6 +49,7 @@ from app.services.ocr import (
     generate_declensions,
     OCRError,
 )
+from app.services.transliteration import transliterate_name
 
 from .dependencies import require_manager
 
@@ -552,6 +553,156 @@ def _find_company_by_inn(session: Session, inn: Optional[str]) -> Optional[Compa
 
 
 # ============================================================================
+# Pack 14b+c: Сборщик OCR данных для применения к Applicant
+# ============================================================================
+
+def _is_empty(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    return False
+
+
+def collect_ocr_data(documents: List["ApplicantDocument"]) -> dict:
+    """
+    Собирает данные из всех OCR_DONE документов с учётом приоритетов.
+
+    Приоритет источников (от высшего к низшему):
+    - PASSPORT_INTERNAL_MAIN  — приоритет для русских данных
+    - PASSPORT_FOREIGN         — приоритет для latin
+    - PASSPORT_NATIONAL        — приоритет для иностранцев
+    - PASSPORT_INTERNAL_ADDRESS — только адрес/прописка
+    - RESIDENCE_CARD           — fallback
+    - CRIMINAL_RECORD          — fallback
+    - DIPLOMA_MAIN             — только education
+
+    Поля заполняются из документа с наивысшим приоритетом, который их содержит.
+    """
+    priority = {
+        ApplicantDocumentType.PASSPORT_INTERNAL_MAIN: 1,
+        ApplicantDocumentType.PASSPORT_FOREIGN: 2,
+        ApplicantDocumentType.PASSPORT_NATIONAL: 3,
+        ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS: 4,
+        ApplicantDocumentType.RESIDENCE_CARD: 5,
+        ApplicantDocumentType.CRIMINAL_RECORD: 6,
+        ApplicantDocumentType.DIPLOMA_MAIN: 7,
+        ApplicantDocumentType.DIPLOMA_APOSTILLE: 99,
+        ApplicantDocumentType.EGRYL_EXTRACT: 99,
+        ApplicantDocumentType.OTHER: 99,
+    }
+    sorted_docs = sorted(documents, key=lambda d: priority.get(d.doc_type, 99))
+    result = {}
+
+    for doc in sorted_docs:
+        if doc.status != ApplicantDocumentStatus.OCR_DONE:
+            continue
+        p = doc.parsed_data or {}
+        if not p:
+            continue
+
+        if doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_MAIN:
+            for f in [
+                "last_name_native", "first_name_native", "middle_name_native",
+                "birth_date", "sex",
+            ]:
+                if f not in result and not _is_empty(p.get(f)):
+                    result[f] = p[f]
+            if "nationality" not in result:
+                result["nationality"] = "RUS"
+            if "home_country" not in result:
+                result["home_country"] = "RUS"
+
+        elif doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS:
+            if "home_address" not in result and not _is_empty(p.get("registration_address")):
+                result["home_address"] = p["registration_address"]
+
+        elif doc.doc_type == ApplicantDocumentType.PASSPORT_FOREIGN:
+            for src_field, dst_field in [
+                ("last_name_latin", "last_name_latin"),
+                ("first_name_latin", "first_name_latin"),
+                ("birth_place_latin", "birth_place_latin"),
+                ("passport_number", "passport_number"),
+                ("passport_issue_date", "passport_issue_date"),
+                ("passport_issuer", "passport_issuer"),
+                ("nationality", "nationality"),
+                ("last_name_native", "last_name_native"),
+                ("first_name_native", "first_name_native"),
+                ("birth_date", "birth_date"),
+                ("sex", "sex"),
+            ]:
+                if dst_field not in result and not _is_empty(p.get(src_field)):
+                    result[dst_field] = p[src_field]
+
+        elif doc.doc_type == ApplicantDocumentType.PASSPORT_NATIONAL:
+            for src_field, dst_field in [
+                ("last_name_latin", "last_name_latin"),
+                ("first_name_latin", "first_name_latin"),
+                ("last_name_native", "last_name_native"),
+                ("first_name_native", "first_name_native"),
+                ("birth_date", "birth_date"),
+                ("birth_place", "birth_place_latin"),
+                ("sex", "sex"),
+                ("nationality", "nationality"),
+                ("passport_number", "passport_number"),
+                ("passport_issue_date", "passport_issue_date"),
+                ("passport_issuer", "passport_issuer"),
+            ]:
+                if dst_field not in result and not _is_empty(p.get(src_field)):
+                    result[dst_field] = p[src_field]
+            if "home_country" not in result and not _is_empty(p.get("nationality")):
+                result["home_country"] = p["nationality"]
+
+        elif doc.doc_type == ApplicantDocumentType.RESIDENCE_CARD:
+            for src_field, dst_field in [
+                ("last_name_latin", "last_name_latin"),
+                ("first_name_latin", "first_name_latin"),
+                ("birth_date", "birth_date"),
+                ("sex", "sex"),
+                ("nationality", "nationality"),
+            ]:
+                if dst_field not in result and not _is_empty(p.get(src_field)):
+                    result[dst_field] = p[src_field]
+            # ВНЖ перебивает home_country (клиент живёт в стране ВНЖ)
+            if not _is_empty(p.get("residence_country")):
+                result["home_country"] = p["residence_country"]
+
+        elif doc.doc_type == ApplicantDocumentType.CRIMINAL_RECORD:
+            for src_field, dst_field in [
+                ("last_name_latin", "last_name_latin"),
+                ("first_name_latin", "first_name_latin"),
+                ("last_name_native", "last_name_native"),
+                ("first_name_native", "first_name_native"),
+                ("birth_date", "birth_date"),
+                ("nationality", "nationality"),
+            ]:
+                if dst_field not in result and not _is_empty(p.get(src_field)):
+                    result[dst_field] = p[src_field]
+
+    return result
+
+
+def build_education_from_diploma(documents: List["ApplicantDocument"]) -> Optional[dict]:
+    """Строит запись education из распознанного диплома."""
+    for doc in documents:
+        if (doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN
+                and doc.status == ApplicantDocumentStatus.OCR_DONE):
+            p = doc.parsed_data or {}
+            if not p:
+                continue
+            record = {
+                "institution": p.get("institution"),
+                "graduation_year": p.get("graduation_year"),
+                "degree": p.get("degree"),
+                "specialty": p.get("specialty"),
+            }
+            cleaned = {k: v for k, v in record.items() if not _is_empty(v)}
+            if cleaned:
+                return cleaned
+    return None
+
+
+# ============================================================================
 # Background OCR — запускается ПОСЛЕ возврата ответа клиенту
 # ============================================================================
 
@@ -617,15 +768,142 @@ async def _run_ocr_for_doc(doc_id: int):
         session.commit()
 
 
-async def _run_ocr_for_docs_batch(doc_ids: List[int]):
-    """Запускает OCR для всех документов последовательно."""
-    log.info(f"Background OCR batch starting: {len(doc_ids)} docs")
+async def _run_ocr_for_docs_batch(doc_ids: List[int], application_id: int):
+    """
+    Запускает OCR для всех документов последовательно.
+    После завершения OCR — автоматически применяет распознанные данные к Applicant
+    (создаёт нового или обновляет пустые поля существующего).
+    """
+    log.info(f"Background OCR batch starting: {len(doc_ids)} docs for app {application_id}")
     for doc_id in doc_ids:
         try:
             await _run_ocr_for_doc(doc_id)
         except Exception as e:
             log.error(f"Background OCR error for {doc_id}: {e}", exc_info=True)
     log.info(f"Background OCR batch finished: {len(doc_ids)} docs")
+
+    # === Pack 14b+c: автоприменение OCR данных к Applicant ===
+    try:
+        _auto_apply_ocr_to_applicant(application_id)
+    except Exception as e:
+        log.error(f"Auto-apply OCR to applicant failed for app {application_id}: {e}", exc_info=True)
+
+
+def _auto_apply_ocr_to_applicant(application_id: int):
+    """
+    Применяет OCR данные ко всем документам этой заявки → Applicant.
+
+    Логика:
+    - Собирает данные через collect_ocr_data() с приоритетами
+    - Если у Application нет applicant_id — создаёт нового Applicant
+    - Если есть — обновляет ТОЛЬКО ПУСТЫЕ поля (не перезаписывает то что менеджер уже заполнил)
+    - Авто-транслитерация *_native → *_latin (как в Pack 13.1.2)
+    - Education из диплома если есть
+    - Помечает все документы как applied_to_applicant=True
+    """
+    with Session(engine) as session:
+        application = session.get(Application, application_id)
+        if not application:
+            log.warning(f"Auto-apply: application {application_id} not found")
+            return
+
+        docs = session.exec(
+            select(ApplicantDocument)
+            .where(ApplicantDocument.application_id == application_id)
+            .where(ApplicantDocument.status == ApplicantDocumentStatus.OCR_DONE)
+        ).all()
+
+        if not docs:
+            log.info(f"Auto-apply: no OCR_DONE docs for app {application_id}, skip")
+            return
+
+        ocr_data = collect_ocr_data(docs)
+        if not ocr_data:
+            log.info(f"Auto-apply: collect_ocr_data returned empty for app {application_id}")
+            return
+
+        existing = None
+        if application.applicant_id:
+            existing = session.get(Applicant, application.applicant_id)
+
+        # Заполняем только пустые поля
+        update_data = {}
+        for field, value in ocr_data.items():
+            if _is_empty(value):
+                continue
+            current = getattr(existing, field, None) if existing else None
+            if _is_empty(current):
+                update_data[field] = value
+
+        # Авто-транслитерация native → latin (как в Pack 13.1.2)
+        NATIVE_TO_LATIN_PAIRS = [
+            ("last_name_native", "last_name_latin"),
+            ("first_name_native", "first_name_latin"),
+        ]
+        for native_field, latin_field in NATIVE_TO_LATIN_PAIRS:
+            native_will_change = native_field in update_data
+            latin_will_change = latin_field in update_data
+            if native_will_change and not latin_will_change:
+                new_native = update_data[native_field]
+                if not _is_empty(new_native):
+                    current_latin = getattr(existing, latin_field, None) if existing else None
+                    if _is_empty(current_latin):
+                        update_data[latin_field] = transliterate_name(new_native)
+
+        # Education
+        edu_record = build_education_from_diploma(docs)
+        if edu_record:
+            existing_edu = (existing.education if existing else []) or []
+            if not existing_edu:
+                update_data["education"] = [edu_record]
+
+        if not update_data:
+            log.info(f"Auto-apply: nothing to update for app {application_id}")
+            # Всё равно помечаем документы как applied
+            for d in docs:
+                d.applied_to_applicant = True
+                session.add(d)
+            session.commit()
+            return
+
+        log.info(
+            f"Auto-apply: updating applicant for app {application_id}: "
+            f"fields={list(update_data.keys())}"
+        )
+
+        if not application.applicant_id:
+            # Создаём нового Applicant
+            # Critical: last_name_native, first_name_native, last_name_latin, first_name_latin —
+            # обязательные. Подставляем placeholder если что-то пустое (чтобы NOT NULL constraint не упал).
+            for required in ("last_name_native", "first_name_native", "last_name_latin", "first_name_latin"):
+                if not update_data.get(required):
+                    update_data[required] = "—"
+
+            try:
+                applicant = Applicant(**update_data)
+            except Exception as e:
+                log.error(f"Auto-apply: cannot create Applicant: {e}", exc_info=True)
+                return
+
+            session.add(applicant)
+            session.flush()
+            session.refresh(applicant)
+            application.applicant_id = applicant.id
+            session.add(application)
+            log.info(f"Auto-apply: created new Applicant id={applicant.id} for app {application_id}")
+        else:
+            applicant = existing
+            for key, value in update_data.items():
+                setattr(applicant, key, value)
+            session.add(applicant)
+            log.info(f"Auto-apply: updated existing Applicant id={applicant.id}")
+
+        # Помечаем все документы как applied
+        for d in docs:
+            d.applied_to_applicant = True
+            session.add(d)
+
+        session.commit()
 
 
 # ============================================================================
@@ -781,7 +1059,7 @@ async def finalize_import(
     import_sessions.pop(session_id, None)
 
     # === OCR в фоне (после возврата ответа клиенту) ===
-    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids)
+    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids, application.id)
 
     return {
         "requires_company_creation": False,
@@ -926,7 +1204,7 @@ async def finalize_with_company(
     import_sessions.pop(session_id, None)
 
     # OCR в фоне
-    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids)
+    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids, application.id)
 
     return {
         "requires_company_creation": False,
@@ -1021,7 +1299,7 @@ async def finalize_skip_company(
     import_sessions.pop(session_id, None)
 
     # OCR в фоне
-    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids)
+    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids, application.id)
 
     log.info(f"Import (skip-company) finalized: app={application.id} docs={len(created_doc_ids)}")
 
