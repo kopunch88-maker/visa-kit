@@ -130,6 +130,7 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     parent = template_tr_xml.getparent()
     insert_position = list(parent).index(template_tr_xml)
 
+    last_row = None
     for idx, tx in enumerate(transactions):
         new_tr = deepcopy(template_tr_xml)
         _replace_markers_in_tr(new_tr, tx)
@@ -145,20 +146,20 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
                 _apply_gray_shading_to_row(new_tr)
 
         # Pack 16.5b: <w:cantSplit/> — запрет разрыва строки между страницами.
-        # Если строка не помещается на текущей странице, вся строка переносится
-        # на следующую (это стандартное поведение банковских выписок —
-        # они не разрывают одну операцию пополам).
         _set_cant_split(new_tr)
 
         parent.insert(insert_position + idx, new_tr)
+        last_row = new_tr
 
     # Удаляем оригинальную строку-образец
     parent.remove(template_tr_xml)
 
-    # Pack 16.5: НЕ убираем пустой параграф между таблицами — это нормальный
-    # отступ из оригинала (без него подпись прижата к подвалу). С удалением
-    # фиксированной trHeight у строки-образца, таблица операций стала компактнее,
-    # и подпись теперь помещается без принудительного убирания зазора.
+    # Pack 16.5c: keepNext на последнюю операцию + параграф между таблицами,
+    # чтобы подпись не оставалась одна на странице. Если последняя операция
+    # не помещается с подписью на 1-й странице — обе уйдут на 2-ю вместе.
+    if last_row is not None:
+        _set_keep_next_on_row(last_row)
+    _set_keep_next_on_paragraph_between_tables(doc)
 
     result_buffer = io.BytesIO()
     doc.save(result_buffer)
@@ -323,3 +324,50 @@ def _set_cant_split(tr_element):
     existing = trPr.find('w:cantSplit', NS)
     if existing is None:
         cant_split = etree.SubElement(trPr, f'{W_NS}cantSplit')
+
+
+def _set_keep_next_on_row(tr_element):
+    """
+    Pack 16.5c: добавляет <w:cantSplit/> и устанавливает на параграфы внутри ячеек
+    атрибут keepNext через pPr — чтобы строка «прилипла» к следующему контенту.
+
+    На уровне строки таблицы Word не понимает <w:keepNext/>. Чтобы строка
+    держалась с подписью, ставим keepNext на ВСЕ параграфы в ячейках строки —
+    это эквивалентный приём.
+    """
+    # На каждой ячейке строки — на каждом параграфе — добавляем <w:keepNext/>
+    cells = tr_element.findall('.//w:tc', NS)
+    for cell in cells:
+        for p in cell.findall('.//w:p', NS):
+            ppr = p.find('w:pPr', NS)
+            if ppr is None:
+                ppr = etree.Element(f'{W_NS}pPr')
+                p.insert(0, ppr)
+
+            if ppr.find('w:keepNext', NS) is None:
+                # keepNext должен идти в начале pPr (после pStyle)
+                keep_next = etree.SubElement(ppr, f'{W_NS}keepNext')
+
+
+def _set_keep_next_on_paragraph_between_tables(doc):
+    """
+    Pack 16.5c: ставит keepNext на все параграфы между Table 0 (операции)
+    и Table 1 (подпись), чтобы они не отрывались от подписи.
+    """
+    body = doc.element.body
+    children = list(body)
+
+    table_indexes = [i for i, c in enumerate(children) if etree.QName(c).localname == 'tbl']
+    if len(table_indexes) < 2:
+        return
+
+    for i in range(table_indexes[0] + 1, table_indexes[1]):
+        p = children[i]
+        if etree.QName(p).localname != 'p':
+            continue
+        ppr = p.find('w:pPr', NS)
+        if ppr is None:
+            ppr = etree.Element(f'{W_NS}pPr')
+            p.insert(0, ppr)
+        if ppr.find('w:keepNext', NS) is None:
+            etree.SubElement(ppr, f'{W_NS}keepNext')
