@@ -24,6 +24,9 @@ from .spain_address import (
 # Pack 16: Bank directory
 from .bank import Bank, BankCreate, BankUpdate, BankRead
 
+# Pack 17: Regions directory (for INN auto-generation)
+from .region import Region, RegionCreate, RegionUpdate, RegionRead
+
 # Application entities
 from .applicant import (
     Applicant, ApplicantCreate, ApplicantUpdate, ApplicantRead,
@@ -60,7 +63,7 @@ from .translation import (
     TranslationStatus,
 )
 
-
+from .region import Region, RegionCreate, RegionUpdate, RegionRead
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -71,6 +74,8 @@ __all__ = [
     "SpainAddress", "SpainAddressCreate", "SpainAddressUpdate", "SpainAddressRead",
     # Pack 16: Bank
     "Bank", "BankCreate", "BankUpdate", "BankRead",
+    # Pack 17: Region
+    "Region", "RegionCreate", "RegionUpdate", "RegionRead",
     # Application
     "Applicant", "ApplicantCreate", "ApplicantUpdate", "ApplicantRead",
     "EducationRecord", "WorkRecord",
@@ -91,4 +96,8 @@ __all__ = [
     "Translation",
     "TranslationKind",
     "TranslationStatus",
+    "Region", "RegionCreate", "RegionUpdate", "RegionRead",
 ]
+
+
+

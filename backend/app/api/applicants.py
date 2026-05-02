@@ -63,6 +63,10 @@ _PATCHABLE_FIELDS = {
     "nationality", "sex",
     "passport_number", "passport_issue_date", "passport_expiry_date", "passport_issuer",
     "inn",
+    # Pack 17 — INN auto-generation поля
+    "inn_registration_date",
+    "inn_source",
+    "inn_kladr_code",
     "home_address", "home_address_line1", "home_address_line2",
     "home_country",
     "email", "phone",
@@ -185,3 +189,6 @@ def transliterate(
         "first_name_native": first_ru,
         "warning": "Автоматический черновик транслитерации. Проверьте и поправьте если нужно.",
     }
+
+
+

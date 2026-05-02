@@ -32,6 +32,11 @@ export type ApplicantData = {
   passport_issue_date?: string;
   passport_issuer?: string;
   inn?: string;
+  // Pack 17 — INN auto-generation
+  inn_registration_date?: string | null;
+  inn_source?: string | null;
+  inn_kladr_code?: string | null;
+  // /Pack 17
   // Pack 16 — банк
   bank_id?: number | null;
   bank_account?: string | null;
@@ -1492,3 +1497,89 @@ export async function generateAccount(
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
+
+
+
+// ============================================================================
+// Pack 17 — Regions for INN auto-generation
+// ============================================================================
+//
+// Справочник регионов РФ для системы автогенерации ИНН самозанятого.
+// Используется в Pack 17.3 для UI настроек /admin/settings/regions
+// и в модале «Сгенерировать ИНН».
+
+export type RegionResponse = {
+  id: number;
+  kladr_code: string;        // 13 цифр, например "2300000700000" = Сочи
+  region_code: string;       // 2 цифры, например "23" = Краснодарский край
+  name: string;              // "Сочи"
+  name_full: string;         // "Краснодарский край, городской округ Сочи"
+  type: string;              // "city"
+  is_active: boolean;
+  diaspora_for_countries: string[];  // ["TUR", "AZE"]
+  notes: string | null;
+};
+
+/**
+ * Список регионов.
+ * @param isActive если true — только активные. По умолчанию все.
+ * @param country ISO-3 код страны. Если задан — фильтр по диаспоре.
+ *                Например country="TUR" вернёт только регионы где TUR в diaspora_for_countries.
+ */
+export async function listRegions(
+  isActive?: boolean,
+  country?: string,
+): Promise<RegionResponse[]> {
+  const params = new URLSearchParams();
+  if (isActive !== undefined) params.append("is_active", String(isActive));
+  if (country) params.append("country", country);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+
+  const res = await fetch(`${API_BASE_URL}/api/admin/regions${qs}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function getRegion(id: number): Promise<RegionResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function createRegion(
+  data: Partial<RegionResponse>,
+): Promise<RegionResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/regions`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function updateRegion(
+  id: number,
+  data: Partial<RegionResponse>,
+): Promise<RegionResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function deleteRegion(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+}
+

@@ -5,6 +5,7 @@
 Используем SQLAlchemy Inspector — работает и в SQLite, и в PostgreSQL.
 """
 
+import json
 import logging
 from sqlalchemy import text, inspect
 from app.db.session import engine
@@ -216,3 +217,160 @@ def apply_pack16_migration():
                 log.debug(f"[migration:pack16] Banks already exist ({count_result}), skipping seed")
         except Exception as e:
             log.warning(f"[migration:pack16] Seed failed: {e}")
+
+
+
+
+def apply_pack17_0_migration():
+    """
+    Pack 17.0: создание таблицы region + поля Applicant для авто-ИНН самозанятого.
+
+    1. Создаёт таблицу `region` (если её нет)
+    2. Добавляет в `applicant` поля:
+       - inn_registration_date (date)  — дата регистрации НПД
+       - inn_source (varchar(32))      — 'auto-generated' | 'manual'
+       - inn_kladr_code (varchar(13))  — KLADR региона из которого взят ИНН
+    3. Сидит 10 базовых регионов (Москва, СПб, Сочи, Краснодар, Ростов-на-Дону,
+       Махачкала, Грозный, Казань, Уфа, Нижний Новгород)
+
+    Идемпотентна.
+    """
+    with engine.begin() as conn:
+        # === 1. Таблица region ===
+        if not _table_exists(conn, "region"):
+            if _is_postgres():
+                conn.execute(text("""
+                    CREATE TABLE region (
+                        id SERIAL PRIMARY KEY,
+                        kladr_code VARCHAR(13) NOT NULL UNIQUE,
+                        region_code VARCHAR(2) NOT NULL,
+                        name VARCHAR(128) NOT NULL,
+                        name_full VARCHAR(256) NOT NULL,
+                        type VARCHAR(32) NOT NULL DEFAULT 'city',
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        diaspora_for_countries JSON NOT NULL DEFAULT '[]'::json,
+                        notes VARCHAR(512),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX ix_region_region_code ON region (region_code)"
+                ))
+            else:
+                conn.execute(text("""
+                    CREATE TABLE region (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        kladr_code VARCHAR(13) NOT NULL UNIQUE,
+                        region_code VARCHAR(2) NOT NULL,
+                        name VARCHAR(128) NOT NULL,
+                        name_full VARCHAR(256) NOT NULL,
+                        type VARCHAR(32) NOT NULL DEFAULT 'city',
+                        is_active BOOLEAN NOT NULL DEFAULT 1,
+                        diaspora_for_countries TEXT NOT NULL DEFAULT '[]',
+                        notes VARCHAR(512),
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX ix_region_region_code ON region (region_code)"
+                ))
+            log.info("[migration:pack17_0] Created table region")
+        else:
+            log.debug("[migration:pack17_0] Table region already exists")
+
+        # === 2. Поля в applicant ===
+        if not _column_exists(conn, "applicant", "inn_registration_date"):
+            conn.execute(text(
+                "ALTER TABLE applicant ADD COLUMN inn_registration_date DATE"
+            ))
+            log.info("[migration:pack17_0] Added applicant.inn_registration_date")
+
+        if not _column_exists(conn, "applicant", "inn_source"):
+            conn.execute(text(
+                "ALTER TABLE applicant ADD COLUMN inn_source VARCHAR(32)"
+            ))
+            log.info("[migration:pack17_0] Added applicant.inn_source")
+
+        if not _column_exists(conn, "applicant", "inn_kladr_code"):
+            conn.execute(text(
+                "ALTER TABLE applicant ADD COLUMN inn_kladr_code VARCHAR(13)"
+            ))
+            log.info("[migration:pack17_0] Added applicant.inn_kladr_code")
+
+        # === 3. Seed базовых регионов ===
+        try:
+            count_result = conn.execute(text("SELECT COUNT(*) FROM region")).scalar()
+            if count_result == 0:
+                _seed_pack17_regions(conn)
+                log.info("[migration:pack17_0] Seeded 10 base regions")
+            else:
+                log.debug(
+                    f"[migration:pack17_0] region table has {count_result} rows, skipping seed"
+                )
+        except Exception as e:
+            log.warning(f"[migration:pack17_0] Seed failed: {e}")
+
+
+def _seed_pack17_regions(conn):
+    """
+    Базовые 10 регионов для старта. Менеджер дополнит через UI.
+
+    KLADR коды проверены через https://kladr-rf.ru/.
+    Диаспоры — на основе общеизвестных миграционных потоков:
+    - Сочи: TUR, AZE
+    - Краснодар: ARM, AZE, TUR
+    - Ростов-на-Дону: ARM, GEO
+    - Махачкала, Грозный: AZE
+    - Казань, Уфа: TUR (тюркская связь)
+    - Москва, СПб, Нижний Новгород: универсальные (пустой список)
+    """
+    regions = [
+        # KLADR,           code, name,           name_full,                                              type,    diaspora
+        ("7700000000000", "77", "Москва",          "г. Москва",                                                  "city", []),
+        ("7800000000000", "78", "Санкт-Петербург", "г. Санкт-Петербург",                                        "city", []),
+        ("2300000700000", "23", "Сочи",            "Краснодарский край, городской округ Сочи",                  "city", ["TUR", "AZE"]),
+        ("2300000100000", "23", "Краснодар",       "Краснодарский край, городской округ Краснодар",             "city", ["ARM", "AZE", "TUR"]),
+        ("6100000100000", "61", "Ростов-на-Дону",  "Ростовская область, городской округ Ростов-на-Дону",        "city", ["ARM", "GEO"]),
+        ("0500000100000", "05", "Махачкала",       "Республика Дагестан, городской округ Махачкала",            "city", ["AZE"]),
+        ("2000000100000", "20", "Грозный",         "Чеченская Республика, городской округ Грозный",             "city", ["AZE"]),
+        ("1600000100000", "16", "Казань",          "Республика Татарстан, городской округ Казань",              "city", ["TUR"]),
+        ("0200000100000", "02", "Уфа",             "Республика Башкортостан, городской округ Уфа",              "city", ["TUR"]),
+        ("5200000100000", "52", "Нижний Новгород", "Нижегородская область, городской округ Нижний Новгород",    "city", []),
+    ]
+
+    from datetime import datetime
+    now = datetime.utcnow()
+
+    for kladr, region_code, name, name_full, type_, diaspora in regions:
+        diaspora_json = json.dumps(diaspora)
+        if _is_postgres():
+            sql = text("""
+                INSERT INTO region
+                    (kladr_code, region_code, name, name_full, type,
+                     is_active, diaspora_for_countries, created_at, updated_at)
+                VALUES
+                    (:kladr_code, :region_code, :name, :name_full, :type,
+                     TRUE, CAST(:diaspora AS JSON), :created, :updated)
+                ON CONFLICT (kladr_code) DO NOTHING
+            """)
+        else:
+            sql = text("""
+                INSERT OR IGNORE INTO region
+                    (kladr_code, region_code, name, name_full, type,
+                     is_active, diaspora_for_countries, created_at, updated_at)
+                VALUES
+                    (:kladr_code, :region_code, :name, :name_full, :type,
+                     1, :diaspora, :created, :updated)
+            """)
+        conn.execute(sql, {
+            "kladr_code": kladr,
+            "region_code": region_code,
+            "name": name,
+            "name_full": name_full,
+            "type": type_,
+            "diaspora": diaspora_json,
+            "created": now,
+            "updated": now,
+        })

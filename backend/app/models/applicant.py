@@ -80,6 +80,23 @@ class Applicant(TimestampMixin, table=True):
 
     inn: Optional[str] = Field(default=None, max_length=12)
 
+    # Pack 17: автогенерация ИНН самозанятого через rmsp-pp.nalog.ru
+    inn_registration_date: Optional[date] = Field(
+        default=None,
+        description="Дата регистрации ИНН как самозанятого (НПД). "
+                    "Берётся через NPD API при автогенерации либо вручную.",
+    )
+    inn_source: Optional[str] = Field(
+        default=None, max_length=32,
+        description="'auto-generated' если ИНН подобран через rmsp-pp, "
+                    "'manual' если введён руками. Используется для аудита.",
+    )
+    inn_kladr_code: Optional[str] = Field(
+        default=None, max_length=13,
+        description="13-значный KLADR код региона из которого взят ИНН. "
+                    "Используется для отслеживания распределения по регионам.",
+    )
+
     # === Personal banking ===
     # Pack 16: bank_id — FK на справочник банков (новый способ).
     # Старые поля bank_name/bic/correspondent_account остаются для обратной
@@ -179,6 +196,10 @@ class ApplicantCreate(SQLModel):
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
     inn: Optional[str] = None
+    # Pack 17: INN auto-generation
+    inn_registration_date: Optional[date] = None
+    inn_source: Optional[str] = None
+    inn_kladr_code: Optional[str] = None
     # Pack 16: banking
     bank_id: Optional[int] = None
     bank_account: Optional[str] = None
@@ -218,6 +239,10 @@ class ApplicantUpdate(SQLModel):
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
     inn: Optional[str] = None
+    # Pack 17: INN auto-generation
+    inn_registration_date: Optional[date] = None
+    inn_source: Optional[str] = None
+    inn_kladr_code: Optional[str] = None
     # Pack 16: banking
     bank_id: Optional[int] = None
     bank_account: Optional[str] = None
@@ -231,3 +256,6 @@ class ApplicantUpdate(SQLModel):
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None
+
+
+

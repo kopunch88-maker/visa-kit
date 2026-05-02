@@ -17,6 +17,7 @@ from app.db.migrations import (
     apply_pack15_migration,
     apply_pack15_1_migration,
     apply_pack16_migration,
+    apply_pack17_0_migration,
 )
 
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
     apply_pack15_migration()
     apply_pack15_1_migration()
     apply_pack16_migration()  # Bank table + applicant.bank_id (Pack 16)
+    apply_pack17_0_migration()  # Region table + applicant.inn_* fields (Pack 17.0)
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,7 @@ from app.api import (  # noqa: E402
     bank_transactions,
     translations,
     banks,
+    regions,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -87,6 +90,7 @@ app.include_router(import_package.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
 app.include_router(translations.router, prefix="/api")
 app.include_router(banks.router, prefix="/api")
+app.include_router(regions.router, prefix="/api")
 
 
 @app.get("/", tags=["meta"])
@@ -102,3 +106,6 @@ def root():
 def health():
     return {"status": "ok"}
 # Force rebuild after storage fix
+
+
+
