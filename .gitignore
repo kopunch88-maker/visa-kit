@@ -76,3 +76,4 @@ visa_kit_pack*/
 # Опционально: расскомментируйте если хотите коммитить только рабочие шаблоны
 # templates/pdf/_*
 # templates/docx/_*
+.env.local

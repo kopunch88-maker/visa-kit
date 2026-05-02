@@ -355,6 +355,10 @@ def _parse_and_import_directory(session: Session, extract_dir: Path, stats: Impo
     used_inns = _load_used_inns(session)
     log.info(f"[importer] Skipping {len(used_inns)} already-used INNs from import")
 
+    import time
+    started_at = time.time()
+    last_progress_at = started_at
+
     batch: list[ParsedRecord] = []
     for xml_path in xml_files:
         log.info(f"[importer] Processing {xml_path.name} ({xml_path.stat().st_size / 1e6:.1f} MB)")
@@ -368,7 +372,25 @@ def _parse_and_import_directory(session: Session, extract_dir: Path, stats: Impo
                 _insert_batch(session, batch)
                 stats.records_imported += len(batch)
                 batch.clear()
+
+                # Прогресс-лог каждые 30 секунд
+                now = time.time()
+                if now - last_progress_at >= 30:
+                    elapsed = now - started_at
+                    rate = stats.records_total / elapsed if elapsed > 0 else 0
+                    log.info(
+                        f"[importer] Progress: total={stats.records_total:,}, "
+                        f"imported={stats.records_imported:,}, "
+                        f"skipped={stats.records_skipped:,}, "
+                        f"rate={rate:.0f} rec/sec, "
+                        f"elapsed={elapsed/60:.1f} min"
+                    )
+                    last_progress_at = now
         stats.xml_files_processed += 1
+        log.info(
+            f"[importer] Finished {xml_path.name}: "
+            f"total={stats.records_total:,}, imported={stats.records_imported:,}"
+        )
 
     # Флашим хвост
     if batch:
