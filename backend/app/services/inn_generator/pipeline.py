@@ -1,30 +1,33 @@
 """
-Pack 17.2.1 — pipeline автогенерации ИНН с консервативной нагрузкой на ФНС.
+Pack 17.2.4 — pipeline автогенерации ИНН на основе ЛОКАЛЬНОЙ БД самозанятых.
 
-ИЗМЕНЕНИЯ vs 17.2:
-- max_pages по умолчанию = 1 (было 5)
-- page_size = 100 (одной страницы достаточно — 100 кандидатов хватит после фильтра used_inns)
-- Если первый запрос упал ConnectError — пробуем 1 раз через 5 секунд
-- В случае всех проблем возвращаем подробную диагностику
+ИЗМЕНЕНИЯ vs 17.2.3:
+- НЕ ходим в rmsp-pp.nalog.ru (он постоянно режет соединения с Railway)
+- Источник ИНН: таблица self_employed_registry (импортируется из дампа ФНС
+  раз в месяц через services/inn_generator/dump_importer.py)
+- Поиск SQL-запросом, мгновенно
+- Опциональный фильтр по region_code (по умолчанию ВЫКЛЮЧЕН — берём любого
+  активного, потому что в реестре всё равно ~27k+ записей; адрес генерируем
+  под регион клиента отдельно)
 
-Логика прежняя: regions → rmsp → фильтр used_inns → выбор «старого» ИНН →
-адрес (существующий или сгенерированный) → дата НПД из RMSP.
+Логика выбора региона (для адреса) прежняя:
+  home_address → contract_sign_city → company → диаспоры → Москва
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models import Applicant, Application, Company
+from app.models.self_employed_registry import SelfEmployedRegistry
 
-from .rmsp_client import RmspClient, RmspError, RmspCandidate
 from .kladr_address_gen import generate_address, GeneratedAddress, is_known_region
 from .region_picker import pick_region, RegionPickResult
 
@@ -35,8 +38,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class InnSuggestion:
     inn: str
-    full_name_rmsp: str
-    region_code: str
+    full_name_rmsp: Optional[str]
+    region_code: Optional[str]
 
     home_address: str
     address_was_generated: bool
@@ -50,29 +53,33 @@ class InnSuggestion:
     region_pick_source: str
     region_pick_explanation: str
 
-    rmsp_raw: dict
+    rmsp_raw: dict  # для совместимости со старым API; теперь содержит данные из БД
 
 
 class InnPipelineError(Exception):
     pass
 
 
-async def suggest_inn_for_applicant(
+def suggest_inn_for_applicant(
     session: Session,
     applicant: Applicant,
     application: Optional[Application] = None,
     company: Optional[Company] = None,
     *,
-    rmsp_max_pages: int = 1,           # 17.2.1: было 5 — снижено для меньшей нагрузки на ФНС
-    rmsp_page_size: int = 100,
-    skip_used_inns: bool = True,
+    filter_by_region: bool = False,
     rng: Optional[random.Random] = None,
 ) -> InnSuggestion:
     """
     Главная функция: подбирает ИНН + адрес + дату для заявителя.
 
-    17.2.1: уменьшена нагрузка на ФНС (1 страница вместо 5)
-    + retry на сетевых ошибках.
+    Pack 17.2.4: ИНН берётся из локальной БД (self_employed_registry),
+    которая раз в месяц обновляется из дампа ФНС.
+
+    Args:
+        filter_by_region: если True, ищет ИНН только из выбранного региона
+                         (region_code = первые 2 цифры KLADR). По умолчанию
+                         False — берём любого, и в этом нет рисков
+                         (адрес всё равно генерируем под регион клиента).
     """
     if rng is None:
         rng = random.Random()
@@ -91,49 +98,33 @@ async def suggest_inn_for_applicant(
         f"(source={region_result.source}, kladr={region_result.region.kladr_code})"
     )
 
-    # === Шаг 2: Запрос RMSP с retry ===
-    candidates = await _fetch_rmsp_candidates_with_retry(
-        kladr_code=region_result.region.kladr_code,
-        max_pages=rmsp_max_pages,
-        page_size=rmsp_page_size,
+    # === Шаг 2: Выбор кандидата из локальной БД ===
+    candidate = _pick_candidate_from_db(
+        session=session,
+        target_region_code=region_result.region.kladr_code[:2] if filter_by_region else None,
+        rng=rng,
     )
 
-    if not candidates:
-        raise InnPipelineError(
-            "RMSP не вернул ни одного активного самозанятого. "
-            "Возможно ФНС временно ограничивает запросы."
-        )
-
-    # === Шаг 3: Фильтр уже использованных ИНН ===
-    if skip_used_inns:
-        used_inns = _get_used_inns(session)
-        before = len(candidates)
-        candidates = [c for c in candidates if c.inn not in used_inns]
-
-        if not candidates:
+    if candidate is None:
+        if filter_by_region:
             raise InnPipelineError(
-                f"Все {before} полученных ИНН уже использованы в БД "
-                f"({len(used_inns)} зарезервированных). "
-                f"Подождите минуту и попробуйте ещё раз — "
-                f"тогда ФНС вернёт другую выборку."
+                f"В локальной БД нет свободных самозанятых из региона "
+                f"{region_result.region.kladr_code[:2]} ({region_result.region.name}). "
+                f"Попробуй без фильтра по региону или обнови реестр."
+            )
+        else:
+            raise InnPipelineError(
+                "В локальной БД нет свободных самозанятых. "
+                "Возможно нужно импортировать дамп ФНС: "
+                "POST /api/admin/registry/import-self-employed"
             )
 
-        log.info(
-            f"[pipeline] After skip_used_inns: {len(candidates)} candidates "
-            f"(filtered out {before - len(candidates)} used)"
-        )
-
-    # === Шаг 4: Выбор кандидата ===
-    # Берём «старого» — сортируем по ИНН (старые ИНН выданы раньше)
-    candidates_sorted = sorted(candidates, key=lambda c: c.inn)
-    chosen = candidates_sorted[0]
-
     log.info(
-        f"[pipeline] Chosen: {chosen.inn} {chosen.full_name} "
-        f"(region {chosen.region_code}, npd_start≈{chosen.estimated_npd_start})"
+        f"[pipeline] Chosen: {candidate.inn} {candidate.full_name} "
+        f"(region {candidate.region_code}, support_begin={candidate.support_begin_date})"
     )
 
-    # === Шаг 5: Адрес ===
+    # === Шаг 3: Адрес ===
     home_address: str
     address_was_generated: bool
 
@@ -156,106 +147,112 @@ async def suggest_inn_for_applicant(
         address_was_generated = True
         log.info(f"[pipeline] Generated address: {home_address}")
 
-    # === Шаг 6: Дата начала НПД ===
-    estimated_npd_start, estimated_raw = _parse_npd_start_date(chosen)
+    # === Шаг 4: Дата начала НПД ===
+    # Берём support_begin_date из реестра как нижнюю границу даты регистрации НПД.
+    # Это разумная аппроксимация: если человек получил поддержку как самозанятый
+    # на эту дату — значит он точно был самозанятым уже на этот момент.
+    estimated_npd_start = candidate.support_begin_date
+    estimated_npd_raw = (
+        candidate.support_begin_date.isoformat()
+        if candidate.support_begin_date
+        else None
+    )
 
     return InnSuggestion(
-        inn=chosen.inn,
-        full_name_rmsp=chosen.full_name,
-        region_code=chosen.region_code,
+        inn=candidate.inn,
+        full_name_rmsp=candidate.full_name,
+        region_code=candidate.region_code,
         home_address=home_address,
         address_was_generated=address_was_generated,
         estimated_npd_start=estimated_npd_start,
-        estimated_npd_start_raw=estimated_raw,
+        estimated_npd_start_raw=estimated_npd_raw,
         target_kladr_code=region_result.region.kladr_code,
         target_region_name=region_result.region.name,
         region_pick_source=region_result.source,
         region_pick_explanation=region_result.explanation,
-        rmsp_raw=chosen.raw,
+        rmsp_raw={
+            "source": "local_db",
+            "registry_create_date": (
+                candidate.registry_create_date.isoformat()
+                if candidate.registry_create_date
+                else None
+            ),
+            "imported_at": (
+                candidate.imported_at.isoformat()
+                if candidate.imported_at
+                else None
+            ),
+        },
     )
 
 
-async def _fetch_rmsp_candidates_with_retry(
-    kladr_code: str,
-    max_pages: int,
-    page_size: int,
-    max_retries: int = 2,
-    initial_delay: float = 5.0,
-) -> List[RmspCandidate]:
+def mark_inn_as_used(
+    session: Session,
+    inn: str,
+    applicant_id: int,
+) -> None:
     """
-    Запрашивает RMSP с retry при сетевых ошибках.
-
-    17.2.1: при ConnectError/Timeout ждём initial_delay секунд (увеличиваем
-    в 2 раза с каждой попыткой) и повторяем. До max_retries попыток.
-
-    Это нужно потому что у ФНС агрессивный burst-rate-limit:
-    несколько запросов подряд за секунды → connection reset на 1-5 минут.
+    Помечает ИНН в self_employed_registry как использованный.
+    Вызывается из endpoint /inn-accept после того, как менеджер принял ИНН.
     """
-    last_error: Optional[Exception] = None
-    delay = initial_delay
-
-    for attempt in range(max_retries + 1):
-        try:
-            async with RmspClient() as client:
-                if max_pages <= 1:
-                    # Один запрос — самое щадящее для ФНС
-                    return await client.search_self_employed(
-                        kladr_code=kladr_code,
-                        page=1,
-                        page_size=page_size,
-                        strict_region_filter=False,
-                    )
-                else:
-                    return await client.search_multiple_pages(
-                        kladr_code=kladr_code,
-                        max_candidates=page_size,
-                        page_size=page_size,
-                        max_pages=max_pages,
-                        strict_region_filter=False,
-                        delay_between_pages=3.0,  # увеличено для безопасности
-                    )
-        except RmspError as e:
-            last_error = e
-            error_str = str(e) or "(empty)"
-            log.warning(
-                f"[pipeline] RMSP error attempt {attempt+1}/{max_retries+1}: {error_str}"
-            )
-
-            if attempt < max_retries:
-                log.info(f"[pipeline] Waiting {delay:.0f}s before retry...")
-                await asyncio.sleep(delay)
-                delay *= 2  # exponential backoff
-
-    raise InnPipelineError(
-        f"RMSP недоступен после {max_retries + 1} попыток. "
-        f"Последняя ошибка: {last_error}. "
-        f"ФНС возможно временно ограничивает запросы — попробуй через 5-10 минут."
+    now = datetime.utcnow()
+    result = session.execute(
+        text("""
+            UPDATE self_employed_registry
+            SET is_used = TRUE, used_by_applicant_id = :aid, used_at = :now
+            WHERE inn = :inn AND is_used = FALSE
+        """),
+        {"inn": inn, "aid": applicant_id, "now": now},
     )
+    if (result.rowcount or 0) == 0:
+        log.warning(
+            f"[pipeline] mark_inn_as_used: INN {inn} not found "
+            f"in self_employed_registry or already used"
+        )
+    session.commit()
 
 
-def _get_used_inns(session: Session) -> set[str]:
-    """Множество ИНН в applicant.inn (исключаем повторное использование)."""
-    statement = select(Applicant.inn).where(Applicant.inn != None)  # noqa: E711
-    rows = session.exec(statement).all()
-    return {inn for inn in rows if inn}
+# ---------------------------------------------------------------------------
+# Внутренние функции
+# ---------------------------------------------------------------------------
 
-
-def _parse_npd_start_date(
-    candidate: RmspCandidate,
-) -> tuple[Optional[date], Optional[str]]:
+def _pick_candidate_from_db(
+    session: Session,
+    target_region_code: Optional[str],
+    rng: random.Random,
+) -> Optional[SelfEmployedRegistry]:
     """
-    Парсит самую раннюю из дат RMSP в `date`.
-    RMSP даёт даты в формате "DD.MM.YYYY HH:MM:SS".
+    Выбирает случайного неиспользованного самозанятого из БД.
+
+    Стратегия: SQL ORDER BY RANDOM() LIMIT 1.
+    Это медленно на больших таблицах, но у нас ~27k строк — не проблема.
+
+    Если задан target_region_code — фильтр по нему.
+    Если кандидатов нет — возвращает None.
     """
-    raw = candidate.estimated_npd_start
-    if not raw:
-        return None, None
+    stmt = select(SelfEmployedRegistry).where(
+        SelfEmployedRegistry.is_used == False  # noqa: E712
+    )
+    if target_region_code:
+        stmt = stmt.where(SelfEmployedRegistry.region_code == target_region_code)
 
-    date_part = raw.split(" ", 1)[0].strip()
+    # Postgres-специфичный ORDER BY RANDOM() — для SQLite тот же синтаксис работает
+    stmt = stmt.order_by(text("RANDOM()")).limit(1)
 
-    try:
-        d, m, y = date_part.split(".")
-        return date(int(y), int(m), int(d)), raw
-    except (ValueError, AttributeError) as e:
-        log.warning(f"[pipeline] Bad date format from RMSP: {raw!r}, error: {e}")
-        return None, raw
+    return session.exec(stmt).first()
+
+
+def get_registry_stats(session: Session) -> dict:
+    """Статистика для админ-эндпоинта."""
+    total_q = session.execute(
+        text("SELECT COUNT(*) FROM self_employed_registry")
+    ).scalar() or 0
+    used_q = session.execute(
+        text("SELECT COUNT(*) FROM self_employed_registry WHERE is_used = TRUE")
+    ).scalar() or 0
+    available = total_q - used_q
+    return {
+        "total_records": total_q,
+        "available_records": available,
+        "used_records": used_q,
+    }

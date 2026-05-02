@@ -1,3 +1,4 @@
+
 """
 Миграции БД — добавление полей и таблиц после первоначального schema.
 
@@ -374,3 +375,66 @@ def _seed_pack17_regions(conn):
             "created": now,
             "updated": now,
         })
+
+
+
+def apply_pack17_2_4_migration():
+    """
+    Pack 17.2.4: создание таблиц self_employed_registry и registry_import_log
+    для локальной БД самозанятых из открытого дампа ФНС.
+
+    1. Таблица self_employed_registry:
+       - PK = inn (varchar(12))
+       - Индексы по region_code, is_used, imported_at
+    2. Таблица registry_import_log — история импортов
+
+    Идемпотентна. Таблицы создаются через SQLModel.metadata.create_all() в init_db(),
+    эта миграция только добавляет недостающие индексы и проверяет наличие таблиц.
+    """
+    with engine.begin() as conn:
+        # === self_employed_registry ===
+        if not _table_exists(conn, "self_employed_registry"):
+            log.info(
+                "[migration:pack17_2_4] Table self_employed_registry not found — "
+                "expected to be created by SQLModel.metadata.create_all() in init_db()"
+            )
+            # Таблицы создаст init_db через SQLModel — на следующем запуске будем здесь
+            return
+
+        # Индексы (CREATE INDEX IF NOT EXISTS работает и в Postgres, и в SQLite)
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_self_employed_registry_region_code "
+                "ON self_employed_registry (region_code)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_self_employed_registry_is_used "
+                "ON self_employed_registry (is_used)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_self_employed_registry_imported_at "
+                "ON self_employed_registry (imported_at)"
+            ))
+            # Композитный индекс — для запроса WHERE is_used=FALSE ORDER BY RANDOM()
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_self_employed_registry_unused "
+                "ON self_employed_registry (is_used) WHERE is_used = FALSE"
+            )) if _is_postgres() else None
+            log.info("[migration:pack17_2_4] Indexes verified on self_employed_registry")
+        except Exception as e:
+            log.warning(f"[migration:pack17_2_4] Index creation failed: {e}")
+
+        # === registry_import_log ===
+        if _table_exists(conn, "registry_import_log"):
+            try:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_registry_import_log_started_at "
+                    "ON registry_import_log (started_at)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_registry_import_log_status "
+                    "ON registry_import_log (status)"
+                ))
+                log.info("[migration:pack17_2_4] Indexes verified on registry_import_log")
+            except Exception as e:
+                log.warning(f"[migration:pack17_2_4] registry_import_log index creation failed: {e}")

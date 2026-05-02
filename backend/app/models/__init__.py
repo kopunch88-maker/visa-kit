@@ -27,6 +27,15 @@ from .bank import Bank, BankCreate, BankUpdate, BankRead
 # Pack 17: Regions directory (for INN auto-generation)
 from .region import Region, RegionCreate, RegionUpdate, RegionRead
 
+# Pack 17.2.4: Self-employed registry (local DB built from FNS open data dump)
+from .self_employed_registry import (
+    SelfEmployedRegistry,
+    RegistryImportLog,
+    SelfEmployedRegistryStats,
+    RegistryImportLogRead,
+    StartImportRequest,
+)
+
 # Application entities
 from .applicant import (
     Applicant, ApplicantCreate, ApplicantUpdate, ApplicantRead,
@@ -63,7 +72,6 @@ from .translation import (
     TranslationStatus,
 )
 
-from .region import Region, RegionCreate, RegionUpdate, RegionRead
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -76,6 +84,12 @@ __all__ = [
     "Bank", "BankCreate", "BankUpdate", "BankRead",
     # Pack 17: Region
     "Region", "RegionCreate", "RegionUpdate", "RegionRead",
+    # Pack 17.2.4: Self-employed registry
+    "SelfEmployedRegistry",
+    "RegistryImportLog",
+    "SelfEmployedRegistryStats",
+    "RegistryImportLogRead",
+    "StartImportRequest",
     # Application
     "Applicant", "ApplicantCreate", "ApplicantUpdate", "ApplicantRead",
     "EducationRecord", "WorkRecord",
@@ -96,8 +110,4 @@ __all__ = [
     "Translation",
     "TranslationKind",
     "TranslationStatus",
-    "Region", "RegionCreate", "RegionUpdate", "RegionRead",
 ]
-
-
-
