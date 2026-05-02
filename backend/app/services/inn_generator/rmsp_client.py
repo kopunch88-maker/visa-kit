@@ -1,26 +1,28 @@
 """
-Pack 17.1 — HTTP клиент к публичному реестру МСП ФНС
+Pack 17.1.1 — HTTP клиент к публичному реестру МСП ФНС
 (rmsp-pp.nalog.ru = Реестр Получателей Поддержки).
 
-Несмотря на название «получателей поддержки», это ОЧЕНЬ полная база:
-~27 тысяч самозанятых получали хотя бы одну консультацию через ЦП «Малый бизнес»
-поэтому попадают в реестр. Это даёт нам широкий выбор по регионам.
+ИЗМЕНЕНИЯ ОТНОСИТЕЛЬНО Pack 17.1:
+- KLADR теперь передаётся явно в URL POST `/search-proc.json` (?kladr=...&sk=SZ...)
+  и в form body, и в Referer — для гарантии что фильтр применится.
+- Добавлен post-filter по region_code из 2 первых цифр KLADR — на случай если
+  ФНС всё равно вернёт записи из других регионов.
+- Возвращаются даты dt_create/dt_support_begin/dt_support_period — из них берём
+  «приближённую дату начала статуса НПД» (т.к. публичный NPD API не отдаёт точную).
 
 Алгоритм работы:
 1. GET https://rmsp-pp.nalog.ru/search.html?sk=SZ&kladr={KLADR}
-   → получаем JSESSIONID + сервер кэширует фильтр (sk, kladr) в сессии
+   → JSESSIONID + сервер регистрирует session
 
-2. POST https://rmsp-pp.nalog.ru/search-proc.json?m=Support
-   form-data: page, pageSize, query, sc, sk, rp, _v
-   → возвращает JSON со списком субъектов отфильтрованных по сессии
+2. POST https://rmsp-pp.nalog.ru/search-proc.json?m=Support&sk=SZ&kladr={KLADR}
+   form-data: page, pageSize, query, sc, sk, rp, _v, kladr
+   → возвращает JSON с самозанятыми
+
+3. Post-filter: оставляем только записи где subject_region == kladr[:2]
 
 ВАЖНО:
 - Captcha нет (подтверждено пользователем на 02.05.2026)
-- Без явных rate limits, но не злоупотребляем (1 запрос за раз достаточно)
-- Один человек может встречаться много раз (получал разные виды поддержки),
-  поэтому ДЕДУПЛИЦИРУЕМ по subject_inn
-
-ЗАВИСИМОСТИ: httpx (асинхронный HTTP клиент, уже в проекте для других сервисов)
+- Один человек встречается много раз — ДЕДУПЛИЦИРУЕМ по subject_inn
 """
 
 from __future__ import annotations
@@ -35,25 +37,20 @@ import httpx
 log = logging.getLogger(__name__)
 
 
-# Константы для запросов
 RMSP_BASE_URL = "https://rmsp-pp.nalog.ru"
 RMSP_SEARCH_HTML = f"{RMSP_BASE_URL}/search.html"
 RMSP_SEARCH_PROC = f"{RMSP_BASE_URL}/search-proc.json"
 
-# Реалистичный User-Agent — иначе налоговая может вернуть 403
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/147.0.0.0 Safari/537.36"
 )
 
-# Стандартные timeouts
 HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 class RmspError(Exception):
-    """Ошибка работы с rmsp-pp.nalog.ru."""
-
     pass
 
 
@@ -61,30 +58,23 @@ class RmspError(Exception):
 class RmspCandidate:
     """
     Один кандидат-самозанятый из реестра.
-
-    Поля соответствуют структуре ответа rmsp-pp `data[i]`:
-    https://rmsp-pp.nalog.ru/search-proc.json
     """
-    inn: str                          # subject_inn — 12 цифр
-    full_name: str                    # subject_name — "ФАМИЛИЯ ИМЯ ОТЧЕСТВО"
-    nptype: str                       # subject_nptype: "SZ"=самозанятый, "IP"=ИП
-    category: int                     # subject_category: 4=самозанятый
-    region_code: str                  # subject_region: "23"=Краснодарский край
-    ogrn: Optional[str] = None        # subject_ogrn: у самозанятых должен быть None
+    inn: str
+    full_name: str
+    nptype: str
+    category: int
+    region_code: str
+    ogrn: Optional[str] = None
 
-    # Сырые данные ответа (для отладки и расширения)
+    # Pack 17.1.1: даты из RMSP — для оценки даты начала НПД
+    dt_create: Optional[str] = None
+    dt_support_begin: Optional[str] = None
+    dt_support_period: Optional[str] = None
+
     raw: dict = field(default_factory=dict)
 
     @property
     def is_self_employed(self) -> bool:
-        """
-        True если это «настоящий» самозанятый:
-        - тип SZ (а не IP)
-        - категория 4 (физлицо-самозанятый)
-        - нет ОГРН (это ИП-маркер)
-
-        Иногда в реестре есть бывшие ИП у которых ОГРН остался — отсеиваем.
-        """
         return (
             self.nptype == "SZ"
             and self.category == 4
@@ -93,15 +83,24 @@ class RmspCandidate:
 
     @property
     def parts(self) -> tuple[str, str, str]:
-        """
-        Разбивает full_name "АКБАШ ИВАННА ИВАНОВНА" → (last, first, middle).
-        Если средне имя нет — третий элемент пустой.
-        """
         words = self.full_name.split()
         last = words[0] if len(words) > 0 else ""
         first = words[1] if len(words) > 1 else ""
         middle = words[2] if len(words) > 2 else ""
         return last, first, middle
+
+    @property
+    def estimated_npd_start(self) -> Optional[str]:
+        """
+        Приближённая дата начала статуса НПД — самая ранняя из доступных дат RMSP
+        (формат "DD.MM.YYYY"). Это нижняя граница: «человек ТОЧНО был самозанятым
+        на эту дату». Реальная дата регистрации может быть раньше но не позже.
+        """
+        return (
+            self.dt_support_begin
+            or self.dt_support_period
+            or self.dt_create
+        )
 
 
 class RmspClient:
@@ -114,8 +113,6 @@ class RmspClient:
                 kladr_code="2300000700000",
                 page_size=100,
             )
-
-    Использует один shared session для cookie persistence (JSESSIONID + filter cache).
     """
 
     def __init__(
@@ -126,10 +123,9 @@ class RmspClient:
         self._timeout = timeout
         self._user_agent = user_agent
         self._client: Optional[httpx.AsyncClient] = None
-        self._session_kladr: Optional[str] = None  # последний установленный фильтр
+        self._session_kladr: Optional[str] = None
 
     async def __aenter__(self) -> "RmspClient":
-        # follow_redirects=True — на случай редиректа с http→https
         self._client = httpx.AsyncClient(
             timeout=self._timeout,
             follow_redirects=True,
@@ -146,26 +142,21 @@ class RmspClient:
             self._client = None
 
     async def _ensure_session_for_kladr(self, kladr_code: str) -> None:
-        """
-        Шаг 1: GET search.html — получаем JSESSIONID и сервер кэширует фильтр.
-        Делаем повторно только если изменился фильтр (для разных регионов).
-        """
         if self._client is None:
             raise RmspError("RmspClient не инициализирован — используй `async with`")
 
         if self._session_kladr == kladr_code:
-            return  # уже инициализирована для этого региона
+            return
 
         params = {"sk": "SZ", "kladr": kladr_code}
-        log.info(f"[rmsp] Initializing session for kladr={kladr_code}")
+        log.info(f"[rmsp] GET search.html sk=SZ kladr={kladr_code}")
 
         try:
             response = await self._client.get(RMSP_SEARCH_HTML, params=params)
             response.raise_for_status()
             self._session_kladr = kladr_code
             log.debug(
-                f"[rmsp] Session ready for kladr={kladr_code}, "
-                f"cookies={dict(self._client.cookies)}"
+                f"[rmsp] Session ready, cookies={dict(self._client.cookies)}"
             )
         except httpx.HTTPError as e:
             raise RmspError(f"Failed to initialize rmsp session: {e}") from e
@@ -176,27 +167,20 @@ class RmspClient:
         page: int = 1,
         page_size: int = 100,
         query: str = "",
+        strict_region_filter: bool = True,
     ) -> List[RmspCandidate]:
         """
         Возвращает список самозанятых отфильтрованных по KLADR региона.
 
         Args:
-            kladr_code: 13-значный KLADR код (например '2300000700000' = Сочи)
-            page: номер страницы (1-based)
-            page_size: 10/20/50/100 (валидно по rmsp-pp)
-            query: дополнительный фильтр по фамилии (если нужно)
-
-        Returns:
-            List[RmspCandidate] — список кандидатов с дедупликацией по ИНН.
-            Только настоящие самозанятые (sk=SZ, category=4, без ОГРН).
-
-        Raises:
-            RmspError: если запрос не удался или ответ невалидный.
+            kladr_code: 13-значный KLADR код
+            page, page_size, query: стандартные параметры пагинации
+            strict_region_filter: если True (default) — пост-фильтр по region_code
+                (первые 2 цифры KLADR). Чужие регионы отсекаются на клиентской стороне.
         """
         if self._client is None:
             raise RmspError("RmspClient не инициализирован — используй `async with`")
 
-        # Валидация KLADR
         if not kladr_code or len(kladr_code) != 13 or not kladr_code.isdigit():
             raise RmspError(
                 f"kladr_code должен быть 13 цифр, получено: {kladr_code!r}"
@@ -207,18 +191,24 @@ class RmspClient:
                 f"page_size должен быть 10/20/50/100, получено: {page_size}"
             )
 
-        # Шаг 1: инициализируем сессию для этого KLADR
         await self._ensure_session_for_kladr(kladr_code)
 
-        # Шаг 2: запрашиваем данные
+        # Pack 17.1.1: kladr передаём И в URL И в body — для надёжности
+        url_params = {
+            "m": "Support",
+            "sk": "SZ",
+            "kladr": kladr_code,
+        }
+
         form_data = {
             "page": str(page),
             "pageSize": str(page_size),
             "query": query,
-            "sc": "",       # subject_category - пусто
-            "sk": "SZ",     # subject_kind - SZ=самозанятый
-            "rp": "",       # report_period - пусто
-            "_v": "",       # cache buster - пусто
+            "sc": "",
+            "sk": "SZ",
+            "rp": "",
+            "_v": "",
+            "kladr": kladr_code,
         }
 
         headers = {
@@ -227,17 +217,20 @@ class RmspClient:
             "Origin": RMSP_BASE_URL,
             "Referer": f"{RMSP_SEARCH_HTML}?sk=SZ&kladr={kladr_code}",
             "X-Requested-With": "XMLHttpRequest",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         }
 
         log.info(
-            f"[rmsp] Searching kladr={kladr_code}, page={page}, "
-            f"pageSize={page_size}, query={query!r}"
+            f"[rmsp] POST search-proc kladr={kladr_code}, page={page}, "
+            f"pageSize={page_size}"
         )
 
         try:
             response = await self._client.post(
                 RMSP_SEARCH_PROC,
-                params={"m": "Support"},
+                params=url_params,
                 data=form_data,
                 headers=headers,
             )
@@ -246,20 +239,21 @@ class RmspClient:
         except httpx.HTTPError as e:
             raise RmspError(f"rmsp HTTP error: {e}") from e
         except ValueError as e:
-            # JSON decode failed
-            raise RmspError(f"rmsp returned non-JSON response: {e}") from e
+            raise RmspError(f"rmsp returned non-JSON: {e}") from e
 
         if "data" not in data:
             log.warning(f"[rmsp] Unexpected response shape: keys={list(data.keys())}")
-            raise RmspError(f"rmsp response missing 'data' field: {data}")
+            raise RmspError("rmsp response missing 'data' field")
 
         rows = data.get("data", [])
         total = data.get("rowCount", 0)
-        log.info(f"[rmsp] Got {len(rows)} rows (total available: {total})")
+        log.info(f"[rmsp] Got {len(rows)} rows (total: {total})")
 
-        # Парсинг + фильтрация + дедупликация
+        # Парсинг + фильтрация + дедупликация + post-filter по региону
         candidates: List[RmspCandidate] = []
         seen_inns: Set[str] = set()
+        expected_region = kladr_code[:2]
+        wrong_region_count = 0
 
         for row in rows:
             inn = row.get("subject_inn")
@@ -273,50 +267,61 @@ class RmspClient:
                 category=row.get("subject_category", 0),
                 region_code=row.get("subject_region", ""),
                 ogrn=row.get("subject_ogrn"),
+                dt_create=row.get("dt_create"),
+                dt_support_begin=row.get("dt_support_begin"),
+                dt_support_period=row.get("dt_support_period"),
                 raw=row,
             )
 
-            # Фильтруем только настоящих самозанятых
             if not candidate.is_self_employed:
+                continue
+
+            if strict_region_filter and candidate.region_code != expected_region:
+                wrong_region_count += 1
                 log.debug(
-                    f"[rmsp] Skipping {inn} (nptype={candidate.nptype}, "
-                    f"category={candidate.category}, ogrn={candidate.ogrn})"
+                    f"[rmsp] Skip {inn} from region {candidate.region_code} "
+                    f"(expected {expected_region})"
                 )
                 continue
 
             candidates.append(candidate)
             seen_inns.add(inn)
 
+        if wrong_region_count > 0:
+            log.warning(
+                f"[rmsp] Filtered {wrong_region_count} candidates from wrong regions "
+                f"(expected {expected_region})"
+            )
+
         log.info(
-            f"[rmsp] Filtered to {len(candidates)} unique self-employed candidates"
+            f"[rmsp] Returning {len(candidates)} candidates from region {expected_region}"
         )
         return candidates
 
     async def search_multiple_pages(
         self,
         kladr_code: str,
-        max_candidates: int = 200,
+        max_candidates: int = 100,
         page_size: int = 100,
+        max_pages: int = 5,
         delay_between_pages: float = 1.0,
+        strict_region_filter: bool = True,
     ) -> List[RmspCandidate]:
         """
-        Запрашивает несколько страниц подряд пока не наберём max_candidates
-        уникальных самозанятых.
-
-        Полезно когда первая страница даёт мало уникальных ИНН после дедупликации.
-        Между страницами ждёт delay_between_pages секунд (вежливость к ФНС).
+        Запрашивает несколько страниц подряд пока не наберём max_candidates.
+        Полезно когда первая страница даёт мало местных кандидатов после фильтра.
         """
         all_candidates: List[RmspCandidate] = []
         seen_inns: Set[str] = set()
 
-        for page in range(1, 11):  # максимум 10 страниц
+        for page in range(1, max_pages + 1):
             page_candidates = await self.search_self_employed(
                 kladr_code=kladr_code,
                 page=page,
                 page_size=page_size,
+                strict_region_filter=strict_region_filter,
             )
 
-            # Добавляем только новых
             new_count = 0
             for c in page_candidates:
                 if c.inn not in seen_inns:
@@ -324,16 +329,16 @@ class RmspClient:
                     seen_inns.add(c.inn)
                     new_count += 1
 
-            log.info(f"[rmsp] Page {page}: +{new_count} new (total: {len(all_candidates)})")
+            log.info(
+                f"[rmsp] Page {page}: +{new_count} (total: {len(all_candidates)})"
+            )
 
             if len(all_candidates) >= max_candidates:
                 break
-
             if new_count == 0:
-                # Конец данных
+                log.info("[rmsp] No new candidates, stopping")
                 break
-
-            if page < 10:
+            if page < max_pages:
                 await asyncio.sleep(delay_between_pages)
 
         return all_candidates[:max_candidates]

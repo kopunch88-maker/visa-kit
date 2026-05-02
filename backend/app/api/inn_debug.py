@@ -1,16 +1,10 @@
 """
-Pack 17.1 — диагностические endpoints для тестирования сервисов автогенерации ИНН.
+Pack 17.1.1 — диагностические endpoints для тестирования сервисов автогенерации ИНН.
 
-Эти endpoints НЕ предназначены для production использования. Они нужны только
-менеджеру/разработчику чтобы быстро проверить что:
-- rmsp-pp.nalog.ru отвечает
-- npd.nalog.ru отвечает
-- Адрес-генератор работает
-
-В Pack 17.2 будут production endpoints `/inn-suggest` и `/inn-accept` которые
-используют эти же сервисы но через pipeline orchestrator.
-
-Все endpoints под /api/admin/inn-debug/* требуют авторизации менеджера.
+Изменения от 17.1:
+- В RmspCandidateOut добавлены dt_*  поля и estimated_npd_start
+- Добавлен query параметр strict_region для теста с/без фильтра по региону
+- Добавлен endpoint /rmsp-multipage для тестирования агрегации страниц
 """
 
 from __future__ import annotations
@@ -40,8 +34,6 @@ router = APIRouter(
 )
 
 
-# === Модели ответов ===
-
 class RmspCandidateOut(BaseModel):
     inn: str
     full_name: str
@@ -50,12 +42,18 @@ class RmspCandidateOut(BaseModel):
     region_code: str
     ogrn: Optional[str] = None
     is_self_employed: bool
+    # Pack 17.1.1
+    dt_create: Optional[str] = None
+    dt_support_begin: Optional[str] = None
+    dt_support_period: Optional[str] = None
+    estimated_npd_start: Optional[str] = None
 
 
 class RmspSearchResponse(BaseModel):
     kladr_code: str
     page: int
     page_size: int
+    strict_region_filter: bool
     candidates: list[RmspCandidateOut]
     count: int
     note: str
@@ -82,36 +80,27 @@ class GeneratedAddressOut(BaseModel):
     kladr_code: str
 
 
-# === Endpoints ===
-
 @router.get(
     "/rmsp-search",
     response_model=RmspSearchResponse,
     summary="Тест поиска самозанятых в реестре rmsp-pp.nalog.ru",
 )
 async def test_rmsp_search(
-    kladr_code: str = Query(
-        ...,
-        description="13-значный KLADR код региона. Например 2300000700000 для Сочи.",
-    ),
-    page: int = Query(1, ge=1, description="Номер страницы (1-based)"),
-    page_size: int = Query(
-        20,
-        description="Размер страницы (10/20/50/100)",
+    kladr_code: str = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20),
+    strict_region: bool = Query(
+        True,
+        description="Если True — пост-фильтр по region_code (первые 2 цифры KLADR). "
+                    "Если False — возвращаем что отдаёт ФНС как есть.",
     ),
     _user=Depends(require_manager),
 ):
     """
-    Делает запрос к rmsp-pp.nalog.ru и возвращает список самозанятых
-    отфильтрованных по KLADR региона.
+    Делает запрос к rmsp-pp.nalog.ru и возвращает список самозанятых.
 
-    Используется для диагностики что:
-    1. Налоговая отвечает с прода Railway
-    2. Структура ответа не изменилась
-    3. Данные приходят и парсятся
-
-    Если возвращает пустой список — проверь kladr_code (должен быть из реестра
-    `Region` с правильным форматом).
+    Pack 17.1.1: kladr теперь передаётся И в URL И в body.
+    Пост-фильтр по region_code (опционально через strict_region=false).
     """
     if page_size not in (10, 20, 50, 100):
         raise HTTPException(
@@ -125,18 +114,20 @@ async def test_rmsp_search(
                 kladr_code=kladr_code,
                 page=page,
                 page_size=page_size,
+                strict_region_filter=strict_region,
             )
     except RmspError as e:
         log.error(f"[inn-debug] RMSP error: {e}")
         raise HTTPException(status_code=502, detail=f"RMSP error: {e}")
     except Exception as e:
-        log.exception(f"[inn-debug] Unexpected RMSP error")
+        log.exception("[inn-debug] Unexpected RMSP error")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
     return RmspSearchResponse(
         kladr_code=kladr_code,
         page=page,
         page_size=page_size,
+        strict_region_filter=strict_region,
         candidates=[
             RmspCandidateOut(
                 inn=c.inn,
@@ -146,14 +137,79 @@ async def test_rmsp_search(
                 region_code=c.region_code,
                 ogrn=c.ogrn,
                 is_self_employed=c.is_self_employed,
+                dt_create=c.dt_create,
+                dt_support_begin=c.dt_support_begin,
+                dt_support_period=c.dt_support_period,
+                estimated_npd_start=c.estimated_npd_start,
             )
             for c in candidates
         ],
         count=len(candidates),
         note=(
-            "Если list пустой — налоговая фильтрует по сессии после initial GET. "
-            "Это нормально для первого запроса с новым cookie."
+            f"Region filter: {'STRICT (по первым 2 цифрам KLADR)' if strict_region else 'OFF'}. "
+            f"Если count=0 при strict=true — попробуй strict_region=false "
+            f"чтобы увидеть что налоговая возвращает без фильтрации."
         ),
+    )
+
+
+@router.get(
+    "/rmsp-multipage",
+    response_model=RmspSearchResponse,
+    summary="Сбор кандидатов с нескольких страниц (агрегация)",
+)
+async def test_rmsp_multipage(
+    kladr_code: str = Query(...),
+    max_candidates: int = Query(50, ge=1, le=200),
+    max_pages: int = Query(5, ge=1, le=10),
+    strict_region: bool = Query(True),
+    _user=Depends(require_manager),
+):
+    """
+    Pack 17.1.1: пробивает несколько страниц подряд пока не наберём
+    max_candidates самозанятых ИЗ НУЖНОГО РЕГИОНА.
+
+    Полезно когда ФНС не применяет фильтр и нужно агрегировать.
+    """
+    try:
+        async with RmspClient() as client:
+            candidates = await client.search_multiple_pages(
+                kladr_code=kladr_code,
+                max_candidates=max_candidates,
+                page_size=100,
+                max_pages=max_pages,
+                strict_region_filter=strict_region,
+            )
+    except RmspError as e:
+        log.error(f"[inn-debug] RMSP error: {e}")
+        raise HTTPException(status_code=502, detail=f"RMSP error: {e}")
+    except Exception as e:
+        log.exception("[inn-debug] Unexpected RMSP error")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+    return RmspSearchResponse(
+        kladr_code=kladr_code,
+        page=0,  # multipage не имеет одной страницы
+        page_size=100,
+        strict_region_filter=strict_region,
+        candidates=[
+            RmspCandidateOut(
+                inn=c.inn,
+                full_name=c.full_name,
+                nptype=c.nptype,
+                category=c.category,
+                region_code=c.region_code,
+                ogrn=c.ogrn,
+                is_self_employed=c.is_self_employed,
+                dt_create=c.dt_create,
+                dt_support_begin=c.dt_support_begin,
+                dt_support_period=c.dt_support_period,
+                estimated_npd_start=c.estimated_npd_start,
+            )
+            for c in candidates
+        ],
+        count=len(candidates),
+        note=f"Multipage aggregation: max {max_pages} страниц по 100 записей.",
     )
 
 
@@ -163,19 +219,16 @@ async def test_rmsp_search(
     summary="Тест проверки статуса самозанятого через npd.nalog.ru",
 )
 async def test_npd_check(
-    inn: str = Query(..., description="12-значный ИНН физлица"),
+    inn: str = Query(...),
     _user=Depends(require_manager),
 ):
     """
-    Проверяет статус НПД через ФНС API.
-
-    ВНИМАНИЕ: ФНС лимитирует 2 запроса/минуту с одного IP.
-    Если делать чаще — клиент будет ждать (видно в логах Railway).
+    Проверка статуса НПД через ФНС API.
+    Лимит 2 запроса/мин с одного IP — клиент ждёт автоматически.
     """
     if not inn or len(inn) != 12 or not inn.isdigit():
         raise HTTPException(
-            status_code=422,
-            detail="ИНН должен быть из 12 цифр (физлицо)",
+            status_code=422, detail="ИНН должен быть из 12 цифр (физлицо)",
         )
 
     try:
@@ -185,7 +238,7 @@ async def test_npd_check(
         log.error(f"[inn-debug] NPD error: {e}")
         raise HTTPException(status_code=502, detail=f"NPD error: {e}")
     except Exception as e:
-        log.exception(f"[inn-debug] Unexpected NPD error")
+        log.exception("[inn-debug] Unexpected NPD error")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
     return NpdCheckResponse(
@@ -206,23 +259,11 @@ async def test_npd_check(
 @router.get(
     "/generate-address",
     response_model=GeneratedAddressOut,
-    summary="Тест генератора адресов",
 )
 def test_generate_address(
-    kladr_code: str = Query(
-        ...,
-        description="13-значный KLADR код региона из KNOWN_REGIONS",
-    ),
+    kladr_code: str = Query(...),
     _user=Depends(require_manager),
 ):
-    """
-    Генерирует случайный адрес для региона.
-
-    Поддерживаемые регионы: 10 базовых (Москва, СПб, Сочи, Краснодар,
-    Ростов-на-Дону, Махачкала, Грозный, Казань, Уфа, Нижний Новгород).
-
-    Если KLADR региона не поддержан — возвращает 422 со списком известных регионов.
-    """
     if kladr_code not in KNOWN_REGIONS:
         raise HTTPException(
             status_code=422,
@@ -236,7 +277,6 @@ def test_generate_address(
         )
 
     addr = generate_address(kladr_code)
-
     return GeneratedAddressOut(
         full=addr.full,
         postal_code=addr.postal_code,
@@ -249,14 +289,8 @@ def test_generate_address(
     )
 
 
-@router.get(
-    "/known-regions",
-    summary="Список регионов поддерживаемых address-generator'ом",
-)
+@router.get("/known-regions")
 def list_supported_regions(_user=Depends(require_manager)):
-    """
-    Возвращает 10 регионов для которых есть захардкоженная база улиц.
-    """
     return [
         {
             "kladr_code": k,
