@@ -1,28 +1,29 @@
 """
-Pack 17.1.1 — HTTP клиент к публичному реестру МСП ФНС
-(rmsp-pp.nalog.ru = Реестр Получателей Поддержки).
+Pack 17.1.2 — HTTP клиент к публичному реестру МСП ФНС.
 
-ИЗМЕНЕНИЯ ОТНОСИТЕЛЬНО Pack 17.1:
-- KLADR теперь передаётся явно в URL POST `/search-proc.json` (?kladr=...&sk=SZ...)
-  и в form body, и в Referer — для гарантии что фильтр применится.
-- Добавлен post-filter по region_code из 2 первых цифр KLADR — на случай если
-  ФНС всё равно вернёт записи из других регионов.
-- Возвращаются даты dt_create/dt_support_begin/dt_support_period — из них берём
-  «приближённую дату начала статуса НПД» (т.к. публичный NPD API не отдаёт точную).
+ИСТОРИЯ ИЗМЕНЕНИЙ:
+- 17.1: первая версия. ФНС возвращает кандидатов из всех регионов
+        (фильтр по KLADR не применяется при программном запросе).
+- 17.1.1: попытался передавать kladr в URL/body. ФНС возвращает HTTP 5xx —
+          схема запроса оказалась неприемлемой.
+- 17.1.2 (текущая): возвращаемся к РАБОЧЕМУ формату запроса 17.1
+          + оставляем только post-filter по region_code на нашей стороне
+          + по умолчанию делаем multipage чтобы набрать достаточно
+            кандидатов из нужного региона.
 
 Алгоритм работы:
 1. GET https://rmsp-pp.nalog.ru/search.html?sk=SZ&kladr={KLADR}
-   → JSESSIONID + сервер регистрирует session
+   → JSESSIONID
 
-2. POST https://rmsp-pp.nalog.ru/search-proc.json?m=Support&sk=SZ&kladr={KLADR}
-   form-data: page, pageSize, query, sc, sk, rp, _v, kladr
-   → возвращает JSON с самозанятыми
+2. POST https://rmsp-pp.nalog.ru/search-proc.json?m=Support
+   form-data: page, pageSize, query, sc, sk, rp, _v
+   → возвращает JSON с самозанятыми (из всех регионов России)
 
-3. Post-filter: оставляем только записи где subject_region == kladr[:2]
+3. POST-FILTER на нашей стороне: оставляем только субъекты где
+   subject_region == kladr_code[:2] (первые 2 цифры).
+   Например для Сочи (kladr=2300000700000) принимаем только region_code="23".
 
-ВАЖНО:
-- Captcha нет (подтверждено пользователем на 02.05.2026)
-- Один человек встречается много раз — ДЕДУПЛИЦИРУЕМ по subject_inn
+4. Если на одной странице мало местных — пробиваем пагинацию (multipage).
 """
 
 from __future__ import annotations
@@ -56,9 +57,6 @@ class RmspError(Exception):
 
 @dataclass
 class RmspCandidate:
-    """
-    Один кандидат-самозанятый из реестра.
-    """
     inn: str
     full_name: str
     nptype: str
@@ -92,9 +90,8 @@ class RmspCandidate:
     @property
     def estimated_npd_start(self) -> Optional[str]:
         """
-        Приближённая дата начала статуса НПД — самая ранняя из доступных дат RMSP
-        (формат "DD.MM.YYYY"). Это нижняя граница: «человек ТОЧНО был самозанятым
-        на эту дату». Реальная дата регистрации может быть раньше но не позже.
+        Самая ранняя из доступных дат RMSP — приближённая дата начала НПД.
+        Это нижняя граница: «человек ТОЧНО был самозанятым на эту дату».
         """
         return (
             self.dt_support_begin
@@ -170,13 +167,19 @@ class RmspClient:
         strict_region_filter: bool = True,
     ) -> List[RmspCandidate]:
         """
-        Возвращает список самозанятых отфильтрованных по KLADR региона.
+        Возвращает список самозанятых.
+
+        ФНС не применяет фильтр по KLADR при программном запросе — поэтому:
+        - strict_region_filter=True (default): пост-фильтр на нашей стороне
+          по subject_region == kladr_code[:2]
+        - strict_region_filter=False: возвращаем что вернула ФНС как есть
+          (для отладки)
 
         Args:
-            kladr_code: 13-значный KLADR код
-            page, page_size, query: стандартные параметры пагинации
-            strict_region_filter: если True (default) — пост-фильтр по region_code
-                (первые 2 цифры KLADR). Чужие регионы отсекаются на клиентской стороне.
+            kladr_code: 13-значный KLADR код (используется для определения
+                ожидаемого region_code и для Referer)
+            page, page_size, query: параметры пагинации
+            strict_region_filter: фильтр по региону на нашей стороне
         """
         if self._client is None:
             raise RmspError("RmspClient не инициализирован — используй `async with`")
@@ -193,22 +196,18 @@ class RmspClient:
 
         await self._ensure_session_for_kladr(kladr_code)
 
-        # Pack 17.1.1: kladr передаём И в URL И в body — для надёжности
-        url_params = {
-            "m": "Support",
-            "sk": "SZ",
-            "kladr": kladr_code,
-        }
+        # Pack 17.1.2: возвращаем формат запроса 17.1 (РАБОЧИЙ — kladr только в Referer)
+        # ФНС не понравились kladr в URL/body (вернула 5xx).
+        url_params = {"m": "Support"}
 
         form_data = {
             "page": str(page),
             "pageSize": str(page_size),
             "query": query,
             "sc": "",
-            "sk": "SZ",
+            "sk": "",       # пусто как в твоём cURL
             "rp": "",
             "_v": "",
-            "kladr": kladr_code,
         }
 
         headers = {
@@ -254,6 +253,7 @@ class RmspClient:
         seen_inns: Set[str] = set()
         expected_region = kladr_code[:2]
         wrong_region_count = 0
+        not_self_employed_count = 0
 
         for row in rows:
             inn = row.get("subject_inn")
@@ -274,45 +274,40 @@ class RmspClient:
             )
 
             if not candidate.is_self_employed:
+                not_self_employed_count += 1
                 continue
 
             if strict_region_filter and candidate.region_code != expected_region:
                 wrong_region_count += 1
-                log.debug(
-                    f"[rmsp] Skip {inn} from region {candidate.region_code} "
-                    f"(expected {expected_region})"
-                )
                 continue
 
             candidates.append(candidate)
             seen_inns.add(inn)
 
-        if wrong_region_count > 0:
-            log.warning(
-                f"[rmsp] Filtered {wrong_region_count} candidates from wrong regions "
-                f"(expected {expected_region})"
-            )
-
         log.info(
-            f"[rmsp] Returning {len(candidates)} candidates from region {expected_region}"
+            f"[rmsp] Filtered: {wrong_region_count} wrong region, "
+            f"{not_self_employed_count} not SZ. "
+            f"Returning {len(candidates)} candidates from region {expected_region}"
         )
         return candidates
 
     async def search_multiple_pages(
         self,
         kladr_code: str,
-        max_candidates: int = 100,
+        max_candidates: int = 50,
         page_size: int = 100,
-        max_pages: int = 5,
-        delay_between_pages: float = 1.0,
+        max_pages: int = 10,
+        delay_between_pages: float = 0.5,
         strict_region_filter: bool = True,
     ) -> List[RmspCandidate]:
         """
         Запрашивает несколько страниц подряд пока не наберём max_candidates.
-        Полезно когда первая страница даёт мало местных кандидатов после фильтра.
+        Особенно полезно когда ФНС не применяет KLADR-фильтр и мы пробиваем
+        страницы пока не наберём достаточно из нужного региона.
         """
         all_candidates: List[RmspCandidate] = []
         seen_inns: Set[str] = set()
+        empty_pages_in_row = 0
 
         for page in range(1, max_pages + 1):
             page_candidates = await self.search_self_employed(
@@ -330,14 +325,25 @@ class RmspClient:
                     new_count += 1
 
             log.info(
-                f"[rmsp] Page {page}: +{new_count} (total: {len(all_candidates)})"
+                f"[rmsp] Page {page}: +{new_count} new "
+                f"(total: {len(all_candidates)}/{max_candidates})"
             )
 
             if len(all_candidates) >= max_candidates:
                 break
+
+            # Если 3 страницы подряд без новых из нужного региона — стоп
             if new_count == 0:
-                log.info("[rmsp] No new candidates, stopping")
-                break
+                empty_pages_in_row += 1
+                if empty_pages_in_row >= 3:
+                    log.info(
+                        f"[rmsp] {empty_pages_in_row} pages without new candidates, "
+                        f"stopping"
+                    )
+                    break
+            else:
+                empty_pages_in_row = 0
+
             if page < max_pages:
                 await asyncio.sleep(delay_between_pages)
 
