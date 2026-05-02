@@ -133,13 +133,27 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     for idx, tx in enumerate(transactions):
         new_tr = deepcopy(template_tr_xml)
         _replace_markers_in_tr(new_tr, tx)
+
+        # Pack 16.5: серый фон у строк дохода (зарплата от компании).
+        # В оригинале Алиева такие строки имеют <w:shd fill="E8E8E8"/> в каждой ячейке.
+        amount = tx.get("amount")
+        if amount is not None:
+            try:
+                amount_val = float(amount)
+            except (TypeError, ValueError):
+                amount_val = 0
+            if amount_val > 0:
+                _apply_gray_shading_to_row(new_tr)
+
         parent.insert(insert_position + idx, new_tr)
 
     # Удаляем оригинальную строку-образец
     parent.remove(template_tr_xml)
 
-    # Pack 16.4: убираем пустой параграф между таблицами
-    _remove_empty_paragraph_between_tables(doc)
+    # Pack 16.5: НЕ убираем пустой параграф между таблицами — это нормальный
+    # отступ из оригинала (без него подпись прижата к подвалу). С удалением
+    # фиксированной trHeight у строки-образца, таблица операций стала компактнее,
+    # и подпись теперь помещается без принудительного убирания зазора.
 
     result_buffer = io.BytesIO()
     doc.save(result_buffer)
@@ -245,3 +259,33 @@ def _remove_empty_paragraph_between_tables(doc):
         if not full_text:
             body.remove(children[i + 1])
             break
+
+
+def _apply_gray_shading_to_row(tr_element):
+    """
+    Pack 16.5: добавляет серый фон (E8E8E8) каждой ячейке строки таблицы.
+
+    В оригинальной выписке Алиева строки с доходом (зарплата от компании) имеют
+    серую заливку. Мы применяем тот же стиль к строкам с положительной суммой.
+
+    Если в ячейке уже есть <w:shd>, она заменяется. Иначе создаётся новый.
+    """
+    cells = tr_element.findall('.//w:tc', NS)
+    for cell in cells:
+        tcPr = cell.find('w:tcPr', NS)
+        if tcPr is None:
+            tcPr = etree.SubElement(cell, f'{W_NS}tcPr')
+            # tcPr должен идти первым в tc — переместим его
+            cell.remove(tcPr)
+            cell.insert(0, tcPr)
+
+        # Удаляем старый shd если есть
+        old_shd = tcPr.find('w:shd', NS)
+        if old_shd is not None:
+            tcPr.remove(old_shd)
+
+        # Создаём новый
+        shd = etree.SubElement(tcPr, f'{W_NS}shd')
+        shd.set(f'{W_NS}val', 'clear')
+        shd.set(f'{W_NS}color', 'auto')
+        shd.set(f'{W_NS}fill', 'E8E8E8')
