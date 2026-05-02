@@ -32,6 +32,13 @@ export type ApplicantData = {
   passport_issue_date?: string;
   passport_issuer?: string;
   inn?: string;
+  // Pack 16 — банк
+  bank_id?: number | null;
+  bank_account?: string | null;
+  bank_name?: string | null;
+  bank_bic?: string | null;
+  bank_correspondent_account?: string | null;
+  // /Pack 16
   home_address?: string;
   home_country?: string;
   email?: string;
@@ -1384,6 +1391,102 @@ export async function getTranslitSuggestion(
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ text, field }),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+// ============================================================================
+// Pack 16 — Banks + account generator
+// ============================================================================
+//
+// Эти функции добавить в КОНЕЦ frontend/lib/api.ts.
+//
+// ВАЖНО: также добавить опциональное поле bank_id в ApplicantResponse
+// (см. INSTRUCTIONS.md, шаг 2a).
+
+export type BankResponse = {
+  id: number;
+  name: string;
+  short_name?: string | null;
+  bik: string;
+  inn: string;
+  kpp?: string | null;
+  correspondent_account: string;
+  swift?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  is_active: boolean;
+  notes?: string | null;
+  applicant_count?: number;
+};
+
+export async function listBanks(includeInactive = false): Promise<BankResponse[]> {
+  const url = `${API_BASE_URL}/api/admin/banks${includeInactive ? "?include_inactive=true" : ""}`;
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function getBank(id: number): Promise<BankResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function createBank(data: Partial<BankResponse>): Promise<BankResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/banks`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function updateBank(id: number, data: Partial<BankResponse>): Promise<BankResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function deleteBank(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+}
+
+export type GenerateAccountResponse = {
+  account: string;
+  bik: string;
+  bank_name: string;
+};
+
+/**
+ * Pack 16: генерирует уникальный 20-значный расчётный счёт по алгоритму ЦБ РФ
+ * для указанного банка.
+ *
+ * @param bankId ID банка из справочника
+ * @param isResident true для гр. РФ (40817), false для нерезидентов (40820)
+ */
+export async function generateAccount(
+  bankId: number,
+  isResident: boolean = true,
+): Promise<GenerateAccountResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/banks/${bankId}/generate-account`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ is_resident: isResident }),
     },
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);

@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { X, Loader2, Sparkles, AlertCircle, Save, User, Wand2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Loader2, Sparkles, AlertCircle, Save, User, Wand2, Landmark } from "lucide-react";
 import {
   ApplicantResponse,
   updateApplicant,
   transliterateLatToRu,
+  BankResponse,
+  listBanks,
+  generateAccount,
 } from "@/lib/api";
 
 interface Props {
@@ -55,7 +58,6 @@ const COUNTRY_OPTIONS = [
 
 /**
  * Title Case для русского имени — клиентская версия для onBlur.
- * Менеджер ввёл "ИВАНОВ" или "иванов" → автоматически "Иванов".
  */
 function toTitleCase(text: string): string {
   if (!text) return "";
@@ -86,6 +88,13 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [phone, setPhone] = useState(applicant.phone || "");
   const [inn, setInn] = useState(applicant.inn || "");
 
+  // Pack 16 — банковские поля
+  const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
+  const [bank_account, setBankAccount] = useState(applicant.bank_account || "");
+  const [banks, setBanks] = useState<BankResponse[]>([]);
+  const [banksLoading, setBanksLoading] = useState(true);
+  const [accountGenerating, setAccountGenerating] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [translitLoading, setTranslitLoading] = useState(false);
   const [translitWarning, setTranslitWarning] = useState<string | null>(null);
@@ -94,6 +103,21 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const fullNameNativeEmpty = !last_name_native?.trim() && !first_name_native?.trim();
   const hasLatin = !!(last_name_latin?.trim() && first_name_latin?.trim());
   const canTransliterate = hasLatin && !translitLoading;
+
+  // Pack 16: загрузить список банков при открытии
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await listBanks();
+        setBanks(data);
+      } catch (e) {
+        // не критично — просто без выбора банка
+        console.warn("listBanks failed:", e);
+      } finally {
+        setBanksLoading(false);
+      }
+    })();
+  }, []);
 
   async function handleTransliterate() {
     if (!canTransliterate) return;
@@ -116,6 +140,26 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
     }
   }
 
+  // Pack 16: сгенерировать счёт по выбранному банку
+  async function handleGenerateAccount() {
+    if (!bank_id) {
+      setError("Сначала выберите банк");
+      return;
+    }
+    setAccountGenerating(true);
+    setError(null);
+    try {
+      // Резидент ли клиент: если nationality === "RUS" → резидент (40817), иначе нерезидент (40820)
+      const isResident = nationality === "RUS";
+      const result = await generateAccount(bank_id as number, isResident);
+      setBankAccount(result.account);
+    } catch (e) {
+      setError(`Не удалось сгенерировать счёт: ${(e as Error).message}`);
+    } finally {
+      setAccountGenerating(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
     if (!last_name_native?.trim() || !first_name_native?.trim()) {
@@ -129,6 +173,19 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
 
     setSaving(true);
     try {
+      // Pack 16: при выборе банка денормализуем поля bank_name/bic/correspondent_account
+      const selectedBank = banks.find((b) => b.id === bank_id);
+      const bankFields = selectedBank
+        ? {
+            bank_id: selectedBank.id,
+            bank_name: selectedBank.name,
+            bank_bic: selectedBank.bik,
+            bank_correspondent_account: selectedBank.correspondent_account,
+          }
+        : {
+            bank_id: null,
+          };
+
       await updateApplicant(applicant.id, {
         last_name_native: last_name_native.trim(),
         first_name_native: first_name_native.trim(),
@@ -147,6 +204,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         email: email.trim(),
         phone: phone.trim(),
         inn: inn.trim(),
+        // Pack 16
+        bank_account: bank_account.trim() || null,
+        ...bankFields,
       });
       onSaved();
     } catch (e) {
@@ -207,7 +267,6 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
             </div>
           )}
 
-          {/* Подсказка для иностранцев */}
           {fullNameNativeEmpty && hasLatin && !translitWarning && (
             <div
               className="p-3 rounded-md text-sm flex gap-2 items-start"
@@ -230,7 +289,6 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
             </div>
           )}
 
-          {/* Предупреждение о черновике после транслитерации */}
           {translitWarning && (
             <div
               className="p-3 rounded-md text-sm flex gap-2 items-start"
@@ -278,134 +336,124 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               ) : null
             }
           >
-            <Field
-              label="Фамилия (рус) *"
-              value={last_name_native}
-              onChange={setLastNameNative}
+            <Field label="Фамилия (рус) *" value={last_name_native} onChange={setLastNameNative}
               onBlur={() => setLastNameNative(toTitleCase(last_name_native))}
-              placeholder={hasLatin ? `Например: Юксель (от ${last_name_latin})` : "Иванов"}
-            />
-            <Field
-              label="Имя (рус) *"
-              value={first_name_native}
-              onChange={setFirstNameNative}
+              placeholder={hasLatin ? `Например: Юксель (от ${last_name_latin})` : "Иванов"} />
+            <Field label="Имя (рус) *" value={first_name_native} onChange={setFirstNameNative}
               onBlur={() => setFirstNameNative(toTitleCase(first_name_native))}
-              placeholder={hasLatin ? `Например: Ведат (от ${first_name_latin})` : "Сергей"}
-            />
-            <Field
-              label="Отчество (если есть)"
-              value={middle_name_native}
-              onChange={setMiddleNameNative}
+              placeholder={hasLatin ? `Например: Ведат (от ${first_name_latin})` : "Сергей"} />
+            <Field label="Отчество (если есть)" value={middle_name_native} onChange={setMiddleNameNative}
               onBlur={() => setMiddleNameNative(toTitleCase(middle_name_native))}
-              placeholder="Петрович — для русских клиентов"
-            />
+              placeholder="Петрович — для русских клиентов" />
           </Section>
 
-          {/* Латиница */}
           <Section title="ФИО латиницей (как в паспорте)">
-            <Field
-              label="Фамилия (latin) *"
-              value={last_name_latin}
-              onChange={setLastNameLatin}
-              placeholder="YUKSEL"
-            />
-            <Field
-              label="Имя (latin) *"
-              value={first_name_latin}
-              onChange={setFirstNameLatin}
-              placeholder="VEDAT"
-            />
+            <Field label="Фамилия (latin) *" value={last_name_latin} onChange={setLastNameLatin}
+              placeholder="YUKSEL" />
+            <Field label="Имя (latin) *" value={first_name_latin} onChange={setFirstNameLatin}
+              placeholder="VEDAT" />
           </Section>
 
-          {/* Гражданство и пол */}
           <Section title="Гражданство и пол">
-            <FieldSelect
-              label="Гражданство"
-              value={nationality}
-              onChange={setNationality}
-              options={COUNTRY_OPTIONS}
-            />
-            <FieldSelect
-              label="Страна жительства"
-              value={home_country}
-              onChange={setHomeCountry}
-              options={COUNTRY_OPTIONS}
-            />
-            <FieldSelect
-              label="Пол"
-              value={sex}
-              onChange={setSex}
-              options={SEX_OPTIONS}
-            />
+            <FieldSelect label="Гражданство" value={nationality} onChange={setNationality} options={COUNTRY_OPTIONS} />
+            <FieldSelect label="Страна жительства" value={home_country} onChange={setHomeCountry} options={COUNTRY_OPTIONS} />
+            <FieldSelect label="Пол" value={sex} onChange={setSex} options={SEX_OPTIONS} />
           </Section>
 
-          {/* Паспорт */}
           <Section title="Паспорт">
-            <Field
-              label="Номер паспорта"
-              value={passport_number}
-              onChange={setPassportNumber}
-              placeholder="U12345678 или 1234 567890"
-            />
+            <Field label="Номер паспорта" value={passport_number} onChange={setPassportNumber}
+              placeholder="U12345678 или 1234 567890" />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field
-                label="Дата выдачи"
-                value={passport_issue_date}
-                onChange={setPassportIssueDate}
-                placeholder="2020-05-15"
-                type="date"
-              />
-              <Field
-                label="Дата рождения"
-                value={birth_date}
-                onChange={setBirthDate}
-                placeholder="1972-01-01"
-                type="date"
-              />
+              <Field label="Дата выдачи" value={passport_issue_date} onChange={setPassportIssueDate}
+                placeholder="2020-05-15" type="date" />
+              <Field label="Дата рождения" value={birth_date} onChange={setBirthDate}
+                placeholder="1972-01-01" type="date" />
             </div>
-            <Field
-              label="Кем выдан"
-              value={passport_issuer}
-              onChange={setPassportIssuer}
-              placeholder="Ministry of Internal Affairs / ГУ МВД..."
-            />
-            <Field
-              label="Место рождения"
-              value={birth_place_latin}
-              onChange={setBirthPlaceLatin}
-              placeholder="EDIRNE / MOSCOW"
-            />
+            <Field label="Кем выдан" value={passport_issuer} onChange={setPassportIssuer}
+              placeholder="Ministry of Internal Affairs / ГУ МВД..." />
+            <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
+              placeholder="EDIRNE / MOSCOW" />
           </Section>
 
-          {/* Адрес и контакты */}
           <Section title="Адрес и контакты">
-            <Field
-              label="Адрес проживания"
-              value={home_address}
-              onChange={setHomeAddress}
-              placeholder="г. Москва, ул. Ленина, д. 10, кв. 5"
-              textarea
-            />
+            <Field label="Адрес проживания" value={home_address} onChange={setHomeAddress}
+              placeholder="г. Москва, ул. Ленина, д. 10, кв. 5" textarea />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field
-                label="Email"
-                value={email}
-                onChange={setEmail}
-                placeholder="user@example.com"
-              />
-              <Field
-                label="Телефон"
-                value={phone}
-                onChange={setPhone}
-                placeholder="+7 999 ..."
-              />
+              <Field label="Email" value={email} onChange={setEmail} placeholder="user@example.com" />
+              <Field label="Телефон" value={phone} onChange={setPhone} placeholder="+7 999 ..." />
             </div>
-            <Field
-              label="ИНН"
-              value={inn}
-              onChange={setInn}
-              placeholder="123456789012"
+            <Field label="ИНН" value={inn} onChange={setInn} placeholder="123456789012" />
+          </Section>
+
+          {/* Pack 16: Банк */}
+          <Section
+            title="Банк (Pack 16)"
+            icon={<Landmark className="w-3.5 h-3.5" />}
+          >
+            <FieldSelect
+              label="Банк"
+              value={bank_id === "" ? "" : String(bank_id)}
+              onChange={(v) => setBankId(v ? parseInt(v, 10) : "")}
+              options={[
+                { value: "", label: banksLoading ? "Загрузка..." : "— Не выбран —" },
+                ...banks.map((b) => ({
+                  value: String(b.id),
+                  label: b.short_name || b.name,
+                })),
+              ]}
             />
+
+            <div>
+              <label className="block text-xs text-tertiary mb-1">
+                Расчётный счёт (20 цифр)
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={bank_account}
+                  onChange={(e) => setBankAccount(e.target.value)}
+                  placeholder="40817810810433218196"
+                  className="flex-1 px-2 py-1.5 rounded-md text-sm border font-mono"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleGenerateAccount}
+                  disabled={!bank_id || accountGenerating}
+                  className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1 text-xs"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                  }}
+                  title={
+                    bank_id
+                      ? "Сгенерировать уникальный счёт по правилам ЦБ РФ"
+                      : "Сначала выберите банк"
+                  }
+                >
+                  {accountGenerating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-tertiary mt-1">
+                {nationality === "RUS"
+                  ? "Резидент РФ → префикс 40817 (физлица)"
+                  : nationality
+                  ? `Нерезидент (${nationality}) → префикс 40820`
+                  : "Укажите гражданство для правильного префикса (40817 для РФ / 40820 для остальных)"}
+              </p>
+            </div>
           </Section>
         </div>
 
@@ -421,10 +469,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors"
-            style={{
-              borderColor: "var(--color-border-tertiary)",
-              borderWidth: 0.5,
-            }}
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
             disabled={saving}
           >
             Отмена
@@ -455,13 +500,12 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
 
 
 function Section({
-  title,
-  action,
-  children,
+  title, action, children, icon,
 }: {
   title: string;
   action?: React.ReactNode;
   children: React.ReactNode;
+  icon?: React.ReactNode;
 }) {
   return (
     <div
@@ -472,7 +516,8 @@ function Section({
       }}
     >
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+        <div className="text-xs font-semibold uppercase tracking-wide text-tertiary flex items-center gap-1.5">
+          {icon}
           {title}
         </div>
         {action}
@@ -484,13 +529,7 @@ function Section({
 
 
 function Field({
-  label,
-  value,
-  onChange,
-  onBlur,
-  placeholder,
-  textarea,
-  type,
+  label, value, onChange, onBlur, placeholder, textarea, type,
 }: {
   label: string;
   value: string;
@@ -537,10 +576,7 @@ function Field({
 
 
 function FieldSelect({
-  label,
-  value,
-  onChange,
-  options,
+  label, value, onChange, options,
 }: {
   label: string;
   value: string;

@@ -16,6 +16,7 @@ from app.db.migrations import (
     apply_pack13_migration,
     apply_pack15_migration,
     apply_pack15_1_migration,
+    apply_pack16_migration,
 )
 
 
@@ -27,9 +28,10 @@ async def lifespan(app: FastAPI):
     apply_pack10_migration()
     apply_pack11_migration()
     apply_pack11_2_migration()
-    apply_pack13_migration()  # applicant_document table
-    apply_pack15_migration()  # translation table (Pack 15)
-    apply_pack15_1_migration()  # company.director_full_name_latin (Pack 15.1)
+    apply_pack13_migration()
+    apply_pack15_migration()
+    apply_pack15_1_migration()
+    apply_pack16_migration()  # Bank table + applicant.bank_id (Pack 16)
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
@@ -68,6 +70,7 @@ from app.api import (  # noqa: E402
     import_package,
     bank_transactions,
     translations,
+    banks,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -83,6 +86,7 @@ app.include_router(client_documents_admin.router, prefix="/api")
 app.include_router(import_package.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
 app.include_router(translations.router, prefix="/api")
+app.include_router(banks.router, prefix="/api")
 
 
 @app.get("/", tags=["meta"])

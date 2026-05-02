@@ -2,18 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Building2, Briefcase, UserCheck, MapPin, Loader2 } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, UserCheck, MapPin, Landmark, Loader2 } from "lucide-react";
 import { getToken } from "@/lib/api";
 import { CompaniesTab } from "@/components/admin/settings/CompaniesTab";
 import { PositionsTab } from "@/components/admin/settings/PositionsTab";
 import { RepresentativesTab } from "@/components/admin/settings/RepresentativesTab";
 import { SpainAddressesTab } from "@/components/admin/settings/SpainAddressesTab";
+import { BanksTab } from "@/components/admin/settings/BanksTab";
 
 const TABS = [
   { id: "companies", label: "Компании", icon: Building2 },
   { id: "positions", label: "Должности", icon: Briefcase },
   { id: "representatives", label: "Представители", icon: UserCheck },
   { id: "addresses", label: "Адреса в Испании", icon: MapPin },
+  { id: "banks", label: "Банки", icon: Landmark },
 ];
 
 export default function SettingsPage() {
@@ -54,7 +56,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Табы */}
-      <div className="flex gap-1 mb-4 border-b" style={{ borderColor: "var(--color-border-tertiary)", borderBottomWidth: 0.5 }}>
+      <div className="flex gap-1 mb-4 border-b flex-wrap" style={{ borderColor: "var(--color-border-tertiary)", borderBottomWidth: 0.5 }}>
         {TABS.map((tab) => {
           const isActive = tab.id === activeTab;
           const Icon = tab.icon;
@@ -82,6 +84,7 @@ export default function SettingsPage() {
         {activeTab === "positions" && <PositionsTab />}
         {activeTab === "representatives" && <RepresentativesTab />}
         {activeTab === "addresses" && <SpainAddressesTab />}
+        {activeTab === "banks" && <BanksTab />}
       </div>
     </div>
   );

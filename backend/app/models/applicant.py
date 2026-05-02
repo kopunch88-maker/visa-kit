@@ -15,6 +15,10 @@ Pack 11 fix: большинство полей сделаны Optional/nullable.
 
 Связан с Application 1:N (теоретически один человек может подавать несколько раз —
 например, если первый отказ).
+
+Pack 16: добавлено поле bank_id (FK на Bank). Существующие поля bank_name/bic
+остаются для обратной совместимости и денормализации (могут быть пустыми, если
+выбран bank_id — тогда реквизиты берутся из связанного банка).
 """
 
 from datetime import date
@@ -77,7 +81,20 @@ class Applicant(TimestampMixin, table=True):
     inn: Optional[str] = Field(default=None, max_length=12)
 
     # === Personal banking ===
-    bank_account: Optional[str] = Field(default=None, max_length=32)
+    # Pack 16: bank_id — FK на справочник банков (новый способ).
+    # Старые поля bank_name/bic/correspondent_account остаются для обратной
+    # совместимости — заполняются автоматически из Bank при сохранении в drawer
+    # (или вручную если bank_id не выбран).
+    bank_id: Optional[int] = Field(
+        default=None,
+        foreign_key="bank.id",
+        index=True,
+        description="Pack 16: FK на справочник банков. None если используются legacy поля ниже.",
+    )
+    bank_account: Optional[str] = Field(
+        default=None, max_length=32, index=True,
+        description="20-значный расчётный счёт клиента. Pack 16 проверяет уникальность при генерации.",
+    )
     bank_name: Optional[str] = Field(default=None, max_length=128)
     bank_bic: Optional[str] = Field(default=None, max_length=16)
     bank_correspondent_account: Optional[str] = Field(default=None, max_length=32)
@@ -142,8 +159,8 @@ class WorkRecord(SQLModel):
 
 class ApplicantCreate(SQLModel):
     """
-    Pack 11: все поля кроме имён теперь Optional. Это позволяет создавать
-    запись по шагам мастера, не требуя всех данных сразу.
+    Pack 11: все поля кроме имён теперь Optional.
+    Pack 16: добавлены bank_id + банковские поля.
     """
     last_name_native: str
     first_name_native: str
@@ -162,6 +179,12 @@ class ApplicantCreate(SQLModel):
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
     inn: Optional[str] = None
+    # Pack 16: banking
+    bank_id: Optional[int] = None
+    bank_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_bic: Optional[str] = None
+    bank_correspondent_account: Optional[str] = None
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
@@ -195,6 +218,12 @@ class ApplicantUpdate(SQLModel):
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
     inn: Optional[str] = None
+    # Pack 16: banking
+    bank_id: Optional[int] = None
+    bank_account: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_bic: Optional[str] = None
+    bank_correspondent_account: Optional[str] = None
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None

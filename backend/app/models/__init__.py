@@ -21,6 +21,9 @@ from .spain_address import (
     SpainAddress, SpainAddressCreate, SpainAddressUpdate, SpainAddressRead,
 )
 
+# Pack 16: Bank directory
+from .bank import Bank, BankCreate, BankUpdate, BankRead
+
 # Application entities
 from .applicant import (
     Applicant, ApplicantCreate, ApplicantUpdate, ApplicantRead,
@@ -34,7 +37,7 @@ from .application import (
     ApplicationRead, ApplicationStatus, TasaType,
 )
 
-# Supporting entities (smaller, grouped together)
+# Supporting entities
 from ._supporting import (
     PreviousResidence,
     UploadedFile, UploadedFileKind,
@@ -44,15 +47,13 @@ from ._supporting import (
 )
 
 # Pack 13: client documents for OCR
-# Имена ApplicantDocumentType / ApplicantDocumentStatus — чтобы не конфликтовать
-# с DocumentType из _supporting (для GeneratedDocument)
 from .applicant_document import (
     ApplicantDocument,
     ApplicantDocumentType,
     ApplicantDocumentStatus,
 )
 
-# Pack 15: translations of rendered documents to Spanish
+# Pack 15: translations
 from .translation import (
     Translation,
     TranslationKind,
@@ -68,6 +69,8 @@ __all__ = [
     "Position", "PositionCreate", "PositionUpdate", "PositionRead",
     "Representative", "RepresentativeCreate", "RepresentativeUpdate", "RepresentativeRead",
     "SpainAddress", "SpainAddressCreate", "SpainAddressUpdate", "SpainAddressRead",
+    # Pack 16: Bank
+    "Bank", "BankCreate", "BankUpdate", "BankRead",
     # Application
     "Applicant", "ApplicantCreate", "ApplicantUpdate", "ApplicantRead",
     "EducationRecord", "WorkRecord",
