@@ -1,17 +1,32 @@
 """
-Pack 17.1.1 — диагностические endpoints для тестирования сервисов автогенерации ИНН.
+Pack 17.1.3 — диагностические endpoints с УЛУЧШЕННЫМ логированием ошибок.
 
-Изменения от 17.1:
-- В RmspCandidateOut добавлены dt_*  поля и estimated_npd_start
-- Добавлен query параметр strict_region для теста с/без фильтра по региону
-- Добавлен endpoint /rmsp-multipage для тестирования агрегации страниц
+Назначение: понять почему RMSP и NPD endpoints перестали отвечать.
+Гипотезы:
+- ФНС забанила Railway IP за частые запросы
+- Временный сбой ФНС
+- Сетевая проблема Railway
+
+Этот файл добавляет:
+1. /admin/inn-debug/connectivity-check — простой ping к nalog.ru хостам
+   Показывает: статус, заголовки ответа, точную ошибку
+2. /admin/inn-debug/rmsp-search — с детальным логированием ошибок
+3. /admin/inn-debug/npd-check — с детальным логированием ошибок
+4. Прежние endpoints оставлены для совместимости
+
+Использование:
+1. Сначала вызвать /connectivity-check — увидеть может ли Railway достучаться
+2. Если nalog.ru отвечает — анализировать каждый endpoint отдельно
+3. Если nalog.ru НЕ отвечает — Railway IP забанен, нужно ждать или менять подход
 """
 
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
@@ -34,6 +49,108 @@ router = APIRouter(
 )
 
 
+# ============================================================================
+# CONNECTIVITY CHECK — для определения причины проблем
+# ============================================================================
+
+@router.get(
+    "/connectivity-check",
+    summary="Проверка доступности хостов nalog.ru с Railway",
+)
+async def connectivity_check(_user=Depends(require_manager)):
+    """
+    Делает простые GET-запросы на главные страницы nalog.ru хостов.
+    Показывает доступен ли каждый хост и какие ответы приходят.
+
+    Это ПЕРВЫЙ тест который надо делать когда что-то идёт не так — он покажет
+    проблема ли в сети или в коде клиента.
+    """
+    targets = [
+        ("rmsp-pp.nalog.ru main", "https://rmsp-pp.nalog.ru/"),
+        ("rmsp-pp.nalog.ru search.html", "https://rmsp-pp.nalog.ru/search.html?sk=SZ&kladr=2300000700000"),
+        ("statusnpd.nalog.ru main", "https://statusnpd.nalog.ru/"),
+        ("npd.nalog.ru main", "https://npd.nalog.ru/"),
+        ("nalog.ru main", "https://www.nalog.ru/"),
+        ("google.com (control)", "https://www.google.com/"),
+    ]
+
+    results = []
+    timeout = httpx.Timeout(15.0, connect=10.0)
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/147.0.0.0 Safari/537.36"
+    )
+
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": user_agent},
+    ) as client:
+        for name, url in targets:
+            try:
+                response = await client.get(url)
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "ok": True,
+                    "status_code": response.status_code,
+                    "headers_sample": {
+                        k: v for k, v in list(response.headers.items())[:8]
+                    },
+                    "body_size_bytes": len(response.content),
+                    "body_preview": response.text[:200] if response.text else None,
+                })
+            except httpx.TimeoutException as e:
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "ok": False,
+                    "error_type": "TimeoutException",
+                    "error_message": str(e),
+                })
+            except httpx.ConnectError as e:
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "ok": False,
+                    "error_type": "ConnectError",
+                    "error_message": str(e) or "(empty — возможно RST или DNS)",
+                })
+            except httpx.HTTPError as e:
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "ok": False,
+                    "error_type": e.__class__.__name__,
+                    "error_message": str(e) or "(empty)",
+                })
+            except Exception as e:
+                results.append({
+                    "name": name,
+                    "url": url,
+                    "ok": False,
+                    "error_type": e.__class__.__name__,
+                    "error_message": str(e) or "(empty)",
+                    "traceback": traceback.format_exc()[-500:],
+                })
+
+    return {
+        "results": results,
+        "interpretation": (
+            "Если nalog.ru хосты отвечают (status 2xx или 3xx) — сеть в порядке, "
+            "проблема в коде клиента. "
+            "Если ConnectError/Timeout на nalog.ru но Google работает — Railway IP "
+            "забанен на ФНС (или nalog.ru банит датацентры/ботов). "
+            "Если ВСЕ хосты падают — проблема с сетью Railway."
+        ),
+    }
+
+
+# ============================================================================
+# RMSP SEARCH — с детальным error reporting
+# ============================================================================
+
 class RmspCandidateOut(BaseModel):
     inn: str
     full_name: str
@@ -42,65 +159,22 @@ class RmspCandidateOut(BaseModel):
     region_code: str
     ogrn: Optional[str] = None
     is_self_employed: bool
-    # Pack 17.1.1
     dt_create: Optional[str] = None
     dt_support_begin: Optional[str] = None
     dt_support_period: Optional[str] = None
     estimated_npd_start: Optional[str] = None
 
 
-class RmspSearchResponse(BaseModel):
-    kladr_code: str
-    page: int
-    page_size: int
-    strict_region_filter: bool
-    candidates: list[RmspCandidateOut]
-    count: int
-    note: str
-
-
-class NpdCheckResponse(BaseModel):
-    inn: str
-    is_active: bool
-    request_date: str
-    registration_date: Optional[str] = None
-    full_name: Optional[str] = None
-    message: Optional[str] = None
-    raw: Optional[dict] = None
-
-
-class GeneratedAddressOut(BaseModel):
-    full: str
-    postal_code: str
-    region_name: str
-    city_name: str
-    street: str
-    house: str
-    apartment: str
-    kladr_code: str
-
-
-@router.get(
-    "/rmsp-search",
-    response_model=RmspSearchResponse,
-    summary="Тест поиска самозанятых в реестре rmsp-pp.nalog.ru",
-)
+@router.get("/rmsp-search", summary="Тест поиска самозанятых")
 async def test_rmsp_search(
     kladr_code: str = Query(...),
     page: int = Query(1, ge=1),
     page_size: int = Query(20),
-    strict_region: bool = Query(
-        True,
-        description="Если True — пост-фильтр по region_code (первые 2 цифры KLADR). "
-                    "Если False — возвращаем что отдаёт ФНС как есть.",
-    ),
+    strict_region: bool = Query(True),
     _user=Depends(require_manager),
 ):
     """
-    Делает запрос к rmsp-pp.nalog.ru и возвращает список самозанятых.
-
-    Pack 17.1.1: kladr теперь передаётся И в URL И в body.
-    Пост-фильтр по region_code (опционально через strict_region=false).
+    С детальным error reporting в ответе.
     """
     if page_size not in (10, 20, 50, 100):
         raise HTTPException(
@@ -117,18 +191,30 @@ async def test_rmsp_search(
                 strict_region_filter=strict_region,
             )
     except RmspError as e:
-        log.error(f"[inn-debug] RMSP error: {e}")
-        raise HTTPException(status_code=502, detail=f"RMSP error: {e}")
+        log.exception("[inn-debug] RMSP error")
+        return {
+            "ok": False,
+            "error_type": "RmspError",
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
     except Exception as e:
         log.exception("[inn-debug] Unexpected RMSP error")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+        return {
+            "ok": False,
+            "error_type": e.__class__.__name__,
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
 
-    return RmspSearchResponse(
-        kladr_code=kladr_code,
-        page=page,
-        page_size=page_size,
-        strict_region_filter=strict_region,
-        candidates=[
+    return {
+        "ok": True,
+        "kladr_code": kladr_code,
+        "page": page,
+        "page_size": page_size,
+        "strict_region_filter": strict_region,
+        "count": len(candidates),
+        "candidates": [
             RmspCandidateOut(
                 inn=c.inn,
                 full_name=c.full_name,
@@ -141,23 +227,17 @@ async def test_rmsp_search(
                 dt_support_begin=c.dt_support_begin,
                 dt_support_period=c.dt_support_period,
                 estimated_npd_start=c.estimated_npd_start,
-            )
+            ).model_dump()
             for c in candidates
         ],
-        count=len(candidates),
-        note=(
-            f"Region filter: {'STRICT (по первым 2 цифрам KLADR)' if strict_region else 'OFF'}. "
-            f"Если count=0 при strict=true — попробуй strict_region=false "
-            f"чтобы увидеть что налоговая возвращает без фильтрации."
-        ),
-    )
+    }
 
 
-@router.get(
-    "/rmsp-multipage",
-    response_model=RmspSearchResponse,
-    summary="Сбор кандидатов с нескольких страниц (агрегация)",
-)
+# ============================================================================
+# RMSP MULTIPAGE
+# ============================================================================
+
+@router.get("/rmsp-multipage", summary="Multipage поиск с агрегацией")
 async def test_rmsp_multipage(
     kladr_code: str = Query(...),
     max_candidates: int = Query(50, ge=1, le=200),
@@ -165,12 +245,6 @@ async def test_rmsp_multipage(
     strict_region: bool = Query(True),
     _user=Depends(require_manager),
 ):
-    """
-    Pack 17.1.1: пробивает несколько страниц подряд пока не наберём
-    max_candidates самозанятых ИЗ НУЖНОГО РЕГИОНА.
-
-    Полезно когда ФНС не применяет фильтр и нужно агрегировать.
-    """
     try:
         async with RmspClient() as client:
             candidates = await client.search_multiple_pages(
@@ -181,18 +255,27 @@ async def test_rmsp_multipage(
                 strict_region_filter=strict_region,
             )
     except RmspError as e:
-        log.error(f"[inn-debug] RMSP error: {e}")
-        raise HTTPException(status_code=502, detail=f"RMSP error: {e}")
+        log.exception("[inn-debug] RMSP error")
+        return {
+            "ok": False,
+            "error_type": "RmspError",
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
     except Exception as e:
         log.exception("[inn-debug] Unexpected RMSP error")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+        return {
+            "ok": False,
+            "error_type": e.__class__.__name__,
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
 
-    return RmspSearchResponse(
-        kladr_code=kladr_code,
-        page=0,  # multipage не имеет одной страницы
-        page_size=100,
-        strict_region_filter=strict_region,
-        candidates=[
+    return {
+        "ok": True,
+        "kladr_code": kladr_code,
+        "count": len(candidates),
+        "candidates": [
             RmspCandidateOut(
                 inn=c.inn,
                 full_name=c.full_name,
@@ -205,27 +288,21 @@ async def test_rmsp_multipage(
                 dt_support_begin=c.dt_support_begin,
                 dt_support_period=c.dt_support_period,
                 estimated_npd_start=c.estimated_npd_start,
-            )
+            ).model_dump()
             for c in candidates
         ],
-        count=len(candidates),
-        note=f"Multipage aggregation: max {max_pages} страниц по 100 записей.",
-    )
+    }
 
 
-@router.get(
-    "/npd-check",
-    response_model=NpdCheckResponse,
-    summary="Тест проверки статуса самозанятого через npd.nalog.ru",
-)
+# ============================================================================
+# NPD CHECK
+# ============================================================================
+
+@router.get("/npd-check", summary="Тест проверки статуса НПД")
 async def test_npd_check(
     inn: str = Query(...),
     _user=Depends(require_manager),
 ):
-    """
-    Проверка статуса НПД через ФНС API.
-    Лимит 2 запроса/мин с одного IP — клиент ждёт автоматически.
-    """
     if not inn or len(inn) != 12 or not inn.isdigit():
         raise HTTPException(
             status_code=422, detail="ИНН должен быть из 12 цифр (физлицо)",
@@ -235,31 +312,42 @@ async def test_npd_check(
         async with NpdStatusChecker() as checker:
             result = await checker.check(inn=inn)
     except NpdStatusError as e:
-        log.error(f"[inn-debug] NPD error: {e}")
-        raise HTTPException(status_code=502, detail=f"NPD error: {e}")
+        log.exception("[inn-debug] NPD error")
+        return {
+            "ok": False,
+            "error_type": "NpdStatusError",
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
     except Exception as e:
         log.exception("[inn-debug] Unexpected NPD error")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+        return {
+            "ok": False,
+            "error_type": e.__class__.__name__,
+            "error_message": str(e) or "(empty)",
+            "traceback": traceback.format_exc()[-1500:],
+        }
 
-    return NpdCheckResponse(
-        inn=result.inn,
-        is_active=result.is_active,
-        request_date=result.request_date.isoformat(),
-        registration_date=(
+    return {
+        "ok": True,
+        "inn": result.inn,
+        "is_active": result.is_active,
+        "request_date": result.request_date.isoformat(),
+        "registration_date": (
             result.registration_date.isoformat()
-            if result.registration_date
-            else None
+            if result.registration_date else None
         ),
-        full_name=result.full_name or None,
-        message=result.message,
-        raw=result.raw,
-    )
+        "full_name": result.full_name or None,
+        "message": result.message,
+        "raw": result.raw,
+    }
 
 
-@router.get(
-    "/generate-address",
-    response_model=GeneratedAddressOut,
-)
+# ============================================================================
+# ADDRESS GEN + KNOWN REGIONS (без сети, всегда работают)
+# ============================================================================
+
+@router.get("/generate-address")
 def test_generate_address(
     kladr_code: str = Query(...),
     _user=Depends(require_manager),
@@ -277,16 +365,16 @@ def test_generate_address(
         )
 
     addr = generate_address(kladr_code)
-    return GeneratedAddressOut(
-        full=addr.full,
-        postal_code=addr.postal_code,
-        region_name=addr.region_name,
-        city_name=addr.city_name,
-        street=addr.street,
-        house=addr.house,
-        apartment=addr.apartment,
-        kladr_code=addr.kladr_code,
-    )
+    return {
+        "full": addr.full,
+        "postal_code": addr.postal_code,
+        "region_name": addr.region_name,
+        "city_name": addr.city_name,
+        "street": addr.street,
+        "house": addr.house,
+        "apartment": addr.apartment,
+        "kladr_code": addr.kladr_code,
+    }
 
 
 @router.get("/known-regions")
