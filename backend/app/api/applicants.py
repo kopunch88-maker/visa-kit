@@ -3,6 +3,8 @@ Applicants admin endpoints — для админки чтобы получать
 
 Pack 8: эндпоинты возвращают dict (без валидации Pydantic), как в client_portal.
 Pack 14 finishing: добавлены PATCH endpoint и /transliterate для иностранцев.
+Pack 16.1: добавлены банковские поля (bank_id, bank_account, ...) в whitelist
+для редактирования через ApplicantDrawer.
 """
 from typing import Optional
 
@@ -52,7 +54,8 @@ def get_applicant(
 # Pack 14 finishing — PATCH endpoint
 # ============================================================================
 
-# Поля которые менеджер может редактировать через ApplicantDrawer
+# Поля которые менеджер может редактировать через ApplicantDrawer.
+# Pack 16.1: добавлены bank_* поля.
 _PATCHABLE_FIELDS = {
     "last_name_native", "first_name_native", "middle_name_native",
     "last_name_latin", "first_name_latin",
@@ -63,6 +66,12 @@ _PATCHABLE_FIELDS = {
     "home_address", "home_address_line1", "home_address_line2",
     "home_country",
     "email", "phone",
+    # Pack 16.1 — банковские поля
+    "bank_id",
+    "bank_account",
+    "bank_name",
+    "bank_bic",
+    "bank_correspondent_account",
 }
 
 # Поля русского ФИО — к ним применяется normalize_russian_case при сохранении
@@ -70,6 +79,9 @@ _NATIVE_NAME_FIELDS = {"last_name_native", "first_name_native", "middle_name_nat
 
 # Поля латинского ФИО — оставляем uppercase как в паспорте
 _LATIN_NAME_FIELDS = {"last_name_latin", "first_name_latin"}
+
+# Pack 16.1: целочисленные поля — приводим к int
+_INT_FIELDS = {"bank_id"}
 
 
 @router.patch("/{applicant_id}")
@@ -84,10 +96,12 @@ def update_applicant(
 
     Pack 14 finishing: позволяет менеджеру вписать русские ФИО для иностранцев,
     исправить гражданство и т.д.
+    Pack 16.1: + банковские поля (bank_id, bank_account, ...).
 
     Применяет нормализацию:
     - Русские ФИО → Title Case (Иванов, не ИВАНОВ)
     - Латинские ФИО → как есть, но trim (паспорт обычно UPPERCASE — оставляем)
+    - bank_id → приводим к int (frontend может прислать строкой "1")
 
     Body — dict с любыми полями из _PATCHABLE_FIELDS.
     """
@@ -124,9 +138,17 @@ def update_applicant(
             if field in _NATIVE_NAME_FIELDS:
                 value = normalize_russian_case(value)
 
+            # Pack 16.1: bank_id может прийти как строка — приводим к int
+            if field in _INT_FIELDS:
+                try:
+                    value = int(value)
+                except (ValueError, TypeError):
+                    raise HTTPException(400, f"Field {field} must be an integer")
+
             # Латинские ФИО — оставляем как менеджер ввёл, только trim
             # (обычно UPPERCASE, как в паспорте)
 
+        # Pack 16.1: bank_id может прийти как число напрямую — это ок
         setattr(applicant, field, value)
 
     session.add(applicant)
@@ -147,23 +169,6 @@ def transliterate(
 ) -> dict:
     """
     Транслитерирует латинское ФИО в русский черновик с учётом языка.
-
-    Менеджер использует это в ApplicantDrawer — кнопка «✨ Транслитерировать»
-    рядом с полями русского ФИО.
-
-    Body:
-        {
-            "last_name_latin": "YUKSEL",
-            "first_name_latin": "VEDAT",
-            "nationality": "TUR"  // опционально, ISO-3
-        }
-
-    Returns:
-        {
-            "last_name_native": "Юксел",   // черновик! менеджер может поправить
-            "first_name_native": "Ведат",
-            "warning": "Это автоматический черновик, проверьте правильность"
-        }
     """
     last_lat = (body.get("last_name_latin") or "").strip()
     first_lat = (body.get("first_name_latin") or "").strip()
