@@ -75,6 +75,7 @@ from app.api import (  # noqa: E402
     banks,
     regions,
     inn_debug,
+    inn_generation,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -93,6 +94,7 @@ app.include_router(translations.router, prefix="/api")
 app.include_router(banks.router, prefix="/api")
 app.include_router(regions.router, prefix="/api")
 app.include_router(inn_debug.router, prefix="/api")
+app.include_router(inn_generation.router, prefix="/api")
 
 
 @app.get("/", tags=["meta"])

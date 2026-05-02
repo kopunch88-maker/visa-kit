@@ -1583,3 +1583,83 @@ export async function deleteRegion(id: number): Promise<void> {
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
 }
 
+
+// ============================================================================
+// Pack 17.2 — INN auto-generation API client
+// ============================================================================
+
+export type InnSuggestionResponse = {
+  inn: string;
+  full_name_rmsp: string;
+  region_code: string;
+
+  home_address: string;
+  address_was_generated: boolean;
+
+  estimated_npd_start: string | null;
+  estimated_npd_start_raw: string | null;
+
+  target_kladr_code: string;
+  target_region_name: string;
+
+  region_pick_source: string;
+  region_pick_explanation: string;
+
+  yandex_search_url: string;
+  rusprofile_url: string;
+};
+
+export type InnAcceptPayload = {
+  inn: string;
+  registration_date?: string | null;
+  home_address: string;
+  kladr_code: string;
+  region_pick_source?: string;
+};
+
+export type InnAcceptResult = {
+  applicant_id: number;
+  inn: string;
+  inn_registration_date: string | null;
+  inn_source: string;
+  inn_kladr_code: string;
+  home_address: string;
+};
+
+/**
+ * Pack 17.2: подбирает ИНН + адрес + дату для заявителя через rmsp-pp.nalog.ru.
+ * НЕ сохраняет в БД — только возвращает кандидата для отображения в модале.
+ *
+ * Каждый вызов даёт нового кандидата (sortBy ИНН + skip used_inns).
+ */
+export async function suggestInn(applicantId: number): Promise<InnSuggestionResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/inn-suggest`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Pack 17.2: сохраняет выбранного кандидата в applicant.
+ * После сохранения этот ИНН попадает в used_inns — не будет предложен другому.
+ */
+export async function acceptInn(
+  applicantId: number,
+  payload: InnAcceptPayload,
+): Promise<InnAcceptResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/inn-accept`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
