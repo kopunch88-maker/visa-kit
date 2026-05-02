@@ -7,21 +7,20 @@ Endpoints:
 - GET  /api/admin/registry/imports — история импортов
 - GET  /api/admin/registry/preview — посмотреть несколько записей в БД (для отладки)
 
-Импорт занимает 10-30 минут (~5 ГБ распакованного XML), поэтому запускается
+Импорт занимает 10-30 минут (~1-3 ГБ распакованного XML), поэтому запускается
 в BackgroundTasks. Прогресс смотрим через /import-status.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from app.dependencies import get_session, require_manager
-from app.models import User
+from app.db.session import get_session
 from app.models.self_employed_registry import (
     SelfEmployedRegistryStats,
     RegistryImportLogRead,
@@ -33,6 +32,8 @@ from app.services.inn_generator.dump_importer import (
     resolve_latest_dump_url,
 )
 from app.services.inn_generator.pipeline import get_registry_stats
+
+from .dependencies import require_manager
 
 
 log = logging.getLogger(__name__)
@@ -61,9 +62,9 @@ def start_import(
     - purge_old=True (по умолчанию) — удаляет НЕиспользованные записи
       перед импортом. Использованные ИНН (is_used=true) не трогаются.
     - Импорт идёт в фоне (BackgroundTasks). Размер распакованного XML
-      может быть до 5 ГБ, поэтому занимает 10-30 минут.
+      может быть до 3 ГБ, поэтому занимает 10-30 минут.
 
-    Возвращает запись RegistryImportLog со статусом 'running'.
+    Возвращает запись RegistryImportLog со статусом 'queued'.
     Чтобы узнать прогресс — GET /admin/registry/import-status или
     GET /admin/registry/imports.
     """

@@ -17,13 +17,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from app.dependencies import get_session, require_manager
-from app.models import Applicant, Application, Company, User
+from app.db.session import get_session
+from app.models import Applicant, Application, Company
 from app.services.inn_generator.pipeline import (
     InnPipelineError,
     suggest_inn_for_applicant,
     mark_inn_as_used,
 )
+
+from .dependencies import require_manager
 
 
 log = logging.getLogger(__name__)
