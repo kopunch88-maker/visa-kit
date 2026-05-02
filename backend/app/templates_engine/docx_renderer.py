@@ -6,8 +6,14 @@ Bank statement рендерится особым способом: после с
 python-docx, находим строку-образец с маркерами __TX_*__ и клонируем её
 для каждой транзакции, заменяя маркеры на реальные данные.
 
-Это даёт таблицу 1-в-1 с эталоном Альфа-банка, потому что мы клонируем
-её собственную XML-структуру, не пытаясь её воссоздать.
+Pack 16.4 changes:
+- _replace_markers_in_tr теперь поддерживает многострочные значения —
+  если описание содержит '\\n' (например зарплата от компании), для
+  каждой строки создаётся отдельный <w:p> в ячейке.
+- Добавлена _remove_empty_paragraph_between_tables — убирает пустой
+  параграф между таблицей операций и таблицей подписи, чтобы подпись
+  поместилась сразу после операций (без перевода на 2-ю страницу
+  если на 1-й есть место).
 """
 
 import io
@@ -18,12 +24,16 @@ from docx import Document
 from docx.oxml.ns import qn
 from docxtpl import DocxTemplate
 from sqlmodel import Session
+import lxml.etree as etree
 
 from app.models import Application
 from .context import build_context
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates" / "docx"
+
+W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
 
 
 def _render(template_name: str, context: dict) -> bytes:
@@ -104,7 +114,6 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     for table in doc.tables:
         if len(table.rows) < 2:
             continue
-        # Проверяем, есть ли маркер __TX_DATE__ в первой ячейке второй строки
         second_row = table.rows[1]
         if second_row.cells and "__TX_DATE__" in second_row.cells[0].text:
             tx_table = table
@@ -112,7 +121,6 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
             break
 
     if tx_table is None or template_row is None:
-        # Шаблон не содержит маркер-строку — возвращаем как есть
         result_buffer = io.BytesIO()
         doc.save(result_buffer)
         return result_buffer.getvalue()
@@ -124,15 +132,15 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
 
     for idx, tx in enumerate(transactions):
         new_tr = deepcopy(template_tr_xml)
-        # Заменяем маркеры на реальные значения через прямой XML
         _replace_markers_in_tr(new_tr, tx)
-        # Вставляем перед строкой-образцом (потом её удалим)
         parent.insert(insert_position + idx, new_tr)
 
     # Удаляем оригинальную строку-образец
     parent.remove(template_tr_xml)
 
-    # Сохраняем результат
+    # Pack 16.4: убираем пустой параграф между таблицами
+    _remove_empty_paragraph_between_tables(doc)
+
     result_buffer = io.BytesIO()
     doc.save(result_buffer)
     return result_buffer.getvalue()
@@ -140,11 +148,12 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
 
 def _replace_markers_in_tr(tr_element, tx: dict):
     """
-    Идёт по всем <w:t> элементам внутри строки таблицы и заменяет маркеры
-    на значения из словаря транзакции.
+    Заменяет маркеры __TX_*__ на значения транзакции в строке таблицы.
 
-    Так как мы обходим именно <w:t> элементы (а не текст ячеек целиком),
-    стили (size, color, spacing) сохраняются.
+    Pack 16.4: если значение содержит '\\n' (как в описании зарплаты —
+    Плательщик / ИНН / Счёт / Назначение платежа), разбивает его на
+    отдельные параграфы в ячейке. Word игнорирует '\\n' в <w:t> тегах —
+    для реального переноса нужны отдельные <w:p>.
     """
     marker_to_value = {
         "__TX_DATE__": tx.get("date_formatted", ""),
@@ -153,8 +162,86 @@ def _replace_markers_in_tr(tr_element, tx: dict):
         "__TX_AMOUNT__": tx.get("amount_formatted", ""),
     }
 
-    # Находим все <w:t> элементы и заменяем тексты-маркеры
-    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    for t in tr_element.iter(f"{namespace}t"):
-        if t.text and t.text in marker_to_value:
-            t.text = marker_to_value[t.text]
+    cells = tr_element.findall('.//w:tc', NS)
+
+    for cell in cells:
+        paragraphs = cell.findall('.//w:p', NS)
+
+        for p in paragraphs:
+            ts = p.findall('.//w:t', NS)
+            full_text = "".join(t.text or "" for t in ts)
+
+            for marker, value in marker_to_value.items():
+                if marker in full_text:
+                    if '\n' in value:
+                        _replace_marker_with_multiline(cell, p, marker, value)
+                    else:
+                        _replace_marker_inline(p, marker, value)
+                    break
+
+
+def _replace_marker_inline(p_element, marker: str, value: str):
+    """Простая замена маркера в текстах параграфа."""
+    for t in p_element.findall('.//w:t', NS):
+        if t.text and marker in t.text:
+            t.text = t.text.replace(marker, value)
+
+
+def _replace_marker_with_multiline(cell_element, p_element, marker: str, multiline_value: str):
+    """
+    Заменяет маркер на многострочное значение, разбивая на отдельные параграфы.
+
+    Стратегия:
+    - Первая строка значения подставляется в существующий <w:p>
+    - Для остальных строк создаются deepcopy этого <w:p>, текст заменяется
+    - Новые параграфы вставляются после оригинального в ячейке
+
+    Это сохраняет форматирование (отступы, стиль, размер шрифта).
+    """
+    lines = multiline_value.split('\n')
+    if not lines:
+        _replace_marker_inline(p_element, marker, "")
+        return
+
+    # Заменяем маркер в первом параграфе на первую строку
+    _replace_marker_inline(p_element, marker, lines[0])
+
+    # Для остальных строк создаём копии параграфа
+    parent_of_p = p_element.getparent()
+    p_index = list(parent_of_p).index(p_element)
+    insert_position = p_index + 1
+
+    for line in lines[1:]:
+        new_p = deepcopy(p_element)
+        # В копии текст содержит lines[0] — заменим на текущую line
+        ts_in_new = new_p.findall('.//w:t', NS)
+        for t in ts_in_new:
+            if t.text and lines[0] in t.text:
+                t.text = t.text.replace(lines[0], line, 1)
+                break
+        parent_of_p.insert(insert_position, new_p)
+        insert_position += 1
+
+
+def _remove_empty_paragraph_between_tables(doc):
+    """
+    Pack 16.4: убирает пустой параграф между таблицей операций и таблицей подписи,
+    чтобы подпись могла поместиться сразу после операций.
+    """
+    body = doc.element.body
+    children = list(body)
+
+    for i in range(len(children) - 2):
+        if etree.QName(children[i]).localname != 'tbl':
+            continue
+        if etree.QName(children[i + 1]).localname != 'p':
+            continue
+        if etree.QName(children[i + 2]).localname != 'tbl':
+            continue
+
+        ts = children[i + 1].findall('.//w:t', NS)
+        full_text = "".join(t.text or "" for t in ts).strip()
+
+        if not full_text:
+            body.remove(children[i + 1])
+            break
