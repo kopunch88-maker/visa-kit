@@ -135,7 +135,6 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
         _replace_markers_in_tr(new_tr, tx)
 
         # Pack 16.5: серый фон у строк дохода (зарплата от компании).
-        # В оригинале Алиева такие строки имеют <w:shd fill="E8E8E8"/> в каждой ячейке.
         amount = tx.get("amount")
         if amount is not None:
             try:
@@ -144,6 +143,12 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
                 amount_val = 0
             if amount_val > 0:
                 _apply_gray_shading_to_row(new_tr)
+
+        # Pack 16.5b: <w:cantSplit/> — запрет разрыва строки между страницами.
+        # Если строка не помещается на текущей странице, вся строка переносится
+        # на следующую (это стандартное поведение банковских выписок —
+        # они не разрывают одну операцию пополам).
+        _set_cant_split(new_tr)
 
         parent.insert(insert_position + idx, new_tr)
 
@@ -289,3 +294,32 @@ def _apply_gray_shading_to_row(tr_element):
         shd.set(f'{W_NS}val', 'clear')
         shd.set(f'{W_NS}color', 'auto')
         shd.set(f'{W_NS}fill', 'E8E8E8')
+
+
+def _set_cant_split(tr_element):
+    """
+    Pack 16.5b: добавляет <w:cantSplit/> в <w:trPr> строки таблицы.
+
+    Это запрещает Word разрывать строку между страницами — если строка
+    не помещается на текущей странице, она ЦЕЛИКОМ переносится на
+    следующую (стандарт банковских выписок).
+    """
+    trPr = tr_element.find('w:trPr', NS)
+    if trPr is None:
+        # Создаём trPr и кладём его первым (после положения tblPrEx)
+        trPr = etree.Element(f'{W_NS}trPr')
+        # Найдём куда вставить — trPr должен быть до <w:tc>
+        tc_idx = None
+        for i, child in enumerate(tr_element):
+            if etree.QName(child).localname == 'tc':
+                tc_idx = i
+                break
+        if tc_idx is not None:
+            tr_element.insert(tc_idx, trPr)
+        else:
+            tr_element.append(trPr)
+
+    # Проверим — может уже есть cantSplit
+    existing = trPr.find('w:cantSplit', NS)
+    if existing is None:
+        cant_split = etree.SubElement(trPr, f'{W_NS}cantSplit')
