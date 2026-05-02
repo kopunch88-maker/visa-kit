@@ -514,6 +514,43 @@ def _build_eur_data(application: Application) -> dict:
 # Bank statement
 # ============================================================================
 
+def _enrich_bank_with_statement_fields(
+    bank_data: dict,
+    application: Application,
+) -> dict:
+    """
+    Pack 16.2: добавляет в bank_data дополнительные поля для шапки выписки:
+    - account_open_date / account_open_date_formatted: дата открытия счёта
+      (предполагаем contract_sign_date - 6 месяцев, если другое не задано)
+    - statement_date / statement_date_formatted: дата формирования выписки
+      (период_end + 1 день, либо submission_date)
+
+    Эти поля нужны новому шаблону bank_statement_template.docx.
+    """
+    from datetime import timedelta
+
+    # Дата открытия счёта: contract_sign_date минус ~6 месяцев (≈183 дня).
+    # Не используем relativedelta чтобы не тащить dateutil как зависимость.
+    account_open_date = None
+    if application.contract_sign_date:
+        account_open_date = application.contract_sign_date - timedelta(days=183)
+
+    # Дата формирования выписки: period_end + 1 день, иначе submission_date
+    statement_date = None
+    period_end = bank_data.get("period_end")
+    if period_end:
+        statement_date = period_end + timedelta(days=1)
+    elif application.submission_date:
+        statement_date = application.submission_date
+
+    bank_data["account_open_date"] = account_open_date
+    bank_data["account_open_date_formatted"] = fmt_date_ru(account_open_date) if account_open_date else ""
+    bank_data["statement_date"] = statement_date
+    bank_data["statement_date_formatted"] = fmt_date_ru(statement_date) if statement_date else ""
+
+    return bank_data
+
+
 def _build_bank_context(application: Application, company: Company | None) -> dict:
     if application.bank_transactions_override:
         try:
@@ -559,7 +596,11 @@ def _build_bank_context(application: Application, company: Company | None) -> di
 
 
 def _generate_fresh_bank_context(application: Application, company: Company | None) -> dict:
-    if not application.submission_date or not company or not application.salary_rub:
+    # Pack 16.2: используем contract_sign_date как fallback если submission_date None.
+    # Это позволяет генерировать выписку до того как менеджер выставит дату подачи.
+    base_date = application.submission_date or application.contract_sign_date
+
+    if not base_date or not company or not application.salary_rub:
         return {
             "period_start": None, "period_end": None,
             "opening_balance": Decimal("0"), "closing_balance": Decimal("0"),
@@ -574,7 +615,7 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
     monthly_fee = application.bank_monthly_fee or DEFAULT_BANK_FEE_PER_MONTH
 
     result = generate_default_transactions(
-        submission_date=application.submission_date,
+        submission_date=base_date,
         salary_rub=application.salary_rub,
         contract_number=application.contract_number or "",
         contract_sign_date=application.contract_sign_date,
@@ -630,6 +671,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     monthly_docs = _generate_monthly_documents(application)
     eur_data = _build_eur_data(application) if application.salary_rub else None
     bank_data = _build_bank_context(application, company)
+    # Pack 16.2: добавляем поля для шапки выписки
+    bank_data = _enrich_bank_with_statement_fields(bank_data, application)
 
     # Парсим паспорт по гражданству
     passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
@@ -760,3 +803,4 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "fmt_money_kop": fmt_money_kop,
         "fmt_amount_signed": fmt_amount_signed,
     }
+
