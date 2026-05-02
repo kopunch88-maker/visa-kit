@@ -239,6 +239,28 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
             if t.text and lines[0] in t.text:
                 t.text = t.text.replace(lines[0], line, 1)
                 break
+
+        # Pack 16.5d: для длинных строк (например «Назначение платежа: ...»),
+        # которые при переносе должны выравниваться по началу первой строки,
+        # а не по новому отступу firstLine, поправляем ind:
+        # left += firstLine, firstLine = 0.
+        # В оригинале Алиева у параграфа «Назначение платежа» именно такая
+        # структура: left=388, без firstLine (199 + 195 ≈ 388 + округление).
+        if line.startswith("Назначение платежа"):
+            ppr = new_p.find('w:pPr', NS)
+            if ppr is not None:
+                ind = ppr.find('w:ind', NS)
+                if ind is not None:
+                    left_attr = f'{W_NS}left'
+                    firstLine_attr = f'{W_NS}firstLine'
+                    cur_left = int(ind.get(left_attr, '0') or '0')
+                    cur_first = int(ind.get(firstLine_attr, '0') or '0')
+                    if cur_first > 0:
+                        ind.set(left_attr, str(cur_left + cur_first))
+                        # Удаляем firstLine
+                        if firstLine_attr in ind.attrib:
+                            del ind.attrib[firstLine_attr]
+
         parent_of_p.insert(insert_position, new_p)
         insert_position += 1
 
