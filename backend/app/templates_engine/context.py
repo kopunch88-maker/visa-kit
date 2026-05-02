@@ -328,6 +328,160 @@ def _money_to_words_es(amount: int) -> str:
 # Helpers for applicant
 # ============================================================================
 
+def _bank_statement_address_line1(applicant: Applicant) -> str:
+    """
+    Pack 16.5: первая строка адреса для шапки выписки.
+
+    Применяет сокращения адресных объектов согласно Приказу Минфина 171н
+    (область → обл., край → кр., городской округ → г.о., улица → ул., и т.д.).
+    Это позволяет даже длинным адресам помещаться в фиксированную рамку textbox.
+
+    Если applicant.home_address_line1 задан явно — сокращаем и возвращаем его.
+    Иначе — сокращаем home_address и разбиваем на 2 строки по запятой.
+    """
+    if applicant.home_address_line1:
+        return abbreviate_address(applicant.home_address_line1)
+    addr = abbreviate_address(applicant.home_address or "")
+    if not addr:
+        return ""
+    line1, _ = _split_address_at_comma(addr)
+    return line1
+
+
+def _bank_statement_address_line2(applicant: Applicant) -> str:
+    """
+    Pack 16.5: вторая строка адреса для шапки выписки. См. _bank_statement_address_line1.
+    """
+    if applicant.home_address_line2:
+        return abbreviate_address(applicant.home_address_line2)
+    addr = abbreviate_address(applicant.home_address or "")
+    if not addr:
+        return ""
+    # Если есть line1 явно, а line2 нет — line2 пустая
+    if applicant.home_address_line1:
+        return ""
+    _, line2 = _split_address_at_comma(addr)
+    return line2
+
+
+def _split_address_at_comma(addr: str) -> tuple[str, str]:
+    """
+    Разбивает адрес на 2 строки по запятой ближайшей к середине.
+
+    После применения сокращений адрес становится короче, и разбивка
+    на 2 строки по запятой даёт хорошо отформатированную пару.
+    """
+    if len(addr) <= 50:
+        # Короткий — целиком в line1
+        return addr, ""
+
+    # Ищем запятую ближе к середине
+    target = len(addr) // 2
+    commas = [i for i, ch in enumerate(addr) if ch == ',']
+    if not commas:
+        return addr, ""
+
+    # Ближайшая к target
+    best_comma = min(commas, key=lambda i: abs(i - target))
+    line1 = addr[: best_comma + 1].strip()
+    line2 = addr[best_comma + 1 :].strip()
+    return line1, line2
+
+
+# Pack 16.5: словарь сокращений адресных объектов по Приказу Минфина 171н
+# от 05.11.2015. Применяется ко всем адресам в шапке банковской выписки чтобы
+# длинные адреса помещались в фиксированную рамку textbox.
+_ADDRESS_ABBREVIATIONS = [
+    # Субъекты РФ
+    (r'\bАвтономный округ\b', 'АО'),
+    (r'\bАвтономная область\b', 'Аобл'),
+    (r'\bРеспублика\b', 'Респ.'),
+    (r'\bкрая\b', 'кр.'),
+    (r'\bкрай\b', 'кр.'),
+    (r'\bобласти\b', 'обл.'),
+    (r'\bобласть\b', 'обл.'),
+    # Районы / округа / поселения (длинные первыми чтобы не перепутать с короткими)
+    (r'\bмуниципальный район\b', 'м.р-н'),
+    (r'\bмуниципальное образование\b', 'м.о.'),
+    (r'\bгородской округ\b', 'г.о.'),
+    (r'\bсельское поселение\b', 'с.п.'),
+    (r'\bгородское поселение\b', 'г.п.'),
+    (r'\bсельская администрация\b', 'с/а'),
+    (r'\bсельский округ\b', 'с/о'),
+    (r'\bсельсовет\b', 'с/с'),
+    (r'\bрайон\b', 'р-н'),
+    # Населённые пункты
+    (r'\bпоселок городского типа\b', 'пгт'),
+    (r'\bдачный поселок\b', 'дп'),
+    (r'\bкурортный поселок\b', 'кп'),
+    (r'\bрабочий поселок\b', 'рп'),
+    (r'\bпромышленная зона\b', 'промзона'),
+    (r'\bжелезнодорожная станция\b', 'ж/д ст.'),
+    (r'\bнаселенный пункт\b', 'нп'),
+    (r'\bстаница\b', 'ст-ца'),
+    (r'\bдеревня\b', 'д.'),
+    (r'\bсело\b', 'с.'),
+    (r'\bпосёлок\b', 'пос.'),
+    (r'\bпоселок\b', 'пос.'),
+    (r'\bгород\b', 'г.'),
+    (r'\bхутор\b', 'х.'),
+    (r'\bслобода\b', 'сл.'),
+    # Улицы / переулки / проспекты
+    (r'\bпроспект\b', 'пр-кт'),
+    (r'\bпереулок\b', 'пер.'),
+    (r'\bбульвар\b', 'б-р'),
+    (r'\bнабережная\b', 'наб.'),
+    (r'\bплощадь\b', 'пл.'),
+    (r'\bмикрорайон\b', 'мкр'),
+    (r'\bквартал\b', 'кв-л'),
+    (r'\bтупик\b', 'туп.'),
+    (r'\bшоссе\b', 'ш.'),
+    (r'\bтерритория\b', 'тер.'),
+    (r'\bдорога\b', 'дор.'),
+    (r'\bулица\b', 'ул.'),
+    # Дом / квартира / помещение
+    (r'\bкорпус\b', 'к.'),
+    (r'\bстроение\b', 'стр.'),
+    (r'\bпомещение\b', 'пом.'),
+    (r'\bквартира\b', 'кв.'),
+    (r'\bкомната\b', 'комн.'),
+    (r'\bоффис\b', 'оф.'),
+    (r'\bофис\b', 'оф.'),
+    (r'\bдом\b', 'д.'),
+]
+
+
+def abbreviate_address(addr: str | None) -> str:
+    """
+    Pack 16.5: применяет официальные сокращения адресных объектов к строке адреса.
+
+    Использует словарь _ADDRESS_ABBREVIATIONS, основанный на Приказе Минфина РФ
+    №171н от 05.11.2015 «Об утверждении Перечня элементов планировочной структуры…
+    и Правил сокращенного наименования адресообразующих элементов».
+
+    Сокращения регистронезависимы и сохраняют пробелы между элементами.
+    Слова без явного типа (например, названия улиц «Линия», «Аллея») не трогаются.
+
+    Примеры:
+        "Краснодарский край, городской округ Сочи, село Раздольное, улица Тепличная"
+        → "Краснодарский кр., г.о. Сочи, с. Раздольное, ул. Тепличная"
+
+        "Республика Татарстан, муниципальный район Высокогорский"
+        → "Респ. Татарстан, м.р-н Высокогорский"
+    """
+    if not addr:
+        return ""
+
+    import re
+    result = addr
+    for pattern, replacement in _ADDRESS_ABBREVIATIONS:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+
+    # Чистим пробелы — двойные пробелы могли появиться после сокращений
+    result = re.sub(r'  +', ' ', result)
+    return result.strip()
+
+
 def _full_name_native(applicant: Applicant) -> str:
     """
     Полное имя на русском (Им. падеж).
@@ -699,8 +853,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "passport_issuer": applicant.passport_issuer or "",
             "inn": applicant.inn or "",
             "home_address": applicant.home_address or "",
-            "home_address_line1": applicant.home_address_line1 or applicant.home_address or "",
-            "home_address_line2": applicant.home_address_line2 or "",
+            "home_address_line1": _bank_statement_address_line1(applicant),
+            "home_address_line2": _bank_statement_address_line2(applicant),
             "email": applicant.email,
             "phone": applicant.phone,
             "nationality_ru_genitive": _NATIONALITY_GENITIVE_RU.get(
