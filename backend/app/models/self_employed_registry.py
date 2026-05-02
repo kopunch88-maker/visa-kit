@@ -6,8 +6,14 @@ Pack 17.2.4: вместо live-парсинга rmsp-pp.nalog.ru качаем р
 парсим XML стримом, сохраняем сюда. Поиск идёт по индексам в этой таблице
 вместо HTTP-запросов к ФНС.
 
-Источник: data-YYYYMMDD-structure-20230615.zip (~5 ГБ распакованный XML)
-Обновляется ФНС 15-го числа каждого месяца.
+Источник: data-YYYYMMDD-structure-20230615.zip
+Реальные размеры (на 15.04.2026):
+- ZIP: ~735 МБ
+- Распакованный XML: ~12.25 ГБ (включает ИП, ЮЛ, физлиц)
+- Самозанятых там ~5-10% от общего числа записей
+
+Pack 17.2.4.1: zip_size_bytes/xml_size_bytes объявлены как BigInteger,
+потому что 12+ ГБ не помещается в обычный 32-битный INTEGER (макс ~2.1 ГБ).
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional
 
+from sqlalchemy import BigInteger, Column
 from sqlmodel import SQLModel, Field
 
 
@@ -74,7 +81,7 @@ class RegistryImportLog(SQLModel, table=True):
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = Field(default=None)
 
-    # 'running' / 'success' / 'failed'
+    # 'queued' / 'running' / 'success' / 'failed'
     status: str = Field(default="running", max_length=16)
 
     # Статистика парсинга
@@ -82,9 +89,15 @@ class RegistryImportLog(SQLModel, table=True):
     records_imported: int = Field(default=0)      # сохранено в БД (только самозанятые)
     records_skipped: int = Field(default=0)       # отброшено (ИП, не НПД, дубли и т.д.)
 
-    # Размеры файлов для диагностики
-    zip_size_bytes: Optional[int] = Field(default=None)
-    xml_size_bytes: Optional[int] = Field(default=None)
+    # Размеры файлов для диагностики — BigInteger т.к. XML может быть >2 ГБ
+    zip_size_bytes: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True),
+    )
+    xml_size_bytes: Optional[int] = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True),
+    )
 
     error_message: Optional[str] = Field(default=None, max_length=2048)
 

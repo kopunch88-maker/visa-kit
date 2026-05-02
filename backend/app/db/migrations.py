@@ -438,3 +438,66 @@ def apply_pack17_2_4_migration():
                 log.info("[migration:pack17_2_4] Indexes verified on registry_import_log")
             except Exception as e:
                 log.warning(f"[migration:pack17_2_4] registry_import_log index creation failed: {e}")
+
+
+def apply_pack17_2_4_1_migration():
+    """
+    Pack 17.2.4.1: меняет тип колонок registry_import_log.zip_size_bytes
+    и xml_size_bytes с INTEGER на BIGINT.
+
+    Причина: реальный распакованный XML дампа ФНС ~12.25 ГБ, что не
+    помещается в обычный 32-битный INTEGER (макс ~2.1 ГБ). Это вызывало
+    NumericValueOutOfRange при первом импорте.
+
+    Идемпотентна — если колонки уже BIGINT, просто пропускаем.
+    Только для PostgreSQL (в SQLite типы динамические — не нужно).
+    """
+    if not _is_postgres():
+        log.debug("[migration:pack17_2_4_1] Skipping (only needed for PostgreSQL)")
+        return
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "registry_import_log"):
+            log.debug("[migration:pack17_2_4_1] Table registry_import_log not yet created")
+            return
+
+        for col in ("zip_size_bytes", "xml_size_bytes"):
+            try:
+                # Проверим текущий тип
+                row = conn.execute(text("""
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'registry_import_log' AND column_name = :col
+                """), {"col": col}).first()
+
+                if row is None:
+                    log.warning(f"[migration:pack17_2_4_1] Column {col} not found")
+                    continue
+
+                current_type = row[0]
+                if current_type == "bigint":
+                    log.debug(f"[migration:pack17_2_4_1] {col} already BIGINT, skip")
+                    continue
+
+                conn.execute(text(
+                    f"ALTER TABLE registry_import_log "
+                    f"ALTER COLUMN {col} TYPE BIGINT"
+                ))
+                log.info(f"[migration:pack17_2_4_1] Changed {col} from {current_type} to BIGINT")
+            except Exception as e:
+                log.warning(f"[migration:pack17_2_4_1] Failed to alter {col}: {e}")
+
+        # Также сбросим зависшие 'queued' и 'running' импорты (они уже мертвы — это другой контейнер)
+        try:
+            result = conn.execute(text("""
+                UPDATE registry_import_log
+                SET status = 'failed',
+                    finished_at = COALESCE(finished_at, NOW()),
+                    error_message = COALESCE(error_message,
+                        'Reset by pack17_2_4_1 migration: container restarted before completion')
+                WHERE status IN ('queued', 'running')
+            """))
+            reset_count = result.rowcount or 0
+            if reset_count > 0:
+                log.info(f"[migration:pack17_2_4_1] Reset {reset_count} stuck import(s) to 'failed'")
+        except Exception as e:
+            log.warning(f"[migration:pack17_2_4_1] Failed to reset stuck imports: {e}")

@@ -206,14 +206,15 @@ def import_dump(
         # === 1. Качаем ZIP стримом ===
         log.info(f"[importer] Downloading {dump_url} -> {zip_path}")
         zip_size = _download_stream(dump_url, zip_path)
-        log_entry.zip_size_bytes = zip_size
+        # Сохраняем метрику отдельно, чтобы её сбой не поломал импорт
+        _safe_save_metric(session, log_entry, "zip_size_bytes", zip_size)
 
         # === 2. Распаковываем ===
         extract_dir = work_dir / "extract"
         extract_dir.mkdir(exist_ok=True)
         log.info(f"[importer] Extracting to {extract_dir}")
         xml_total_size = _extract_zip(zip_path, extract_dir)
-        log_entry.xml_size_bytes = xml_total_size
+        _safe_save_metric(session, log_entry, "xml_size_bytes", xml_total_size)
 
         # === 3. Удаляем старые неиспользованные записи (опционально) ===
         if purge_old:
@@ -238,10 +239,25 @@ def import_dump(
 
     except Exception as e:
         log.exception(f"[importer] FAILED: {e}")
-        log_entry.status = "failed"
-        log_entry.finished_at = datetime.utcnow()
-        log_entry.error_message = str(e)[:2000]
-        session.commit()
+        # Сессия может быть в "failed" состоянии после исключения — rollback
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        # Перечитываем log_entry заново (он мог стать detached)
+        try:
+            session.refresh(log_entry)
+        except Exception:
+            log_entry = session.get(RegistryImportLog, log_entry.id)
+        if log_entry is not None:
+            log_entry.status = "failed"
+            log_entry.finished_at = datetime.utcnow()
+            log_entry.error_message = str(e)[:2000]
+            try:
+                session.commit()
+            except Exception as commit_err:
+                log.warning(f"[importer] Failed to write 'failed' status: {commit_err}")
+                session.rollback()
         raise
 
     finally:
@@ -253,9 +269,34 @@ def import_dump(
         except Exception as cleanup_err:
             log.warning(f"[importer] Cleanup failed: {cleanup_err}")
 
-    session.commit()
-    session.refresh(log_entry)
+    try:
+        session.commit()
+        session.refresh(log_entry)
+    except Exception as e:
+        log.warning(f"[importer] Final commit failed: {e}")
+        session.rollback()
     return log_entry
+
+
+def _safe_save_metric(session: Session, log_entry: RegistryImportLog, field: str, value: int) -> None:
+    """
+    Безопасно сохраняет одну метрику в RegistryImportLog.
+
+    Если сохранение падает (например, переполнение типа) — логируем warning
+    и продолжаем работу. Метрики не критичны для самого импорта.
+    """
+    try:
+        setattr(log_entry, field, value)
+        session.add(log_entry)
+        session.commit()
+        session.refresh(log_entry)
+        log.info(f"[importer] Saved metric {field}={value}")
+    except Exception as e:
+        log.warning(f"[importer] Failed to save metric {field}={value}: {e}")
+        try:
+            session.rollback()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

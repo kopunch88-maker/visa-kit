@@ -19,6 +19,7 @@ from app.db.migrations import (
     apply_pack16_migration,
     apply_pack17_0_migration,
     apply_pack17_2_4_migration,
+    apply_pack17_2_4_1_migration,
 )
 
 
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
     apply_pack16_migration()  # Bank table + applicant.bank_id (Pack 16)
     apply_pack17_0_migration()  # Region table + applicant.inn_* fields (Pack 17.0)
     apply_pack17_2_4_migration()  # self_employed_registry + registry_import_log (Pack 17.2.4)
+    apply_pack17_2_4_1_migration()  # BigInteger fix + reset stuck imports (Pack 17.2.4.1)
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
