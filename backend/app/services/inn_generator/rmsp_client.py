@@ -48,7 +48,13 @@ DEFAULT_USER_AGENT = (
     "Chrome/147.0.0.0 Safari/537.36"
 )
 
-HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+# Pack 17.2.3: увеличены таймауты — ФНС иногда тянет TCP-handshake до 30 сек
+# с Railway IP. Особенно после burst-rate-limit она отвечает медленно.
+HTTP_TIMEOUT = httpx.Timeout(60.0, connect=30.0)
+
+# Retry parameters внутри _ensure_session_for_kladr
+SESSION_INIT_RETRIES = 2
+SESSION_INIT_RETRY_DELAY = 8.0  # сек
 
 
 class RmspError(Exception):
@@ -139,6 +145,12 @@ class RmspClient:
             self._client = None
 
     async def _ensure_session_for_kladr(self, kladr_code: str) -> None:
+        """
+        GET search.html для получения JSESSIONID + регистрации фильтра в session.
+
+        Pack 17.2.3: добавлен retry с exponential backoff на ConnectTimeout/ConnectError —
+        ФНС иногда не отвечает на TCP-handshake с Railway IP с первого раза.
+        """
         if self._client is None:
             raise RmspError("RmspClient не инициализирован — используй `async with`")
 
@@ -146,17 +158,45 @@ class RmspClient:
             return
 
         params = {"sk": "SZ", "kladr": kladr_code}
-        log.info(f"[rmsp] GET search.html sk=SZ kladr={kladr_code}")
+        last_error: Optional[Exception] = None
+        delay = SESSION_INIT_RETRY_DELAY
 
-        try:
-            response = await self._client.get(RMSP_SEARCH_HTML, params=params)
-            response.raise_for_status()
-            self._session_kladr = kladr_code
-            log.debug(
-                f"[rmsp] Session ready, cookies={dict(self._client.cookies)}"
+        for attempt in range(SESSION_INIT_RETRIES + 1):
+            log.info(
+                f"[rmsp] GET search.html sk=SZ kladr={kladr_code} "
+                f"(attempt {attempt + 1}/{SESSION_INIT_RETRIES + 1})"
             )
-        except httpx.HTTPError as e:
-            raise RmspError(f"Failed to initialize rmsp session: {e}") from e
+            try:
+                response = await self._client.get(RMSP_SEARCH_HTML, params=params)
+                response.raise_for_status()
+                self._session_kladr = kladr_code
+                log.debug(
+                    f"[rmsp] Session ready, cookies={dict(self._client.cookies)}"
+                )
+                return
+            except (httpx.ConnectTimeout, httpx.ConnectError, httpx.ReadTimeout) as e:
+                last_error = e
+                error_class = e.__class__.__name__
+                error_msg = str(e) or "(empty)"
+                log.warning(
+                    f"[rmsp] Session init {error_class} on attempt {attempt + 1}: "
+                    f"{error_msg}"
+                )
+
+                if attempt < SESSION_INIT_RETRIES:
+                    log.info(f"[rmsp] Waiting {delay:.0f}s before retry...")
+                    await asyncio.sleep(delay)
+                    delay *= 2
+            except httpx.HTTPError as e:
+                # 4xx/5xx — не имеет смысла retry, сразу возвращаем ошибку
+                raise RmspError(
+                    f"Failed to initialize rmsp session (HTTP error): {e}"
+                ) from e
+
+        raise RmspError(
+            f"Failed to initialize rmsp session after "
+            f"{SESSION_INIT_RETRIES + 1} attempts: {last_error}"
+        ) from last_error
 
     async def search_self_employed(
         self,
