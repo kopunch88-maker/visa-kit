@@ -139,6 +139,7 @@ async def inn_suggest(
         company = session.get(Company, application.company_id)
 
     # === Запуск pipeline ===
+    import traceback
     try:
         suggestion: InnSuggestion = await suggest_inn_for_applicant(
             session=session,
@@ -148,10 +149,28 @@ async def inn_suggest(
         )
     except InnPipelineError as e:
         log.error(f"[inn-suggest] Pipeline error for applicant_id={applicant_id}: {e}")
-        raise HTTPException(status_code=502, detail=f"Pipeline error: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error_type": "InnPipelineError",
+                "message": str(e),
+                "hint": (
+                    "Если 'RMSP недоступен' — это burst-rate-limit ФНС. "
+                    "Подожди 1-2 минуты и попробуй снова. "
+                    "ФНС блокирует на 1-5 минут когда видит более 3-5 запросов за 10 секунд."
+                ),
+            },
+        )
     except Exception as e:
         log.exception(f"[inn-suggest] Unexpected error for applicant_id={applicant_id}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_type": e.__class__.__name__,
+                "message": str(e) or "(empty)",
+                "traceback": traceback.format_exc()[-1500:],
+            },
+        )
 
     # === Готовим ссылки для финальной проверки менеджером ===
     # Яндекс — поиск имени из реестра + ИНН (увидит ли там что-то светящееся)
