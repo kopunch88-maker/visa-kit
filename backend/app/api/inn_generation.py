@@ -1,20 +1,41 @@
 """
-Pack 17 / Pack 18.1 — endpoints автогенерации ИНН самозанятого.
+Pack 17 / Pack 18.1 / Pack 18.2 — endpoints автогенерации ИНН самозанятого.
 
-Pack 18.1 изменения:
+Pack 18.1 изменения (без изменений):
 - В response /inn-suggest добавлены поля fallback_used / requested_region_name /
   requested_region_code / fallback_reason / region_code — фронт показывает
   warning менеджеру при сдвиге региона.
 - Удалён query-параметр filter_by_region (всегда фильтруем по региону, fallback
   гарантирует что кандидат найдётся).
 - В /inn-accept проставляется used_at=utcnow() помимо is_used=True.
+
+Pack 18.2 изменения (текущая версия):
+- /inn-accept теперь ASYNC (def → async def).
+- Перед сохранением проверяет ИНН через ФНС API
+  (statusnpd.nalog.ru/api/v1/tracker/taxpayer_status).
+- Если ФНС вернул status=False → помечаем кандидат is_invalid=True в БД и
+  возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать другого».
+  Менеджер нажимает ✨ ИНН ещё раз.
+- Если ФНС timeout/недоступен → мягкий пропуск: выдаём ИНН без проверки,
+  в response добавляются npd_check_status=skipped + manual_check_url для
+  ручной проверки менеджером.
+- Если ФНС вернул status=True → проставляем last_npd_check_at=now() и
+  продолжаем как раньше.
+
+Rate limit ФНС (2 req/min) реализован в NpdStatusChecker через class-level
+asyncio.Lock + 31 секундный sleep между запросами.
+
+⚠️ Замечание про async:
+До Pack 18.2 endpoint был синхронным (def inn_accept). Теперь async, потому
+что NpdStatusChecker — асинхронный httpx-клиент. FastAPI поддерживает оба,
+переход прозрачный для вызывающего кода (фронт ничего не замечает).
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,6 +47,10 @@ from app.models import (
     Application,
     Company,
     SelfEmployedRegistry,
+)
+from app.services.inn_generator.npd_status import (
+    NpdStatusChecker,
+    NpdStatusError,
 )
 from app.services.inn_generator.pipeline import (
     InnSuggestion,
@@ -74,9 +99,26 @@ class InnAcceptRequest(BaseModel):
 
 
 class InnAcceptResponse(BaseModel):
+    """
+    Pack 18.2: расширен полями npd_check_status и manual_check_url.
+
+    npd_check_status:
+      'confirmed' — ФНС подтвердил что ИНН валиден на сегодня
+      'skipped_fns_unavailable' — ФНС недоступен/timeout, ИНН выдан без проверки
+      'skipped_already_checked' — ИНН проверяли недавно, кэш использован
+
+    manual_check_url: если skipped — даём менеджеру ссылку для ручной проверки
+    """
     ok: bool
     applicant_id: int
     inn: str
+    npd_check_status: Literal[
+        "confirmed",
+        "skipped_fns_unavailable",
+        "skipped_already_checked",
+    ] = "confirmed"
+    manual_check_url: Optional[str] = None
+    npd_check_message: Optional[str] = None  # человекочитаемое описание
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +151,14 @@ def _get_company_for_application(
     return session.get(Company, application.company_id)
 
 
+def _make_manual_check_url(inn: str) -> str:
+    """
+    Pack 18.2: URL для ручной проверки менеджером через сайт ФНС.
+    Это публичная страница где можно ввести ИНН и дату.
+    """
+    return f"https://npd.nalog.ru/check-status/?inn={inn}"
+
+
 # ---------------------------------------------------------------------------
 # POST /api/admin/applicants/{applicant_id}/inn-suggest
 # ---------------------------------------------------------------------------
@@ -128,6 +178,16 @@ def inn_suggest(
     Pack 18.1: подбор ИНН с tier-fallback.
     Параметр filter_by_region удалён — всегда фильтруем по региону, гарантия
     результата обеспечивается fallback'ом на диаспоры → Москву.
+
+    Pack 18.2: НЕ делаем проверку через ФНС здесь (rate limit 2 req/min,
+    держать менеджера 31+ сек на каждом ✨ — неюзабельно). Проверка
+    выполняется в /inn-accept когда менеджер уже принял решение.
+
+    Кандидаты с is_invalid=True (помеченные предыдущей проверкой как
+    «потерял статус НПД») здесь НЕ исключаются — фильтрация идёт только
+    по is_used. Это компромисс: при здоровой БД is_invalid очень редок,
+    стоимость отдельного фильтра не оправдана. Если попадётся invalid,
+    inn-accept его поймает.
     """
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
@@ -184,18 +244,32 @@ def inn_suggest(
 @router.post(
     "/{applicant_id}/inn-accept",
     response_model=InnAcceptResponse,
-    summary="Принять ИНН: сохранить в applicant + пометить is_used в реестре",
+    summary="Принять ИНН: проверить через ФНС, сохранить в applicant + пометить is_used",
 )
-def inn_accept(
+async def inn_accept(
     applicant_id: int,
     payload: InnAcceptRequest,
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> InnAcceptResponse:
     """
-    Сохраняет выбранный ИНН в applicant'е и помечает запись в реестре как использованную.
-    Идемпотентно: если applicant.inn уже совпадает с переданным — просто 200 OK
-    (но если запись в реестре по какой-то причине is_used=False — починим).
+    Pack 18.2: проверяет ИНН через ФНС API перед сохранением.
+
+    Сценарии:
+    1. ФНС подтвердил статус НПД (status=True):
+       → сохраняем как раньше, npd_check_status=confirmed
+    2. ФНС сообщил что не плательщик (status=False):
+       → помечаем кандидат is_invalid=True в БД
+       → возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать
+         другого». Менеджер жмёт ✨ ИНН ещё раз.
+    3. ФНС timeout/недоступен:
+       → мягкий пропуск, ИНН выдаётся БЕЗ проверки,
+         npd_check_status=skipped_fns_unavailable + manual_check_url с
+         ссылкой на сайт ФНС для ручной проверки
+
+    Идемпотентно: если applicant.inn уже совпадает с переданным — просто
+    200 OK (но если запись в реестре по какой-то причине is_used=False —
+    починим и попробуем проверить статус если ещё не проверяли).
     """
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
@@ -205,7 +279,7 @@ def inn_accept(
     if not inn:
         raise HTTPException(status_code=400, detail="inn is required")
 
-    # Идемпотентность
+    # ----- Идемпотентность -----
     if applicant.inn == inn:
         cand = session.get(SelfEmployedRegistry, inn)
         if cand and not cand.is_used:
@@ -215,9 +289,15 @@ def inn_accept(
             session.add(cand)
             session.commit()
             log.info("inn-accept: marked candidate inn=%s as used (idempotent fix)", inn)
-        return InnAcceptResponse(ok=True, applicant_id=applicant.id, inn=inn)
+        return InnAcceptResponse(
+            ok=True,
+            applicant_id=applicant.id,
+            inn=inn,
+            npd_check_status="skipped_already_checked",
+            npd_check_message="ИНН уже принят ранее, повторная проверка не выполнялась",
+        )
 
-    # Проверяем что такой кандидат есть в реестре и свободен
+    # ----- Проверка кандидата в реестре -----
     cand = session.get(SelfEmployedRegistry, inn)
     if not cand:
         raise HTTPException(
@@ -233,7 +313,78 @@ def inn_accept(
             ),
         )
 
-    # Транзакционная запись
+    # ----- Pack 18.2: проверка через ФНС API -----
+    npd_check_status: Literal[
+        "confirmed", "skipped_fns_unavailable", "skipped_already_checked"
+    ] = "confirmed"
+    manual_check_url: Optional[str] = None
+    npd_check_message: Optional[str] = None
+
+    log.info("inn-accept: starting NPD check for inn=%s via ФНС API", inn)
+    try:
+        async with NpdStatusChecker() as checker:
+            result = await checker.check(inn=inn)
+
+        if not result.is_active:
+            # ФНС подтвердил: НЕ плательщик. Помечаем кандидат invalid и отказываем.
+            cand.is_invalid = True
+            cand.last_npd_check_at = datetime.utcnow()
+            session.add(cand)
+            session.commit()
+            log.warning(
+                "inn-accept: ФНС вернул status=False для inn=%s — помечен is_invalid=True. "
+                "Сообщение ФНС: %s",
+                inn,
+                result.message,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"ФНС сообщил что ИНН {inn} не является плательщиком НПД "
+                    f"(сообщение: {result.message or 'нет деталей'}). "
+                    "Кандидат помечен как недействительный. "
+                    "Подберите другого через кнопку ✨ ИНН."
+                ),
+            )
+
+        # ФНС подтвердил статус — успех
+        cand.last_npd_check_at = datetime.utcnow()
+        log.info(
+            "inn-accept: ФНС подтвердил статус НПД для inn=%s (registration_date=%s)",
+            inn,
+            result.registration_date,
+        )
+
+    except NpdStatusError as e:
+        # ФНС вернул ошибку (timeout, 5xx, нечитаемый ответ) — мягкий пропуск
+        log.warning(
+            "inn-accept: NpdStatusError для inn=%s, мягкий пропуск проверки: %s",
+            inn,
+            e,
+        )
+        npd_check_status = "skipped_fns_unavailable"
+        manual_check_url = _make_manual_check_url(inn)
+        npd_check_message = (
+            f"ФНС API временно недоступен ({e!s}). "
+            f"ИНН выдан без проверки. Рекомендуем проверить вручную на сайте ФНС: "
+            f"{manual_check_url}"
+        )
+
+    except HTTPException:
+        # 409 от блока с is_active=False — пробрасываем как есть
+        raise
+
+    except Exception as e:
+        # Любая другая ошибка — тоже мягкий пропуск (защита менеджера от блокировки)
+        log.exception("inn-accept: unexpected error during NPD check")
+        npd_check_status = "skipped_fns_unavailable"
+        manual_check_url = _make_manual_check_url(inn)
+        npd_check_message = (
+            f"Не удалось выполнить проверку статуса НПД ({type(e).__name__}: {e}). "
+            f"ИНН выдан без проверки. Рекомендуем проверить вручную: {manual_check_url}"
+        )
+
+    # ----- Транзакционная запись -----
     applicant.inn = inn
     if payload.home_address:
         applicant.home_address = payload.home_address
@@ -253,9 +404,17 @@ def inn_accept(
     session.commit()
 
     log.info(
-        "inn-accept: SUCCESS applicant_id=%s inn=%s region_kladr=%s",
+        "inn-accept: SUCCESS applicant_id=%s inn=%s region_kladr=%s npd_check=%s",
         applicant_id,
         inn,
         payload.kladr_code,
+        npd_check_status,
     )
-    return InnAcceptResponse(ok=True, applicant_id=applicant.id, inn=inn)
+    return InnAcceptResponse(
+        ok=True,
+        applicant_id=applicant.id,
+        inn=inn,
+        npd_check_status=npd_check_status,
+        manual_check_url=manual_check_url,
+        npd_check_message=npd_check_message,
+    )

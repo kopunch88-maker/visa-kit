@@ -14,6 +14,10 @@ Pack 17.2.4: вместо live-парсинга rmsp-pp.nalog.ru качаем р
 
 Pack 17.2.4.1: zip_size_bytes/xml_size_bytes объявлены как BigInteger,
 потому что 12+ ГБ не помещается в обычный 32-битный INTEGER (макс ~2.1 ГБ).
+
+Pack 18.2: добавлены поля is_invalid и last_npd_check_at для отметки
+кандидатов которые потеряли статус НПД (проверяется через ФНС API
+statusnpd.nalog.ru при inn-accept).
 """
 
 from __future__ import annotations
@@ -63,6 +67,16 @@ class SelfEmployedRegistry(SQLModel, table=True):
 
     # Когда выдан
     used_at: Optional[datetime] = Field(default=None)
+
+    # Pack 18.2: пометка что ФНС API сообщил что этот ИНН — не плательщик НПД.
+    # Если is_invalid=True — кандидат не должен выдаваться через inn-suggest.
+    # Проверка делается при inn-accept через statusnpd.nalog.ru/api/v1/tracker/taxpayer_status.
+    is_invalid: bool = Field(default=False, index=True)
+
+    # Pack 18.2: timestamp последней проверки через ФНС API. Используется
+    # для возможного фонового batch (Pack 18.2.1) — чтобы периодически
+    # перепроверять кандидатов и обновлять is_invalid.
+    last_npd_check_at: Optional[datetime] = Field(default=None)
 
 
 class RegistryImportLog(SQLModel, table=True):
