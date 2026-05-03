@@ -1,21 +1,17 @@
 """
-Standalone скрипт для локального импорта дампа ФНС → Postgres Railway.
+Pack 17.2.5 — Standalone скрипт для локального импорта дампа SNRIP в Postgres Railway.
 
-Запускать с локального ПК (НЕ из Railway-контейнера) — там 16+ ГБ RAM
-и можно спокойно обработать 12 ГБ XML.
+Использует УЖЕ СКАЧАННЫЙ ZIP, если он лежит в одном из стандартных мест:
+  D:\\VISA\\visa_kit\\data-20260425-structure-20241025.zip
+  D:\\VISA\\data-20260425-structure-20241025.zip
+  D:\\VISA\\snrip_dump.zip
+
+Иначе скачивает свежайший дамп с портала ФНС.
 
 Использование:
     cd D:\\VISA\\visa_kit\\backend
-    .venv\\Scripts\\activate
-
-    # Установить зависимости (если ещё не установлены)
-    pip install lxml httpx sqlmodel psycopg2-binary python-dotenv tqdm
-
-    # Запустить импорт
+    .venv\\Scripts\\Activate.ps1
     python -m app.scripts.import_dump_local
-
-При первом запуске спросит DATABASE_URL и сохранит в .env.local
-(этот файл не должен попасть в git — добавлен в .gitignore).
 """
 
 from __future__ import annotations
@@ -24,37 +20,49 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, date
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# === Настройка логирования ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("import_dump_local")
-
-# Заглушим лишний шум sqlalchemy
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 
-# === 1. Загрузка DATABASE_URL ===
-
 ENV_FILE = Path(__file__).resolve().parents[3] / ".env.local"
-# .env.local лежит в корне visa_kit/ (рядом с frontend/, backend/)
+
+# Где искать уже скачанный ZIP
+LOCAL_ZIP_PATHS = [
+    Path("D:/VISA/visa_kit/data-20260425-structure-20241025.zip"),
+    Path("D:/VISA/data-20260425-structure-20241025.zip"),
+    Path("D:/VISA/snrip_dump.zip"),
+]
+
+
+def find_local_zip() -> Optional[Path]:
+    """Ищет валидный локальный ZIP файл."""
+    for p in LOCAL_ZIP_PATHS:
+        if not p.exists():
+            continue
+        if p.stat().st_size < 100_000_000:  # должен быть >100 МБ
+            continue
+        with open(p, "rb") as f:
+            magic = f.read(2)
+        if magic == b"PK":
+            return p
+    return None
 
 
 def load_or_prompt_database_url() -> str:
-    """Читает DATABASE_URL из .env.local или просит ввести в первый раз."""
-    # Если есть переменная окружения — используем её (priority)
     env_url = os.environ.get("DATABASE_URL")
     if env_url:
-        log.info(f"Using DATABASE_URL from environment")
+        log.info("Using DATABASE_URL from environment")
         return env_url
 
-    # Читаем .env.local
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -64,104 +72,96 @@ def load_or_prompt_database_url() -> str:
                     log.info(f"Using DATABASE_URL from {ENV_FILE}")
                     return url
 
-    # Просим пользователя ввести
     print()
     print("=" * 70)
     print("ПЕРВЫЙ ЗАПУСК — нужен DATABASE_PUBLIC_URL от Railway Postgres")
     print("=" * 70)
     print()
     print("Где взять:")
-    print("  1. Railway → твой проект visa-kit")
+    print("  1. Railway -> твой проект visa-kit")
     print("  2. Кликни на сервис Postgres (НЕ visa-kit)")
     print("  3. Вкладка Variables")
     print("  4. Скопируй значение DATABASE_PUBLIC_URL")
-    print("     (выглядит как postgresql://postgres:...@viaduct.proxy.rlwy.net:42569/railway)")
     print()
     url = input("DATABASE_URL: ").strip()
     if not url.startswith("postgresql://") and not url.startswith("postgres://"):
-        log.error("Это не похоже на postgres URL. Должно начинаться с postgresql://")
+        log.error("Это не похоже на postgres URL.")
         sys.exit(1)
 
-    # Сохраняем в .env.local
     ENV_FILE.write_text(f'DATABASE_URL="{url}"\n', encoding="utf-8")
     log.info(f"DATABASE_URL сохранён в {ENV_FILE}")
-    log.info("⚠️  Этот файл содержит пароль — не коммить его в git!")
-
+    log.info("ВАЖНО: этот файл содержит пароль - не коммить в git!")
     return url
 
 
 def main():
-    # === Загружаем URL и подсовываем как env (чтобы app.config его подхватил) ===
     database_url = load_or_prompt_database_url()
-    os.environ["DATABASE_URL"] = database_url
-
-    # Преобразуем postgres:// → postgresql:// (требование SQLAlchemy 2.x)
     if database_url.startswith("postgres://"):
         database_url = "postgresql://" + database_url[len("postgres://"):]
-        os.environ["DATABASE_URL"] = database_url
+    os.environ["DATABASE_URL"] = database_url
 
     log.info(f"Connecting to: {_redact_url(database_url)}")
 
-    # === Импорты ПОСЛЕ установки DATABASE_URL ===
     from sqlmodel import Session, create_engine
     from app.services.inn_generator.dump_importer import (
         import_dump,
         resolve_latest_dump_url,
     )
 
-    # === Создаём engine напрямую (без app.db.session чтобы не тянуть весь FastAPI) ===
     engine = create_engine(
         database_url,
         echo=False,
-        pool_pre_ping=True,  # переподключаться если соединение умерло
+        pool_pre_ping=True,
         connect_args={"connect_timeout": 30},
     )
 
-    # === Проверяем подключение и существование таблиц ===
+    # === Проверка БД ===
     log.info("Checking DB connection and schema...")
     from sqlalchemy import text, inspect
     with engine.connect() as conn:
         inspector = inspect(conn)
         table_names = set(inspector.get_table_names())
 
-        if "self_employed_registry" not in table_names:
-            log.error(
-                "Таблица self_employed_registry не найдена в БД. "
-                "Сначала задеплой Pack 17.2.4 на Railway чтобы init_db создала таблицы."
-            )
-            sys.exit(1)
+        for required in ("self_employed_registry", "registry_import_log"):
+            if required not in table_names:
+                log.error(f"Таблица {required} не найдена. Сначала задеплой миграции на Railway.")
+                sys.exit(1)
 
-        if "registry_import_log" not in table_names:
-            log.error(
-                "Таблица registry_import_log не найдена. "
-                "Сначала задеплой Pack 17.2.4 на Railway."
-            )
-            sys.exit(1)
-
-        # Текущая статистика
         total = conn.execute(text("SELECT COUNT(*) FROM self_employed_registry")).scalar()
         used = conn.execute(text("SELECT COUNT(*) FROM self_employed_registry WHERE is_used = TRUE")).scalar()
         log.info(f"DB OK. Current state: total={total}, used={used}, available={total - used}")
 
-    # === Резолвим URL свежего дампа ===
-    log.info("Resolving latest dump URL from FNS portal...")
-    dump_url = resolve_latest_dump_url()
-    log.info(f"Dump URL: {dump_url}")
+    # === Ищем локальный ZIP ===
+    local_zip = find_local_zip()
+    dump_url: Optional[str] = None
 
-    # === Подтверждение от пользователя ===
+    if local_zip:
+        log.info(f"✅ Found local ZIP: {local_zip} ({local_zip.stat().st_size / 1e6:.1f} MB)")
+        log.info("Будем использовать его (не качаем заново)")
+    else:
+        log.info("Локальный ZIP не найден — резолвим URL свежайшего дампа SNRIP...")
+        dump_url = resolve_latest_dump_url()
+        log.info(f"Будем качать: {dump_url}")
+
+    # === Подтверждение ===
     print()
     print("=" * 70)
-    print("ГОТОВО К ИМПОРТУ")
+    print("ГОТОВО К ИМПОРТУ (SNRIP / ИП на спецрежимах, отбор только НПД)")
     print("=" * 70)
-    print(f"Дамп:           {dump_url}")
-    print(f"Целевая БД:     {_redact_url(database_url)}")
-    print(f"Текущих записей: {total} (use={used})")
+    if local_zip:
+        print(f"Источник:        локальный файл {local_zip}")
+    else:
+        print(f"Источник:        качаем {dump_url}")
+    print(f"Целевая БД:      {_redact_url(database_url)}")
+    print(f"Текущих записей: {total} (used={used})")
     print()
     print("Что произойдёт:")
-    print("  1. Скачать ZIP (~735 МБ) — 5-10 минут")
-    print("  2. Распаковать XML (~12 ГБ) — нужно место на диске")
-    print("  3. Удалить НЕиспользованные записи (used не трогаем)")
-    print("  4. Парсить XML и заливать самозанятых в Postgres Railway")
+    if not local_zip:
+        print("  1. Скачать ZIP (~265 МБ) — 1-3 минуты")
+    print("  2. Удалить НЕиспользованные записи в БД (used не трогаем)")
+    print("  3. Парсить XML прямо из ZIP (без распаковки на диск)")
+    print("  4. Извлечь только ИП с режимом НПД (~565,000 записей)")
+    print("  5. Bulk-insert в Postgres Railway")
     print()
     confirm = input("Продолжить? (yes/no): ").strip().lower()
     if confirm not in ("y", "yes", "да", "д"):
@@ -174,44 +174,59 @@ def main():
     log.info("STARTING IMPORT")
     log.info("=" * 70)
 
+    log_status = "?"
+    log_records_total = 0
+    log_records_imported = 0
+    log_records_skipped = 0
+    log_zip_size = 0
+    log_xml_size = 0
+    log_error = None
+
     with Session(engine) as session:
         try:
             log_entry = import_dump(
                 session=session,
                 dump_url=dump_url,
                 purge_old=True,
+                local_zip_path=local_zip,
             )
+            # Считываем поля ВНУТРИ session — потом session закроется
+            log_status = log_entry.status
+            log_records_total = log_entry.records_total
+            log_records_imported = log_entry.records_imported
+            log_records_skipped = log_entry.records_skipped
+            log_zip_size = log_entry.zip_size_bytes or 0
+            log_xml_size = log_entry.xml_size_bytes or 0
+            log_error = log_entry.error_message
         except Exception as e:
             log.exception(f"Импорт упал: {e}")
             sys.exit(1)
 
     elapsed = time.time() - started
 
-    # === Результат ===
     print()
     print("=" * 70)
     print("ИМПОРТ ЗАВЕРШЁН")
     print("=" * 70)
-    print(f"Status:           {log_entry.status}")
-    print(f"Records total:    {log_entry.records_total}")
-    print(f"Records imported: {log_entry.records_imported}")
-    print(f"Records skipped:  {log_entry.records_skipped}")
-    print(f"ZIP size:         {(log_entry.zip_size_bytes or 0) / 1e6:.1f} MB")
-    print(f"XML size:         {(log_entry.xml_size_bytes or 0) / 1e9:.2f} GB")
+    print(f"Status:           {log_status}")
+    print(f"Records total:    {log_records_total:,}")
+    print(f"NPD imported:     {log_records_imported:,}")
+    print(f"Skipped (no NPD): {log_records_skipped:,}")
+    print(f"ZIP size:         {log_zip_size / 1e6:.1f} MB")
+    print(f"XML size:         {log_xml_size / 1e9:.2f} GB")
     print(f"Time:             {elapsed / 60:.1f} minutes")
-    if log_entry.error_message:
-        print(f"Error:            {log_entry.error_message}")
+    if log_error:
+        print(f"Error:            {log_error}")
 
     # Финальная статистика
     with engine.connect() as conn:
         total = conn.execute(text("SELECT COUNT(*) FROM self_employed_registry")).scalar()
         used = conn.execute(text("SELECT COUNT(*) FROM self_employed_registry WHERE is_used = TRUE")).scalar()
         print()
-        print(f"DB final: total={total}, used={used}, available={total - used}")
+        print(f"DB final: total={total:,}, used={used:,}, available={total - used:,}")
 
 
 def _redact_url(url: str) -> str:
-    """Скрываем пароль в URL для логов."""
     import re
     return re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", url)
 
