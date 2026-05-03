@@ -5,6 +5,13 @@ Pack 18.3 — Контекст для DOCX-шаблона `npd_certificate_templ
 Намеренно отделён от основного `context.build_context()` — справке не нужны
 банковская выписка, курсы ЦБ, акты, договоры и прочая обвязка пакета.
 
+Pack 18.3 v2 (изменения относительно v1):
+- Убрана валидация на обязательность inn_registration_date и inn_kladr_code.
+  Если они пустые — генерируются на лету и СОХРАНЯЮТСЯ в БД (write-back).
+  Это нужно для сценариев когда менеджер вводит ИНН руками (минуя кнопку
+  ✨ + Принять), или редактирует ИНН после applic'а.
+- Обязательной осталась только связка inn + passport_number.
+
 Логика подбора ИФНС/МФЦ:
 - Берём region_code = applicant.inn_kladr_code[:2]. Если пусто — fallback
   на applicant.inn[:2]. Если и ИНН пуст — поднимаем ValueError.
@@ -141,6 +148,80 @@ def _pick_mfc_employee(mfc: MfcOffice, applicant_id: int) -> str:
     return names[idx]
 
 
+def _ensure_inn_registration_date(
+    applicant: Applicant,
+    application: Application,
+    session: Session,
+) -> date:
+    """
+    Pack 18.3 v2 (Сценарий 2 и 3 — ручной ввод ИНН без inn-accept):
+    Если inn_registration_date пустой — генерируем на лету по схеме Pack 17.5
+    (contract_sign_date - 30..90 дней, детерминистично по applicant.id) и
+    сохраняем в БД. Повторные генерации дают ту же дату.
+    """
+    if applicant.inn_registration_date is not None:
+        return applicant.inn_registration_date
+
+    # Базовая дата: contract_sign_date если есть, иначе today()
+    base_date = application.contract_sign_date or date.today()
+    rng = Random(applicant.id or 0)
+    days_before = rng.randint(30, 90)
+    derived = base_date - timedelta(days=days_before)
+
+    log.info(
+        "Pack 18.3: applicant id=%s has no inn_registration_date, deriving "
+        "%s (= contract_sign_date or today - %s days) and writing back to DB",
+        applicant.id,
+        derived,
+        days_before,
+    )
+
+    applicant.inn_registration_date = derived
+    if not applicant.inn_source:
+        applicant.inn_source = "manual"  # ИНН видимо ввёлся руками
+    session.add(applicant)
+    session.commit()
+    session.refresh(applicant)
+
+    return derived
+
+
+def _ensure_inn_kladr_code(
+    applicant: Applicant,
+    session: Session,
+) -> str:
+    """
+    Pack 18.3 v2: если inn_kladr_code пустой, генерируем заглушку из inn[:2]
+    + 11 нулей (валидный 13-значный KLADR на уровне субъекта) и сохраняем
+    в БД.
+    """
+    existing = (applicant.inn_kladr_code or "").strip()
+    if len(existing) >= 2:
+        return existing
+
+    inn = (applicant.inn or "").strip()
+    if len(inn) < 2:
+        raise ValueError(
+            f"Applicant id={applicant.id} has neither inn_kladr_code nor inn — "
+            f"cannot derive region. Run inn-suggest first."
+        )
+
+    derived = inn[:2] + "0" * 11
+    log.info(
+        "Pack 18.3: applicant id=%s has no inn_kladr_code, deriving %s from "
+        "inn prefix and writing back to DB",
+        applicant.id,
+        derived,
+    )
+
+    applicant.inn_kladr_code = derived
+    session.add(applicant)
+    session.commit()
+    session.refresh(applicant)
+
+    return derived
+
+
 # ---------------------------------------------------------------------------
 # Главный entry point
 # ---------------------------------------------------------------------------
@@ -153,6 +234,10 @@ def build_npd_certificate_context(
 ) -> dict:
     """
     Собирает context для DOCX-шаблона `npd_certificate_template.docx`.
+
+    Pack 18.3 v2: автоматически дозаполняет inn_registration_date и
+    inn_kladr_code если они пустые (для сценариев ручного ввода ИНН).
+    Эти поля сохраняются обратно в БД при первой генерации.
 
     Аргументы:
         application — заявка (нужна только чтобы найти applicant_id; реально
@@ -176,12 +261,12 @@ def build_npd_certificate_context(
             f"Applicant id={applicant_id} not found"
         )
 
-    # Базовая валидация — без этих полей справка лишена смысла
+    # Базовая валидация — без этих полей справка лишена смысла.
+    # Pack 18.3 v2: inn_registration_date и inn_kladr_code больше не обязательны
+    # на входе — мы их дозаполним сами. Обязательные только inn и passport_number.
     missing: list[str] = []
     if not applicant.inn:
         missing.append("inn")
-    if not applicant.inn_registration_date:
-        missing.append("inn_registration_date")
     if not applicant.passport_number:
         missing.append("passport_number")
     if missing:
@@ -189,6 +274,10 @@ def build_npd_certificate_context(
             f"Applicant id={applicant_id} is missing required fields for NPD "
             f"certificate: {', '.join(missing)}. Run inn-suggest and fill passport first."
         )
+
+    # Pack 18.3 v2: дозаполняем недостающие поля ИНН (с записью в БД)
+    inn_registration_date = _ensure_inn_registration_date(applicant, application, session)
+    _ensure_inn_kladr_code(applicant, session)
 
     # ---- 1. Регион + ИФНС + МФЦ ----
     region_code = _resolve_region_code(applicant)
@@ -264,7 +353,7 @@ def build_npd_certificate_context(
             "issued_date_short": _format_date_short(issued_date),
             "issued_datetime_ru": _format_datetime_ru(issued_datetime),
             "passport_code": passport_code,
-            "npd_start_date_short": _format_date_short(applicant.inn_registration_date),
+            "npd_start_date_short": _format_date_short(inn_registration_date),
         },
         "ifns": {
             "full_name": ifns.full_name,
