@@ -1,12 +1,7 @@
 """
 Pack 18.0 — CRUD endpoints для справочников ИФНС и МФЦ.
 
-Используется в админке для просмотра/правки справочников.
-В будущем (Pack 18.4) при ручном добавлении кандидата из необычного региона
-менеджер сможет добавить новую ИФНС/МФЦ через UI.
-
-Сейчас минимальный CRUD: GET (list), GET (one), POST (create), PATCH (update),
-DELETE (soft — is_active=FALSE).
+FIX 2: region_code везде как str (varchar(2)).
 """
 from __future__ import annotations
 
@@ -31,7 +26,7 @@ router = APIRouter(prefix="/api/admin", tags=["ifns-mfc"])
 class IfnsOut(BaseModel):
     id: int
     code: str
-    region_code: int
+    region_code: str
     full_name: str
     short_name: str
     address: Optional[str] = None
@@ -44,7 +39,7 @@ class IfnsOut(BaseModel):
 
 class IfnsCreate(BaseModel):
     code: str = Field(min_length=4, max_length=4)
-    region_code: int
+    region_code: str = Field(min_length=2, max_length=2)
     full_name: str
     short_name: str
     address: Optional[str] = None
@@ -66,7 +61,7 @@ class IfnsPatch(BaseModel):
 
 class MfcOut(BaseModel):
     id: int
-    region_code: int
+    region_code: str
     city: str
     name: str
     address: str
@@ -78,7 +73,7 @@ class MfcOut(BaseModel):
 
 
 class MfcCreate(BaseModel):
-    region_code: int
+    region_code: str = Field(min_length=2, max_length=2)
     city: str
     name: str
     address: str
@@ -100,7 +95,7 @@ class MfcPatch(BaseModel):
 
 @router.get("/ifns", response_model=list[IfnsOut])
 def list_ifns(
-    region_code: Optional[int] = Query(None, description="Filter by subject code"),
+    region_code: Optional[str] = Query(None, description="Filter by 2-char subject code"),
     only_active: bool = Query(True),
     s: Session = Depends(get_session),
     _admin=Depends(get_current_admin_user),
@@ -132,7 +127,6 @@ def create_ifns(
     _admin=Depends(get_current_admin_user),
 ):
     if body.is_default:
-        # Снимаем is_default с других в том же регионе
         existing = s.exec(
             select(IfnsOffice).where(
                 IfnsOffice.region_code == body.region_code,
@@ -161,7 +155,6 @@ def patch_ifns(
     if not obj:
         raise HTTPException(404, "IFNS not found")
 
-    # Если включаем is_default — снимаем с других в том же регионе
     if body.is_default is True and not obj.is_default:
         others = s.exec(
             select(IfnsOffice).where(
@@ -192,7 +185,6 @@ def delete_ifns(
     obj = s.get(IfnsOffice, ifns_id)
     if not obj:
         raise HTTPException(404, "IFNS not found")
-    # Soft delete
     obj.is_active = False
     obj.updated_at = datetime.utcnow()
     s.add(obj)
@@ -206,7 +198,7 @@ def delete_ifns(
 
 @router.get("/mfc", response_model=list[MfcOut])
 def list_mfc(
-    region_code: Optional[int] = Query(None),
+    region_code: Optional[str] = Query(None),
     only_active: bool = Query(True),
     s: Session = Depends(get_session),
     _admin=Depends(get_current_admin_user),
