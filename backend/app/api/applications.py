@@ -31,6 +31,7 @@ from app.services.rendering import build_full_package
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv, render_bank_statement,
+    render_npd_certificate, 
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -448,6 +449,8 @@ _DOWNLOAD_FILES = {
     "designacion":      {"name": "12_Designacion_representante.pdf",            "kind": "pdf", "pdf_key": "12_Designacion_representante.pdf"},
     "compromiso":       {"name": "13_Compromiso_RETA.pdf",                      "kind": "pdf", "pdf_key": "13_Compromiso_RETA.pdf"},
     "declaracion":      {"name": "14_Declaracion_antecedentes.pdf",             "kind": "pdf", "pdf_key": "14_Declaracion_antecedentes.pdf"},
+       # Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
+    "npd_certificate":  {"name": "15_Справка_НПД.docx",        "kind": "docx", "fn": render_npd_certificate, "args": ()},  # ← ДОБАВИТЬ 
 }
 
 

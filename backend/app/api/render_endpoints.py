@@ -1,5 +1,6 @@
 """
 Эндпоинты для рендеринга пакета документов.
+Pack 18.3: добавлен rendering для npd_certificate (Справка о постановке на учёт самозанятого, КНД 1122035).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,7 @@ from app.services.rendering import build_full_package
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv,
+    render_npd_certificate,  # Pack 18.3
 )
 from .dependencies import require_manager
 
@@ -39,7 +41,7 @@ def render_full_package(
         08_Письмо_от_компании.docx
         09_Резюме.docx
         10_Выписка_по_счету.docx (только если include_bank_statement=True
-                                  И шаблон выписки готов)
+                                  и шаблон выписки готов)
 
     Если каких-то шаблонов не хватает — они пропускаются. Список статусов
     рендера в заголовке ответа X-Render-Status.
@@ -92,6 +94,7 @@ def render_single_document(
         - 'employer_letter'
         - 'cv'
         - 'bank_statement'
+        - 'npd_certificate'  (Pack 18.3 — справка о постановке на учёт самозанятого, КНД 1122035)
     """
     application = session.get(Application, app_id)
     if not application:
@@ -115,6 +118,10 @@ def render_single_document(
         elif document_type == "cv":
             content = render_cv(application, session)
             filename = "Резюме.docx"
+        elif document_type == "npd_certificate":
+            # Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
+            content = render_npd_certificate(application, session)
+            filename = "Справка_НПД.docx"
         elif document_type == "bank_statement":
             from app.templates_engine import render_bank_statement
             content = render_bank_statement(application, session)
