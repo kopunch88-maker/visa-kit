@@ -38,7 +38,7 @@ from sqlmodel import Session, select
 
 from app.models import Applicant, Application, Company, Region, SelfEmployedRegistry
 
-from .kladr_address_gen import generate_address_for_region
+from .kladr_address_gen import KNOWN_REGIONS, generate_address
 from .region_picker import (
     RegionPickResult,
     get_moscow,
@@ -48,6 +48,19 @@ from .region_picker import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Exceptions (Pack 17 compat)
+# ---------------------------------------------------------------------------
+
+
+class InnPipelineError(RuntimeError):
+    """
+    Базовое исключение пайплайна. Re-экспортируется из __init__.py для
+    обратной совместимости с Pack 17. Endpoint'ы ловят его как RuntimeError
+    (InnPipelineError -> RuntimeError) и возвращают 409.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +360,18 @@ def suggest_inn_for_applicant(
             "suggest_inn_for_applicant: keeping existing applicant.home_address (source=home_address, no fallback)"
         )
     else:
-        addr = generate_address_for_region(session, region=actual_region, seed=seed)
-        home_address = addr.formatted
+        # Pack 18.1: реальная функция называется generate_address(kladr_code, rng).
+        # Принимает kladr_code из KNOWN_REGIONS (см. kladr_address_gen.py).
+        # Если region.kladr_code не в KNOWN_REGIONS — пробуем найти любой подходящий
+        # KLADR из KNOWN_REGIONS с тем же 2-значным префиксом (region_code).
+        target_kladr = _resolve_known_kladr(actual_region.kladr_code, actual_code)
+        addr = generate_address(target_kladr, rng)
+        home_address = addr.full
         kladr_code = addr.kladr_code
         log.info(
-            "suggest_inn_for_applicant: generated new address for actual_region=%s (fallback_used=%s)",
+            "suggest_inn_for_applicant: generated new address for actual_region=%s kladr=%s (fallback_used=%s)",
             actual_region.name,
+            target_kladr,
             pick.fallback_used,
         )
 
@@ -397,3 +416,42 @@ def _make_subject_kladr(region_code: str) -> str:
     """
     code = (region_code or "00").zfill(2)[:2]
     return code + "0" * 11
+
+
+def _resolve_known_kladr(region_kladr: Optional[str], region_code: str) -> str:
+    """
+    Pack 18.1: KNOWN_REGIONS в kladr_address_gen.py содержит точные KLADR'ы
+    городов (например '2300000700000' для Сочи и '2300000100000' для
+    Краснодара). Region.kladr_code в БД может быть любым из этих, либо
+    общим '2300000000000' для субъекта.
+
+    Логика:
+    1. Если region.kladr_code напрямую в KNOWN_REGIONS — используем его.
+    2. Иначе ищем в KNOWN_REGIONS любой kladr с тем же 2-значным префиксом
+       (region_code). Если их несколько (например '23xxx' = Сочи И Краснодар) —
+       берём первый по сортировке (детерминистично).
+    3. Если ничего не нашли — это критическая ошибка конфигурации
+       (KNOWN_REGIONS не покрывает регион из таблицы Region). Бросаем ясную
+       ошибку.
+    """
+    if region_kladr and region_kladr in KNOWN_REGIONS:
+        return region_kladr
+
+    code = (region_code or "").strip()[:2]
+    if code:
+        matches = sorted(k for k in KNOWN_REGIONS.keys() if k.startswith(code))
+        if matches:
+            chosen = matches[0]
+            log.info(
+                "_resolve_known_kladr: region_kladr=%r not in KNOWN_REGIONS, "
+                "matched by region_code=%s -> %s",
+                region_kladr,
+                code,
+                chosen,
+            )
+            return chosen
+
+    raise InnPipelineError(
+        f"Pack 18.1: KNOWN_REGIONS does not contain kladr matching region_kladr={region_kladr!r} "
+        f"or region_code={region_code!r}. Update kladr_address_gen.KNOWN_REGIONS to cover this region."
+    )
