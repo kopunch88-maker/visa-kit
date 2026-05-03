@@ -10,6 +10,12 @@ import json
 import logging
 from sqlalchemy import text, inspect
 from app.db.session import engine
+from app.db.migration_pack17_6 import apply_pack17_6_migration
+from app.db.migration_pack18_0 import apply_pack18_0_migration
+apply_pack17_6_migration(engine)
+
+# Pack 18.0 — справочники ИФНС и МФЦ
+apply_pack18_0_migration(engine)
 
 log = logging.getLogger(__name__)
 

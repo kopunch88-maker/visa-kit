@@ -10,7 +10,7 @@ Import from here, not from individual files:
 
 # Base utilities
 from ._base import TimestampMixin, utcnow, CountryCode, CurrencyCode
-
+from app.models.ifns_mfc import IfnsOffice, MfcOffice
 # Directory entities
 from .company import Company, CompanyCreate, CompanyUpdate, CompanyRead
 from .position import Position, PositionCreate, PositionUpdate, PositionRead
@@ -110,4 +110,7 @@ __all__ = [
     "Translation",
     "TranslationKind",
     "TranslationStatus",
+      # ... existing ...
+    "IfnsOffice",
+    "MfcOffice",
 ]

@@ -82,8 +82,9 @@ from app.api import (  # noqa: E402
     inn_generation,
     inn_debug_pipeline,
     registry_admin,  # Pack 17.2.4
+    
 )
-
+from app.api import ifns_mfc
 app.include_router(auth.router, prefix="/api")
 app.include_router(companies.router, prefix="/api")
 app.include_router(positions.router, prefix="/api")
@@ -98,6 +99,7 @@ app.include_router(import_package.router, prefix="/api")
 app.include_router(bank_transactions.router, prefix="/api")
 app.include_router(translations.router, prefix="/api")
 app.include_router(banks.router, prefix="/api")
+app.include_router(ifns_mfc.router)
 app.include_router(regions.router, prefix="/api")
 app.include_router(inn_debug.router, prefix="/api")
 app.include_router(inn_generation.router, prefix="/api")
