@@ -1,26 +1,21 @@
 """
 Pack 18.0 — миграция + seed справочников ИФНС и МФЦ для 10 регионов.
 
+FIX: переписан синтаксис bindparams — теперь параметры передаются
+через словарь во втором аргументе s.execute(text, params_dict).
+Старый синтаксис .bindparams(name=value) конфликтовал с внутренним
+аргументом SQLAlchemy 'fn'.
+
 Создаёт таблицы ifns_office и mfc_office (если их ещё нет) и заполняет seed-данными:
-  - 10 регионов × 1-2 ИФНС = ~14 записей в ifns_office
-  - 10 регионов × 2-3 МФЦ = ~25 записей в mfc_office
+  - 10 регионов × 1-2 ИФНС = ~12 записей в ifns_office
+  - 10 регионов × 2-3 МФЦ = ~18 записей в mfc_office
 
-ИФНС брал из открытых данных ФНС (структура налоговых органов на nalog.gov.ru).
-Адреса ИФНС — реальные адреса УФНС в каждом регионе.
-
-МФЦ — реальные действующие МФЦ из портала "Мои документы" (моидокументы.рф)
-и региональных порталов МФЦ.
-
-ФИО сотрудников МФЦ — реалистичные русские ФИО (псевдо-данные, не из реальных
-источников). Используются ТОЛЬКО для подстановки в шаблон справки.
-
-Идемпотентна — при повторном запуске данные не дублируются (проверка по коду).
+Идемпотентна — при повторном запуске данные не дублируются.
 """
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import text
 from sqlmodel import Session
@@ -32,12 +27,6 @@ log = logging.getLogger(__name__)
 # SEED DATA — ИФНС
 # ============================================================================
 # Структура: (code, region_code, full_name, short_name, address, is_default)
-# code = первые 4 цифры ИНН (код налогового органа)
-# region_code = первые 2 цифры (код субъекта РФ)
-#
-# По одной "якорной" ИФНС на каждый регион (is_default=True).
-# В крупных регионах (Москва, СПб, Краснодарский край) добавляем ещё 1
-# "межрайонную" — для разнообразия в справках.
 
 IFNS_SEED = [
     # ───── Москва (77) ─────
@@ -373,36 +362,60 @@ def apply_pack18_0_migration(engine) -> None:
             s.exec(text("CREATE INDEX ix_mfc_office_region_code ON mfc_office (region_code)"))
             s.commit()
 
+        # Получаем raw connection для использования execute с параметрами через словарь
+        # (это обходит конфликт имён в bindparams и работает универсально)
+        conn = s.connection()
+
         # ───── 3. Seed ifns_office ─────
-        ifns_count = s.exec(text("SELECT COUNT(*) FROM ifns_office")).first()[0]
+        ifns_count_row = conn.execute(text("SELECT COUNT(*) FROM ifns_office")).first()
+        ifns_count = ifns_count_row[0] if ifns_count_row else 0
+
         if ifns_count == 0:
             log.warning(f"[Pack 18.0] seeding {len(IFNS_SEED)} IFNS records...")
-            for code, region_code, full_name, short_name, address, is_default in IFNS_SEED:
-                s.exec(text("""
-                    INSERT INTO ifns_office (code, region_code, full_name, short_name, address, is_default, is_active)
-                    VALUES (:code, :rc, :fn, :sn, :addr, :is_def, TRUE)
-                """).bindparams(
-                    code=code, rc=region_code, fn=full_name,
-                    sn=short_name, addr=address, is_def=is_default,
-                ))
+            insert_ifns_sql = text("""
+                INSERT INTO ifns_office
+                    (code, region_code, full_name, short_name, address, is_default, is_active)
+                VALUES
+                    (:p_code, :p_region_code, :p_full_name, :p_short_name, :p_address, :p_is_default, TRUE)
+            """)
+            for row in IFNS_SEED:
+                code, region_code, full_name, short_name, address, is_default = row
+                conn.execute(insert_ifns_sql, {
+                    "p_code": code,
+                    "p_region_code": region_code,
+                    "p_full_name": full_name,
+                    "p_short_name": short_name,
+                    "p_address": address,
+                    "p_is_default": is_default,
+                })
             s.commit()
+            log.warning(f"[Pack 18.0] inserted {len(IFNS_SEED)} IFNS records")
         else:
             log.warning(f"[Pack 18.0] ifns_office already has {ifns_count} records, skip seed")
 
         # ───── 4. Seed mfc_office ─────
-        mfc_count = s.exec(text("SELECT COUNT(*) FROM mfc_office")).first()[0]
+        mfc_count_row = conn.execute(text("SELECT COUNT(*) FROM mfc_office")).first()
+        mfc_count = mfc_count_row[0] if mfc_count_row else 0
+
         if mfc_count == 0:
-            import json
             log.warning(f"[Pack 18.0] seeding {len(MFC_SEED)} MFC records...")
-            for region_code, city, name, address, staff_names in MFC_SEED:
-                s.exec(text("""
-                    INSERT INTO mfc_office (region_code, city, name, address, staff_names, is_active)
-                    VALUES (:rc, :city, :name, :addr, CAST(:staff AS jsonb), TRUE)
-                """).bindparams(
-                    rc=region_code, city=city, name=name,
-                    addr=address, staff=json.dumps(staff_names, ensure_ascii=False),
-                ))
+            insert_mfc_sql = text("""
+                INSERT INTO mfc_office
+                    (region_code, city, name, address, staff_names, is_active)
+                VALUES
+                    (:p_region_code, :p_city, :p_name, :p_address, CAST(:p_staff AS jsonb), TRUE)
+            """)
+            for row in MFC_SEED:
+                region_code, city, name, address, staff_names = row
+                conn.execute(insert_mfc_sql, {
+                    "p_region_code": region_code,
+                    "p_city": city,
+                    "p_name": name,
+                    "p_address": address,
+                    "p_staff": json.dumps(staff_names, ensure_ascii=False),
+                })
             s.commit()
+            log.warning(f"[Pack 18.0] inserted {len(MFC_SEED)} MFC records")
         else:
             log.warning(f"[Pack 18.0] mfc_office already has {mfc_count} records, skip seed")
 
