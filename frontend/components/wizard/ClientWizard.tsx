@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -19,7 +20,7 @@ import {
 const STEPS = [
   { id: "docs", title: "Документы", subtitle: "Сканы паспортов и диплома (опционально)" },
   { id: "personal", title: "Личные данные", subtitle: "ФИО, дата рождения" },
-  { id: "passport", title: "Паспорт", subtitle: "Номер, родители, ИНН" },
+  { id: "passport", title: "Паспорт", subtitle: "Номер, родители" },
   { id: "address", title: "Адрес и контакты", subtitle: "Где живёте, как связаться" },
   { id: "education", title: "Образование", subtitle: "Учебные заведения" },
   { id: "work", title: "Опыт работы", subtitle: "Для резюме на испанском" },
@@ -203,7 +204,7 @@ export function ClientWizard({ token }: Props) {
           className="px-4 py-2 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           style={{ borderWidth: 0.5 }}
         >
-          ← Назад
+          < Назад
         </button>
 
         <button
@@ -217,7 +218,7 @@ export function ClientWizard({ token }: Props) {
           ) : currentStep === STEPS.length - 1 ? (
             "Сохранить"
           ) : (
-            "Продолжить →"
+            "Продолжить >"
           )}
         </button>
       </div>
@@ -259,7 +260,7 @@ export function ClientWizard({ token }: Props) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-primary truncate">
-                Visa kit · Digital nomad España
+                Visa kit · Digital nomad Espana
               </div>
               <div className="text-xs text-tertiary truncate">
                 Заявка #{appReference} · {STATUS_LABELS[appStatus] || appStatus}
@@ -522,3 +523,6 @@ export function ClientWizard({ token }: Props) {
     </div>
   );
 }
+
+
+

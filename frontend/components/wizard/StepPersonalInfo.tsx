@@ -1,7 +1,8 @@
+
 "use client";
 
 import { useEffect, useRef } from "react";
-import { TextInput, SelectInput, StepHeader } from "@/components/ui/Form";
+import { TextInput, SelectInput, StepHeader, Callout } from "@/components/ui/Form";
 import { ApplicantData, NATIONALITY_OPTIONS } from "@/lib/api";
 
 interface Props {
@@ -185,15 +186,14 @@ export function StepPersonalInfo({ data, onChange }: Props) {
           <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3">
             Налоговые данные
           </h3>
-          <TextInput
-            label="Ваш ИНН (12 цифр)"
-            value={data.inn || ""}
-            onChange={(e) => onChange({ inn: e.target.value })}
-            placeholder="230217957801"
-            hint="Личный ИНН физлица — узнать на nalog.ru. Нужен для российского договора, если вы самозанятый или ИП."
-          />
+          <Callout type="info">
+            ИНН самозанятого будет назначен вашим менеджером после подачи документов.
+            Вам не нужно заполнять его вручную.
+          </Callout>
         </div>
       </div>
     </div>
   );
 }
+
+
