@@ -112,7 +112,18 @@ def main():
         database_url,
         echo=False,
         pool_pre_ping=True,
-        connect_args={"connect_timeout": 30},
+        connect_args={
+            "connect_timeout": 30,
+            # Таймаут на ОДИН SQL statement: 60 секунд.
+            # Если INSERT висит дольше — psycopg2 прервёт и поднимет ошибку.
+            # Backend retry в _insert_batch это поймает.
+            "options": "-c statement_timeout=60000",
+            # TCP keepalive — чтобы соединение не "тихо" умирало
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 3,
+        },
     )
 
     # === Проверка БД ===

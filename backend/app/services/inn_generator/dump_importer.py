@@ -83,7 +83,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 )
 
-BATCH_SIZE = 5000
+BATCH_SIZE = 500  # уменьшен с 5000 для работы через медленный Railway proxy
 
 # Код режима НПД в реестре snrip
 NPD_CODE = "5"
@@ -355,6 +355,7 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
     import time
     started_at = time.time()
     last_progress_at = started_at
+    last_file_log_at = started_at
 
     used_inns = _load_used_inns(session)
     log.info(f"[importer] {len(used_inns):,} used INNs will be skipped")
@@ -373,6 +374,21 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
         batch: list[ParsedRecord] = []
 
         for i, xml_name in enumerate(xml_files, 1):
+            # Лог каждые 5 секунд: на каком файле сейчас
+            now = time.time()
+            if now - last_file_log_at >= 5:
+                elapsed = now - started_at
+                rate_docs = stats.records_total / elapsed if elapsed > 0 else 0
+                log.info(
+                    f"[importer] At file {i}/{len(xml_files)}, "
+                    f"docs={stats.records_total:,}, "
+                    f"NPD={stats.records_imported + len(batch):,} "
+                    f"(buffered={len(batch)}), "
+                    f"rate={rate_docs:.0f} doc/sec, "
+                    f"elapsed={elapsed/60:.1f} min"
+                )
+                last_file_log_at = now
+
             with zf.open(xml_name) as raw:
                 for record in _iter_npd_records(raw, stats):
                     if record.inn in used_inns:
@@ -380,29 +396,32 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
                         continue
                     batch.append(record)
                     if len(batch) >= BATCH_SIZE:
+                        log.debug(f"[importer] Inserting batch of {len(batch)} records...")
+                        t_insert = time.time()
                         _insert_batch(session, batch)
+                        insert_time = time.time() - t_insert
+                        if insert_time > 5:
+                            log.warning(
+                                f"[importer] SLOW INSERT: {len(batch)} records "
+                                f"took {insert_time:.1f}s"
+                            )
                         stats.records_imported += len(batch)
                         batch.clear()
-
-                        now = time.time()
-                        if now - last_progress_at >= 30:
-                            elapsed = now - started_at
-                            rate = stats.records_total / elapsed if elapsed > 0 else 0
-                            log.info(
-                                f"[importer] Progress: file {i}/{len(xml_files)}, "
-                                f"total={stats.records_total:,}, "
-                                f"NPD imported={stats.records_imported:,}, "
-                                f"skipped_no_npd={stats.records_skipped_no_npd:,}, "
-                                f"rate={rate:.0f} doc/sec, elapsed={elapsed/60:.1f} min"
-                            )
-                            last_progress_at = now
 
             stats.xml_files_processed += 1
 
         # Хвост
         if batch:
+            log.info(f"[importer] Inserting final batch of {len(batch)} records...")
             _insert_batch(session, batch)
             stats.records_imported += len(batch)
+
+        log.info(
+            f"[importer] Parsing complete. "
+            f"Files processed: {stats.xml_files_processed}/{len(xml_files)}, "
+            f"docs total: {stats.records_total:,}, "
+            f"NPD imported: {stats.records_imported:,}"
+        )
 
 
 def _iter_npd_records(stream, stats: ImportStats) -> Iterator[ParsedRecord]:
@@ -555,5 +574,35 @@ def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
         for r in batch
     ]
 
-    session.execute(sql, params)
-    session.commit()
+    # Retry up to 3 times если timeout/connection error
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            session.execute(sql, params)
+            session.commit()
+            return
+        except Exception as e:
+            last_error = e
+            err_msg = str(e).lower()
+            is_retriable = any(
+                marker in err_msg
+                for marker in (
+                    "timeout", "timed out", "connection", "ssl", "broken pipe",
+                    "could not", "operationalerror",
+                )
+            )
+            log.warning(
+                f"[importer] INSERT batch attempt {attempt}/3 failed "
+                f"({type(e).__name__}): {str(e)[:200]}"
+            )
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            if not is_retriable or attempt == 3:
+                raise
+            import time as _time
+            _time.sleep(2 * attempt)  # backoff: 2s, 4s
+
+    if last_error:
+        raise last_error
