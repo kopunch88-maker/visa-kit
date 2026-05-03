@@ -20,22 +20,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.api.deps import get_current_user, get_session
+from app.db.session import get_session
 from app.models import (
     Applicant,
     Application,
     Company,
     SelfEmployedRegistry,
-    User,
 )
 from app.services.inn_generator.pipeline import (
     InnSuggestion,
     suggest_inn_for_applicant,
 )
+from .dependencies import require_manager
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/admin/applicants", tags=["inn-generation"])
+router = APIRouter(prefix="/admin/applicants", tags=["inn-generation"])
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def _get_company_for_application(
 def inn_suggest(
     applicant_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    _user=Depends(require_manager),
 ) -> InnSuggestResponse:
     """
     Pack 18.1: подбор ИНН с tier-fallback.
@@ -190,7 +190,7 @@ def inn_accept(
     applicant_id: int,
     payload: InnAcceptRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    _user=Depends(require_manager),
 ) -> InnAcceptResponse:
     """
     Сохраняет выбранный ИНН в applicant'е и помечает запись в реестре как использованную.
