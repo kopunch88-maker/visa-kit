@@ -1,11 +1,14 @@
 """
 Applicants admin endpoints — для админки чтобы получать и редактировать данные клиента.
-
 Pack 8: эндпоинты возвращают dict (без валидации Pydantic), как в client_portal.
 Pack 14 finishing: добавлены PATCH endpoint и /transliterate для иностранцев.
 Pack 16.1: добавлены банковские поля (bank_id, bank_account, ...) в whitelist
 для редактирования через ApplicantDrawer.
+Pack 18.5: _enrich теперь делает join с self_employed_registry чтобы вернуть
+npd_check_status и npd_last_check_at — фронт показывает значок «Проверен ФНС» /
+«Не действителен» / «Не проверен» рядом с полем ИНН в ApplicantDrawer.
 """
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -13,14 +16,49 @@ from sqlmodel import Session
 
 from app.db.session import get_session
 from app.models import Applicant
+from app.models.self_employed_registry import SelfEmployedRegistry
 from app.services.transliteration import transliterate_lat_to_ru, normalize_russian_case
-
 from .dependencies import require_manager
 
 router = APIRouter(prefix="/admin/applicants", tags=["applicants"])
 
 
-def _enrich(applicant: Applicant) -> dict:
+def _compute_npd_check_status(
+    applicant: Applicant, session: Session
+) -> tuple[str, Optional[datetime]]:
+    """
+    Pack 18.5: вычисляет статус проверки ИНН через ФНС API на основе
+    данных в self_employed_registry.
+
+    Возвращает (status, last_check_at):
+      - 'no_inn' — у applicant'а нет ИНН (значок не показывается)
+      - 'verified' — last_npd_check_at установлен, is_invalid=False (зелёный ✓)
+      - 'invalid' — is_invalid=True (красный ✗) — ФНС подтвердил отзыв статуса
+      - 'not_checked' — есть ИНН, но проверка не выполнялась (серый —)
+                       (например, ИНН выдан до Pack 18.2 или ФНС был недоступен)
+    """
+    if not applicant.inn:
+        return "no_inn", None
+
+    cand = session.get(SelfEmployedRegistry, applicant.inn)
+    if not cand:
+        # ИНН в applicant'е есть, но в реестре его нет — странная ситуация
+        return "not_checked", None
+
+    if cand.is_invalid:
+        return "invalid", cand.last_npd_check_at
+
+    if cand.last_npd_check_at is not None:
+        return "verified", cand.last_npd_check_at
+
+    return "not_checked", None
+
+
+def _enrich(applicant: Applicant, session: Session) -> dict:
+    """
+    Pack 18.5: добавлен параметр session чтобы можно было подгрузить запись
+    из self_employed_registry для вычисления npd_check_status.
+    """
     parts = [applicant.last_name_native, applicant.first_name_native]
     if applicant.middle_name_native:
         parts.append(applicant.middle_name_native)
@@ -35,6 +73,12 @@ def _enrich(applicant: Applicant) -> dict:
     data = applicant.model_dump()
     data["full_name_native"] = full_name
     data["initials_native"] = initials
+
+    # Pack 18.5: статус проверки НПД через ФНС API
+    npd_status, npd_last_check = _compute_npd_check_status(applicant, session)
+    data["npd_check_status"] = npd_status
+    data["npd_last_check_at"] = npd_last_check.isoformat() if npd_last_check else None
+
     return data
 
 
@@ -47,7 +91,7 @@ def get_applicant(
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
         raise HTTPException(404, "Applicant not found")
-    return _enrich(applicant)
+    return _enrich(applicant, session)
 
 
 # ============================================================================
@@ -159,7 +203,7 @@ def update_applicant(
     session.commit()
     session.refresh(applicant)
 
-    return _enrich(applicant)
+    return _enrich(applicant, session)
 
 
 # ============================================================================
@@ -189,6 +233,3 @@ def transliterate(
         "first_name_native": first_ru,
         "warning": "Автоматический черновик транслитерации. Проверьте и поправьте если нужно.",
     }
-
-
-
