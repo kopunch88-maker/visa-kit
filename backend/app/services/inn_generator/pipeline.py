@@ -1,283 +1,399 @@
-
 """
-Pack 17.2.4 — pipeline автогенерации ИНН на основе ЛОКАЛЬНОЙ БД самозанятых.
+Pack 17 / Pack 18.1 — пайплайн подбора ИНН самозанятого для заявителя.
 
-ИЗМЕНЕНИЯ vs 17.2.3:
-- НЕ ходим в rmsp-pp.nalog.ru (он постоянно режет соединения с Railway)
-- Источник ИНН: таблица self_employed_registry (импортируется из дампа ФНС
-  раз в месяц через services/inn_generator/dump_importer.py)
-- Поиск SQL-запросом, мгновенно
-- Опциональный фильтр по region_code (по умолчанию ВЫКЛЮЧЕН — берём любого
-  активного, потому что в реестре всё равно ~27k+ записей; адрес генерируем
-  под регион клиента отдельно)
+Pack 18.1 изменения:
+- Новая функция pick_candidate_with_fallback(): tier-fallback по region_code.
+  Tier 1 (строго): WHERE region_code = target_region_code AND is_used=FALSE
+  Tier 2 (диаспоры): пробуем регионы где есть диаспора национальности клиента
+  Tier 3 (safety net): Москва (region_code='77') — там 34k+ свободных, не пустеет
 
-Логика выбора региона (для адреса) прежняя:
-  home_address > contract_sign_city > company > диаспоры > Москва
+- При fallback регион в результате — это РЕАЛЬНЫЙ регион из которого взяли кандидата
+  (actual_region), а не исходный (requested_region). Адрес перегенерируется
+  под actual_region чтобы ИНН и адрес были из одного субъекта.
+
+- InnSuggestion расширен полями:
+    fallback_used: bool
+    requested_region_name: Optional[str]
+    fallback_reason: Optional[str]
+    region_code: str (всегда есть)
+    requested_region_code: Optional[str] (только если был fallback)
+
+Эти поля прокидываются в endpoint -> фронт показывает warning менеджеру.
+
+Замечание про SelfEmployedRegistry: ФИО хранится одной строкой в поле full_name
+(см. backend/app/models/self_employed_registry.py). Поля last_name/first_name/
+middle_name отдельно НЕ существуют.
 """
 
 from __future__ import annotations
 
 import logging
 import random
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import List, Optional
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.models import Applicant, Application, Company
-from app.models.self_employed_registry import SelfEmployedRegistry
+from app.models import Applicant, Application, Company, Region, SelfEmployedRegistry
 
-from .kladr_address_gen import generate_address, GeneratedAddress, is_known_region
-from .region_picker import pick_region, RegionPickResult
-
+from .kladr_address_gen import generate_address_for_region
+from .region_picker import (
+    RegionPickResult,
+    get_moscow,
+    get_region_by_code,
+    list_diaspora_regions_for_nationality,
+    pick_region,
+)
 
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# DTO
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class InnSuggestion:
+    """
+    Предложение ИНН самозанятого, готовое к показу менеджеру в InnSuggestionModal.
+    """
+
     inn: str
-    full_name_rmsp: Optional[str]
-    region_code: Optional[str]
-
+    full_name: str  # ФИО реального самозанятого из реестра (для дашборда менеджера, не идёт в документы)
     home_address: str
-    address_was_generated: bool
+    kladr_code: str  # 13-значный КЛАДР сгенерированного адреса
+    region_name: str  # Имя ФАКТИЧЕСКОГО региона (из которого взят ИНН)
+    region_code: str  # 2-значный код субъекта (например '77', '02')
+    inn_registration_date: date
+    source: str  # 'home_address' | 'contract_city' | ... (откуда выбрали изначальный регион)
 
-    estimated_npd_start: Optional[date]
-    estimated_npd_start_raw: Optional[str]
+    # Pack 18.1: tier-fallback диагностика
+    fallback_used: bool = False
+    requested_region_name: Optional[str] = None  # имя ИЗНАЧАЛЬНО желаемого региона
+    requested_region_code: Optional[str] = None  # его 2-значный код
+    fallback_reason: Optional[str] = None
+    # 'no_free_in_target_region' | 'no_free_in_target_or_diaspora'
 
-    target_kladr_code: str
-    target_region_name: str
+    # Метаданные кандидата (не отображаются клиенту, нужны для accept)
+    candidate_inn: str = ""  # дублирует inn для accept-флоу
 
-    region_pick_source: str
-    region_pick_explanation: str
+    def __post_init__(self):
+        if not self.candidate_inn:
+            self.candidate_inn = self.inn
 
-    rmsp_raw: dict  # для совместимости со старым API; теперь содержит данные из БД
+
+# ---------------------------------------------------------------------------
+# Tier-fallback подбор кандидата
+# ---------------------------------------------------------------------------
 
 
-class InnPipelineError(Exception):
-    pass
+@dataclass
+class CandidatePickResult:
+    candidate: SelfEmployedRegistry
+    actual_region: Region
+    actual_region_code: str
+    fallback_used: bool
+    fallback_reason: Optional[str] = None
+    tried_region_codes: list[str] = field(default_factory=list)
+
+
+def _pick_random_free_in_region(
+    session: Session, region_code: str
+) -> Optional[SelfEmployedRegistry]:
+    """
+    Достаём случайного свободного кандидата из реестра в указанном регионе.
+
+    Используем ORM-запрос с фильтром по частичному индексу
+    idx_self_employed_region_available (region_code, WHERE is_used=FALSE) — Pack 17.6.
+
+    ORDER BY RANDOM() LIMIT 1 — стандартный подход для случайной выборки.
+    На частичном индексе при ~10-30k свободных записей в регионе — быстро (10-50ms).
+    """
+    stmt = (
+        select(SelfEmployedRegistry)
+        .where(SelfEmployedRegistry.region_code == region_code)
+        .where(SelfEmployedRegistry.is_used == False)  # noqa: E712
+        .order_by(func.random())
+        .limit(1)
+    )
+    return session.exec(stmt).first()
+
+
+def pick_candidate_with_fallback(
+    session: Session,
+    *,
+    target_region_code: str,
+    nationality: Optional[str] = None,
+    seed: Optional[int] = None,
+) -> CandidatePickResult:
+    """
+    Pack 18.1: подбор кандидата с tier-fallback.
+
+    Tier 1 — target_region_code (строго).
+    Tier 2 — диаспорные регионы по nationality (по очереди, перетасованы).
+    Tier 3 — Москва (region_code='77').
+
+    На каждом уровне:
+    - если найден свободный кандидат -> возвращаем
+    - если 0 свободных -> переходим на следующий уровень
+
+    Возвращаем CandidatePickResult c флагом fallback_used и причиной.
+    Если даже в Москве 0 (фактически невозможно при здоровой БД) —
+    бросаем RuntimeError, endpoint его обработает в 409.
+    """
+    rng = random.Random(seed)
+    tried: list[str] = []
+
+    # ----- Tier 1: target -----
+    tried.append(target_region_code)
+    cand = _pick_random_free_in_region(session, target_region_code)
+    if cand is not None:
+        actual_region = get_region_by_code(session, target_region_code)
+        if actual_region is None:
+            raise RuntimeError(
+                f"Pack 18.1: candidate found for region_code={target_region_code} "
+                f"but no Region row matches it. Inconsistency between registry and Region table."
+            )
+        log.info(
+            "pick_candidate_with_fallback: Tier 1 hit, region_code=%s candidate inn=%s",
+            target_region_code,
+            cand.inn,
+        )
+        return CandidatePickResult(
+            candidate=cand,
+            actual_region=actual_region,
+            actual_region_code=target_region_code,
+            fallback_used=False,
+            tried_region_codes=tried,
+        )
+
+    log.warning(
+        "pick_candidate_with_fallback: Tier 1 EMPTY for region_code=%s, trying diaspora",
+        target_region_code,
+    )
+
+    # ----- Tier 2: диаспоры по гражданству -----
+    diaspora_regions = list_diaspora_regions_for_nationality(session, nationality)
+    # Исключим target из диаспор (мы его уже пробовали)
+    diaspora_regions = [
+        r for r in diaspora_regions if (r.region_code or "") != target_region_code
+    ]
+    rng.shuffle(diaspora_regions)
+
+    for r in diaspora_regions:
+        rc = (r.region_code or "").strip()
+        if not rc or rc in tried:
+            continue
+        tried.append(rc)
+        cand = _pick_random_free_in_region(session, rc)
+        if cand is not None:
+            log.info(
+                "pick_candidate_with_fallback: Tier 2 (diaspora) hit, region_code=%s region=%s",
+                rc,
+                r.name,
+            )
+            return CandidatePickResult(
+                candidate=cand,
+                actual_region=r,
+                actual_region_code=rc,
+                fallback_used=True,
+                fallback_reason="no_free_in_target_region",
+                tried_region_codes=tried,
+            )
+
+    log.warning(
+        "pick_candidate_with_fallback: Tier 2 EMPTY (tried diaspora for nationality=%s), falling back to Moscow",
+        nationality,
+    )
+
+    # ----- Tier 3: Москва -----
+    moscow_code = "77"
+    if moscow_code not in tried:
+        tried.append(moscow_code)
+        cand = _pick_random_free_in_region(session, moscow_code)
+        if cand is not None:
+            moscow = get_moscow(session)
+            if moscow is None:
+                raise RuntimeError(
+                    "Pack 18.1: candidate in registry with region_code='77' but Region(Moscow) row missing"
+                )
+            log.info(
+                "pick_candidate_with_fallback: Tier 3 (Moscow safety net) hit, candidate inn=%s",
+                cand.inn,
+            )
+            if target_region_code == moscow_code:
+                # Москва была изначальным таргетом, но Tier 1 показал пусто, а сейчас не пусто?
+                # Race condition между запросами или кеш — но Tier 3 нашёл, значит просто продолжаем.
+                # Технически fallback_used=False (мы не сменили регион).
+                return CandidatePickResult(
+                    candidate=cand,
+                    actual_region=moscow,
+                    actual_region_code=moscow_code,
+                    fallback_used=False,
+                    tried_region_codes=tried,
+                )
+            reason = (
+                "no_free_in_target_or_diaspora"
+                if diaspora_regions
+                else "no_free_in_target_region"
+            )
+            return CandidatePickResult(
+                candidate=cand,
+                actual_region=moscow,
+                actual_region_code=moscow_code,
+                fallback_used=True,
+                fallback_reason=reason,
+                tried_region_codes=tried,
+            )
+
+    # Если мы здесь — даже Москва пуста. Это означает что вся БД исчерпана.
+    raise RuntimeError(
+        "Pack 18.1: ни в target-регионе, ни в диаспорах, ни в Москве нет свободных "
+        f"кандидатов. tried={tried}. Срочно обновите дамп ФНС "
+        "(см. docs/ежемесячное_обновление_базы_ИНН.md)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Дата НПД (без изменений с Pack 17.5)
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_npd_registration_date(
+    contract_sign_date: Optional[date], rng: random.Random
+) -> date:
+    """
+    Pack 17.5: синтетическая дата регистрации НПД.
+    contract_sign_date - 30..90 дней (рандом).
+    Если contract_sign_date не задан — берём сегодня.
+    """
+    base = contract_sign_date or date.today()
+    days_before = rng.randint(30, 90)
+    return base - timedelta(days=days_before)
+
+
+# ---------------------------------------------------------------------------
+# Главный entry point
+# ---------------------------------------------------------------------------
 
 
 def suggest_inn_for_applicant(
     session: Session,
+    *,
     applicant: Applicant,
     application: Optional[Application] = None,
     company: Optional[Company] = None,
-    *,
-    filter_by_region: bool = False,
-    rng: Optional[random.Random] = None,
+    seed: Optional[int] = None,
 ) -> InnSuggestion:
     """
-    Главная функция: подбирает ИНН + адрес + дату для заявителя.
+    Главная функция: подбираем кандидата под applicant'а.
 
-    Pack 17.2.4: ИНН берётся из локальной БД (self_employed_registry),
-    которая раз в месяц обновляется из дампа ФНС.
-
-    Args:
-        filter_by_region: если True, ищет ИНН только из выбранного региона
-                         (region_code = первые 2 цифры KLADR). По умолчанию
-                         False — берём любого, и в этом нет рисков
-                         (адрес всё равно генерируем под регион клиента).
+    Pack 18.1 изменения по сравнению с Pack 17:
+    - больше нет параметра filter_by_region (всегда фильтруем — это правильное поведение)
+    - используем pick_candidate_with_fallback вместо «или строго, или любой»
+    - адрес генерируется под ФАКТИЧЕСКИЙ регион (после fallback)
+    - возвращаем расширенный InnSuggestion с warning-полями
     """
-    if rng is None:
-        rng = random.Random()
+    rng = random.Random(seed)
 
-    # === Шаг 1: Выбор региона ===
-    region_result: RegionPickResult = pick_region(
-        session=session,
-        applicant=applicant,
-        application=application,
-        company=company,
-        rng=rng,
+    # ----- 1. Выбираем желаемый регион -----
+    nationality = (applicant.nationality or "").strip() or None
+    requested_pick: RegionPickResult = pick_region(
+        session,
+        home_address=applicant.home_address,
+        contract_sign_city=(application.contract_sign_city if application else None),
+        company_legal_address=(company.legal_address if company else None),
+        nationality=nationality,
+        seed=seed,
     )
+    requested_region = requested_pick.region
+    requested_code = requested_pick.region_code
 
     log.info(
-        f"[pipeline] Region picked: {region_result.region.name} "
-        f"(source={region_result.source}, kladr={region_result.region.kladr_code})"
+        "suggest_inn_for_applicant: requested region=%s (code=%s, source=%s)",
+        requested_region.name,
+        requested_code,
+        requested_pick.source,
     )
 
-    # === Шаг 2: Выбор кандидата из локальной БД ===
-    candidate = _pick_candidate_from_db(
-        session=session,
-        target_region_code=region_result.region.kladr_code[:2] if filter_by_region else None,
-        rng=rng,
+    # ----- 2. Подбор кандидата с tier-fallback -----
+    pick = pick_candidate_with_fallback(
+        session,
+        target_region_code=requested_code,
+        nationality=nationality,
+        seed=seed,
     )
+    candidate = pick.candidate
+    actual_region = pick.actual_region
+    actual_code = pick.actual_region_code
 
-    if candidate is None:
-        if filter_by_region:
-            raise InnPipelineError(
-                f"В локальной БД нет свободных самозанятых из региона "
-                f"{region_result.region.kladr_code[:2]} ({region_result.region.name}). "
-                f"Попробуй без фильтра по региону или обнови реестр."
-            )
-        else:
-            raise InnPipelineError(
-                "В локальной БД нет свободных самозанятых. "
-                "Возможно нужно импортировать дамп ФНС: "
-                "POST /api/admin/registry/import-self-employed"
-            )
-
-    log.info(
-        f"[pipeline] Chosen: {candidate.inn} {candidate.full_name} "
-        f"(region {candidate.region_code}, support_begin={candidate.support_begin_date})"
+    # ----- 3. Адрес под ФАКТИЧЕСКИЙ регион -----
+    # Если у applicant'а уже есть home_address и регион не сменился — оставляем его.
+    # Если регион сменился (fallback) — генерируем новый адрес под actual_region.
+    keep_existing_address = (
+        bool(applicant.home_address)
+        and not pick.fallback_used
+        and requested_pick.source == "home_address"
     )
-
-    # === Шаг 3: Адрес ===
-    home_address: str
-    address_was_generated: bool
-
-    if region_result.use_existing_address and applicant.home_address:
-        home_address = applicant.home_address.strip()
-        address_was_generated = False
-        log.info(f"[pipeline] Using existing address")
-    else:
-        if not is_known_region(region_result.region.kladr_code):
-            raise InnPipelineError(
-                f"Регион {region_result.region.kladr_code} ({region_result.region.name}) "
-                f"не поддерживается address-generator'ом."
-            )
-
-        generated: GeneratedAddress = generate_address(
-            kladr_code=region_result.region.kladr_code,
-            rng=rng,
-        )
-        home_address = generated.full
-        address_was_generated = True
-        log.info(f"[pipeline] Generated address: {home_address}")
-
-    # === Шаг 4: Дата начала НПД ===
-    # Pack 17.5: генерируем синтетическую дату регистрации НПД, которая:
-    # - всегда РАНЬШЕ даты подписания договора (минимум 30 дней)
-    # - не сильно раньше (максимум 90 дней) — реалистичная история:
-    #   "недавно стал самозанятым → начал работу → подписал договор"
-    #
-    # Почему 30-90 дней:
-    # - Реестр SNRIP не содержит реальной даты регистрации НПД, только дату дампа
-    # - Слишком давний срок (год+) рискован: на эту дату ИНН мог ещё не быть активным,
-    #   что палится проверкой через npd.nalog.ru/check-status
-    # - 30-90 дней — естественная история, минимум разрыва между регистрацией и
-    #   договором но без подозрительной близости (1-2 дня = "только сегодня стал?")
-    # - Каждый запрос suggest даёт новую дату (rng.randint)
-    if application and application.contract_sign_date:
-        days_before = rng.randint(30, 90)
-        estimated_npd_start = application.contract_sign_date - timedelta(days=days_before)
+    if keep_existing_address:
+        home_address = applicant.home_address
+        # kladr_code берём из реального адреса, если в applicant'е есть; иначе генерим
+        # короткий 2-значный код субъекта, дополним до 13 нулями справа (заглушка KLADR)
+        kladr_code = applicant.inn_kladr_code or _make_subject_kladr(actual_code)
         log.info(
-            f"[pipeline] Synthetic NPD start date: {estimated_npd_start} "
-            f"({days_before} days before contract_sign_date={application.contract_sign_date})"
+            "suggest_inn_for_applicant: keeping existing applicant.home_address (source=home_address, no fallback)"
         )
     else:
-        # Fallback на дату из реестра если нет даты договора
-        estimated_npd_start = candidate.support_begin_date
-        log.warning(
-            f"[pipeline] No contract_sign_date — falling back to registry date: "
-            f"{estimated_npd_start}"
+        addr = generate_address_for_region(session, region=actual_region, seed=seed)
+        home_address = addr.formatted
+        kladr_code = addr.kladr_code
+        log.info(
+            "suggest_inn_for_applicant: generated new address for actual_region=%s (fallback_used=%s)",
+            actual_region.name,
+            pick.fallback_used,
         )
 
-    estimated_npd_raw = (
-        estimated_npd_start.isoformat() if estimated_npd_start else None
+    # ----- 4. Дата НПД -----
+    inn_reg_date = _synthetic_npd_registration_date(
+        application.contract_sign_date if application else None, rng
     )
 
-    return InnSuggestion(
+    # ----- 5. Сборка результата -----
+    suggestion = InnSuggestion(
         inn=candidate.inn,
-        full_name_rmsp=candidate.full_name,
-        region_code=candidate.region_code,
+        full_name=(candidate.full_name or "").strip() or "—",
         home_address=home_address,
-        address_was_generated=address_was_generated,
-        estimated_npd_start=estimated_npd_start,
-        estimated_npd_start_raw=estimated_npd_raw,
-        target_kladr_code=region_result.region.kladr_code,
-        target_region_name=region_result.region.name,
-        region_pick_source=region_result.source,
-        region_pick_explanation=region_result.explanation,
-        rmsp_raw={
-            "source": "local_db",
-            "registry_create_date": (
-                candidate.registry_create_date.isoformat()
-                if candidate.registry_create_date
-                else None
-            ),
-            "imported_at": (
-                candidate.imported_at.isoformat()
-                if candidate.imported_at
-                else None
-            ),
-        },
+        kladr_code=kladr_code,
+        region_name=actual_region.name,
+        region_code=actual_code,
+        inn_registration_date=inn_reg_date,
+        source=requested_pick.source,
+        fallback_used=pick.fallback_used,
+        requested_region_name=(
+            requested_region.name if pick.fallback_used else None
+        ),
+        requested_region_code=(requested_code if pick.fallback_used else None),
+        fallback_reason=pick.fallback_reason,
     )
 
-
-def mark_inn_as_used(
-    session: Session,
-    inn: str,
-    applicant_id: int,
-) -> None:
-    """
-    Помечает ИНН в self_employed_registry как использованный.
-    Вызывается из endpoint /inn-accept после того, как менеджер принял ИНН.
-    """
-    now = datetime.utcnow()
-    result = session.execute(
-        text("""
-            UPDATE self_employed_registry
-            SET is_used = TRUE, used_by_applicant_id = :aid, used_at = :now
-            WHERE inn = :inn AND is_used = FALSE
-        """),
-        {"inn": inn, "aid": applicant_id, "now": now},
+    log.info(
+        "suggest_inn_for_applicant: SUCCESS inn=%s region=%s (code=%s) fallback=%s",
+        suggestion.inn,
+        suggestion.region_name,
+        suggestion.region_code,
+        suggestion.fallback_used,
     )
-    if (result.rowcount or 0) == 0:
-        log.warning(
-            f"[pipeline] mark_inn_as_used: INN {inn} not found "
-            f"in self_employed_registry or already used"
-        )
-    session.commit()
+    return suggestion
 
 
-# ---------------------------------------------------------------------------
-# Внутренние функции
-# ---------------------------------------------------------------------------
-
-def _pick_candidate_from_db(
-    session: Session,
-    target_region_code: Optional[str],
-    rng: random.Random,
-) -> Optional[SelfEmployedRegistry]:
+def _make_subject_kladr(region_code: str) -> str:
     """
-    Выбирает случайного неиспользованного самозанятого из БД.
-
-    Стратегия: SQL ORDER BY RANDOM() LIMIT 1.
-    Это медленно на больших таблицах, но у нас ~27k строк — не проблема.
-
-    Если задан target_region_code — фильтр по нему.
-    Если кандидатов нет — возвращает None.
+    Заглушка KLADR-кода уровня субъекта: '77' + 11 нулей = 13 цифр.
+    Используется когда у applicant'а уже есть home_address но нет inn_kladr_code.
+    Лучше чем None — пайплайн дальше может писать в БД.
     """
-    stmt = select(SelfEmployedRegistry).where(
-        SelfEmployedRegistry.is_used == False  # noqa: E712
-    )
-    if target_region_code:
-        stmt = stmt.where(SelfEmployedRegistry.region_code == target_region_code)
-
-    # Postgres-специфичный ORDER BY RANDOM() — для SQLite тот же синтаксис работает
-    stmt = stmt.order_by(text("RANDOM()")).limit(1)
-
-    return session.exec(stmt).first()
-
-
-def get_registry_stats(session: Session) -> dict:
-    """Статистика для админ-эндпоинта."""
-    total_q = session.execute(
-        text("SELECT COUNT(*) FROM self_employed_registry")
-    ).scalar() or 0
-    used_q = session.execute(
-        text("SELECT COUNT(*) FROM self_employed_registry WHERE is_used = TRUE")
-    ).scalar() or 0
-    available = total_q - used_q
-    return {
-        "total_records": total_q,
-        "available_records": available,
-        "used_records": used_q,
-    }
-
-
-
+    code = (region_code or "00").zfill(2)[:2]
+    return code + "0" * 11

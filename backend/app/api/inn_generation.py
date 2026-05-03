@@ -1,256 +1,261 @@
 """
-Pack 17.3 — Production endpoints для генерации ИНН.
+Pack 17 / Pack 18.1 — endpoints автогенерации ИНН самозанятого.
 
-ИЗМЕНЕНИЯ vs 17.2.4:
-- DEFENSIVE FIX: Application получаем через обратный запрос
-  (Applicant НЕ имеет поля application_id; связь идёт от Application.applicant_id).
-- Все unexpected ошибки превращаются в HTTPException 500 с понятным detail
-  (тип ошибки + сообщение + traceback в логах Railway).
-- /inn-accept помечает ИНН в self_employed_registry как is_used=TRUE.
+Pack 18.1 изменения:
+- В response /inn-suggest добавлены поля fallback_used / requested_region_name /
+  requested_region_code / fallback_reason / region_code — фронт показывает
+  warning менеджеру при сдвиге региона.
+- Удалён query-параметр filter_by_region (всегда фильтруем по региону, fallback
+  гарантирует что кандидат найдётся).
+- В /inn-accept проставляется used_at=utcnow() помимо is_used=True.
 """
 
 from __future__ import annotations
 
 import logging
-import traceback
-import urllib.parse
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.db.session import get_session
-from app.models import Applicant, Application, Company
-from app.services.inn_generator.pipeline import (
-    InnPipelineError,
-    suggest_inn_for_applicant,
-    mark_inn_as_used,
+from app.api.deps import get_current_user, get_session
+from app.models import (
+    Applicant,
+    Application,
+    Company,
+    SelfEmployedRegistry,
+    User,
 )
-
-from .dependencies import require_manager
-
+from app.services.inn_generator.pipeline import (
+    InnSuggestion,
+    suggest_inn_for_applicant,
+)
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/admin/applicants",
-    tags=["admin: applicants — INN generation"],
-    dependencies=[Depends(require_manager)],
-)
+router = APIRouter(prefix="/api/admin/applicants", tags=["inn-generation"])
 
 
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 
+
 class InnSuggestResponse(BaseModel):
+    """
+    Ответ /inn-suggest. Старые поля (Pack 17) сохранены, добавлены новые
+    region_code и fallback_* поля (Pack 18.1).
+    """
+
     inn: str
-    full_name_rmsp: Optional[str]
-    region_code: Optional[str]
-
+    full_name: str
     home_address: str
-    address_was_generated: bool
+    kladr_code: str
+    region_name: str
+    region_code: str  # NEW: 2-значный код субъекта ('77', '02', ...)
+    inn_registration_date: date
+    source: str
 
-    estimated_npd_start: Optional[date]
-    estimated_npd_start_raw: Optional[str]
-
-    target_kladr_code: str
-    target_region_name: str
-
-    region_pick_source: str
-    region_pick_explanation: str
-
-    yandex_search_url: str
-    rusprofile_url: str
-
-    rmsp_raw: dict
+    # Pack 18.1: warning-поля
+    fallback_used: bool = False
+    requested_region_name: Optional[str] = None
+    requested_region_code: Optional[str] = None
+    fallback_reason: Optional[str] = None
 
 
 class InnAcceptRequest(BaseModel):
-    """
-    Тело запроса к /inn-accept.
-
-    Принимает ОБА варианта именования полей (для совместимости
-    с возможным старым кодом в frontend):
-    - inn_registration_date / registration_date
-    - region_kladr_code / kladr_code
-    """
     inn: str
-    inn_registration_date: Optional[date] = None
-    registration_date: Optional[date] = None  # alias
     home_address: Optional[str] = None
-    region_kladr_code: Optional[str] = None
-    kladr_code: Optional[str] = None  # alias
-    region_pick_source: Optional[str] = None  # для логов
+    kladr_code: Optional[str] = None
+    inn_registration_date: Optional[date] = None
+    inn_source: Optional[str] = "registry_snrip"
 
-    def get_registration_date(self) -> Optional[date]:
-        return self.inn_registration_date or self.registration_date
 
-    def get_kladr_code(self) -> Optional[str]:
-        return self.region_kladr_code or self.kladr_code
+class InnAcceptResponse(BaseModel):
+    ok: bool
+    applicant_id: int
+    inn: str
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _find_application_for_applicant(
     session: Session, applicant_id: int
 ) -> Optional[Application]:
     """
-    Ищет Application у которой applicant_id = заданному.
-
-    В нашей модели связь обратная (Application имеет applicant_id, не наоборот).
-    Если у заявителя несколько заявок — берём самую свежую (id DESC).
+    Pack 17.3 defensive fix: Applicant НЕ имеет поля application_id, поэтому ищем
+    обратным SELECT'ом по Application.applicant_id.
+    Берём последнюю заявку (ORDER BY id DESC) — обычно одна, но если их несколько
+    хотим самую свежую.
     """
     stmt = (
         select(Application)
         .where(Application.applicant_id == applicant_id)
-        .order_by(Application.id.desc())
-        .limit(1)
+        .order_by(Application.id.desc())  # type: ignore[union-attr]
     )
     return session.exec(stmt).first()
 
 
+def _get_company_for_application(
+    session: Session, application: Optional[Application]
+) -> Optional[Company]:
+    if not application or not application.company_id:
+        return None
+    return session.get(Company, application.company_id)
+
+
 # ---------------------------------------------------------------------------
-# POST /admin/applicants/{id}/inn-suggest
+# POST /api/admin/applicants/{applicant_id}/inn-suggest
 # ---------------------------------------------------------------------------
 
-@router.post("/{applicant_id}/inn-suggest", response_model=InnSuggestResponse)
-def suggest_inn(
+
+@router.post(
+    "/{applicant_id}/inn-suggest",
+    response_model=InnSuggestResponse,
+    summary="Подобрать ИНН самозанятого для заявителя",
+)
+def inn_suggest(
     applicant_id: int,
-    filter_by_region: bool = False,
     session: Session = Depends(get_session),
-):
+    user: User = Depends(get_current_user),
+) -> InnSuggestResponse:
     """
-    Подбирает ИНН + адрес + дату для заявителя из локальной БД.
-
-    По умолчанию ищет любого свободного самозанятого (filter_by_region=false),
-    адрес генерируется под регион клиента отдельно.
+    Pack 18.1: подбор ИНН с tier-fallback.
+    Параметр filter_by_region удалён — всегда фильтруем по региону, гарантия
+    результата обеспечивается fallback'ом на диаспоры → Москву.
     """
     applicant = session.get(Applicant, applicant_id)
-    if applicant is None:
-        raise HTTPException(404, "Applicant not found")
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
 
-    # Pack 17.3 fix: ищем Application через обратный запрос
     application = _find_application_for_applicant(session, applicant_id)
-
-    company = None
-    if application and application.company_id:
-        company = session.get(Company, application.company_id)
+    company = _get_company_for_application(session, application)
 
     log.info(
-        f"[inn-suggest] applicant_id={applicant_id} "
-        f"home_address={applicant.home_address!r} "
-        f"nationality={applicant.nationality!r} "
-        f"application_found={application is not None} "
-        f"contract_sign_city={application.contract_sign_city if application else None!r} "
-        f"company_found={company is not None}"
+        "inn-suggest: applicant_id=%s nationality=%s home_addr=%r contract_city=%r company_legal=%r",
+        applicant_id,
+        applicant.nationality,
+        applicant.home_address,
+        application.contract_sign_city if application else None,
+        company.legal_address if company else None,
     )
 
     try:
-        suggestion = suggest_inn_for_applicant(
-            session=session,
+        suggestion: InnSuggestion = suggest_inn_for_applicant(
+            session,
             applicant=applicant,
             application=application,
             company=company,
-            filter_by_region=filter_by_region,
         )
-    except InnPipelineError as e:
-        # Это ОЖИДАЕМАЯ бизнес-ошибка (БД пустая, регион не поддерживается и т.п.)
-        log.warning(f"[inn-suggest] pipeline error: {e}")
+    except RuntimeError as e:
+        # Реестр исчерпан или другая нерешаемая проблема
+        log.error("inn-suggest: pipeline failure for applicant_id=%s: %s", applicant_id, e)
         raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        # Любая неожиданная ошибка — лог трейсбека + понятный 500 для клиента
-        tb = traceback.format_exc()
-        log.error(f"[inn-suggest] UNEXPECTED ERROR for applicant_id={applicant_id}:\n{tb}")
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Внутренняя ошибка генерации ИНН: {type(e).__name__}: {e}. "
-                "Подробности в логах Railway."
-            ),
-        )
-
-    # Готовим вспомогательные ссылки для менеджера
-    yandex_query = f"{suggestion.full_name_rmsp or ''} {suggestion.inn}".strip()
-    yandex_url = (
-        "https://yandex.ru/search/?text="
-        + urllib.parse.quote(yandex_query)
-    )
-    rusprofile_url = f"https://www.rusprofile.ru/search?query={suggestion.inn}"
+    except Exception as e:  # pragma: no cover
+        log.exception("inn-suggest: unexpected error")
+        raise HTTPException(status_code=500, detail=f"Internal error: {e!s}")
 
     return InnSuggestResponse(
         inn=suggestion.inn,
-        full_name_rmsp=suggestion.full_name_rmsp,
-        region_code=suggestion.region_code,
+        full_name=suggestion.full_name,
         home_address=suggestion.home_address,
-        address_was_generated=suggestion.address_was_generated,
-        estimated_npd_start=suggestion.estimated_npd_start,
-        estimated_npd_start_raw=suggestion.estimated_npd_start_raw,
-        target_kladr_code=suggestion.target_kladr_code,
-        target_region_name=suggestion.target_region_name,
-        region_pick_source=suggestion.region_pick_source,
-        region_pick_explanation=suggestion.region_pick_explanation,
-        yandex_search_url=yandex_url,
-        rusprofile_url=rusprofile_url,
-        rmsp_raw=suggestion.rmsp_raw,
+        kladr_code=suggestion.kladr_code,
+        region_name=suggestion.region_name,
+        region_code=suggestion.region_code,
+        inn_registration_date=suggestion.inn_registration_date,
+        source=suggestion.source,
+        fallback_used=suggestion.fallback_used,
+        requested_region_name=suggestion.requested_region_name,
+        requested_region_code=suggestion.requested_region_code,
+        fallback_reason=suggestion.fallback_reason,
     )
 
 
 # ---------------------------------------------------------------------------
-# POST /admin/applicants/{id}/inn-accept
+# POST /api/admin/applicants/{applicant_id}/inn-accept
 # ---------------------------------------------------------------------------
 
-@router.post("/{applicant_id}/inn-accept")
-def accept_inn(
+
+@router.post(
+    "/{applicant_id}/inn-accept",
+    response_model=InnAcceptResponse,
+    summary="Принять ИНН: сохранить в applicant + пометить is_used в реестре",
+)
+def inn_accept(
     applicant_id: int,
     payload: InnAcceptRequest,
     session: Session = Depends(get_session),
-):
+    user: User = Depends(get_current_user),
+) -> InnAcceptResponse:
     """
-    Сохраняет принятое менеджером ИНН в applicant + помечает запись
-    в self_employed_registry как использованную.
+    Сохраняет выбранный ИНН в applicant'е и помечает запись в реестре как использованную.
+    Идемпотентно: если applicant.inn уже совпадает с переданным — просто 200 OK
+    (но если запись в реестре по какой-то причине is_used=False — починим).
     """
     applicant = session.get(Applicant, applicant_id)
-    if applicant is None:
-        raise HTTPException(404, "Applicant not found")
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
 
-    # Сохраняем в applicant
-    applicant.inn = payload.inn
+    inn = (payload.inn or "").strip()
+    if not inn:
+        raise HTTPException(status_code=400, detail="inn is required")
 
-    reg_date = payload.get_registration_date()
-    if reg_date is not None:
-        applicant.inn_registration_date = reg_date
+    # Идемпотентность
+    if applicant.inn == inn:
+        cand = session.get(SelfEmployedRegistry, inn)
+        if cand and not cand.is_used:
+            cand.is_used = True
+            cand.used_by_applicant_id = applicant.id
+            cand.used_at = datetime.utcnow()
+            session.add(cand)
+            session.commit()
+            log.info("inn-accept: marked candidate inn=%s as used (idempotent fix)", inn)
+        return InnAcceptResponse(ok=True, applicant_id=applicant.id, inn=inn)
 
-    applicant.inn_source = "auto-generated"
+    # Проверяем что такой кандидат есть в реестре и свободен
+    cand = session.get(SelfEmployedRegistry, inn)
+    if not cand:
+        raise HTTPException(
+            status_code=404,
+            detail=f"INN {inn} not found in registry. Refuse to write unknown INN.",
+        )
+    if cand.is_used and cand.used_by_applicant_id != applicant.id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"INN {inn} уже использован заявителем id={cand.used_by_applicant_id}. "
+                "Подберите другого кандидата."
+            ),
+        )
 
-    kladr_code = payload.get_kladr_code()
-    if kladr_code is not None:
-        applicant.inn_kladr_code = kladr_code
+    # Транзакционная запись
+    applicant.inn = inn
+    if payload.home_address:
+        applicant.home_address = payload.home_address
+    if payload.kladr_code:
+        applicant.inn_kladr_code = payload.kladr_code
+    if payload.inn_registration_date:
+        applicant.inn_registration_date = payload.inn_registration_date
+    if payload.inn_source:
+        applicant.inn_source = payload.inn_source
 
-    if payload.home_address is not None and payload.home_address.strip():
-        applicant.home_address = payload.home_address.strip()
+    cand.is_used = True
+    cand.used_by_applicant_id = applicant.id
+    cand.used_at = datetime.utcnow()
 
     session.add(applicant)
+    session.add(cand)
     session.commit()
-    session.refresh(applicant)
 
-    # Помечаем ИНН в реестре как использованный
-    try:
-        mark_inn_as_used(session=session, inn=payload.inn, applicant_id=applicant_id)
-    except Exception as e:
-        log.warning(f"[inn-accept] mark_inn_as_used failed for {payload.inn}: {e}")
-        # Не падаем — applicant уже сохранён
-
-    return {
-        "ok": True,
-        "applicant_id": applicant.id,
-        "inn": applicant.inn,
-        "inn_registration_date": applicant.inn_registration_date,
-        "inn_source": applicant.inn_source,
-        "inn_kladr_code": applicant.inn_kladr_code,
-        "home_address": applicant.home_address,
-    }
+    log.info(
+        "inn-accept: SUCCESS applicant_id=%s inn=%s region_kladr=%s",
+        applicant_id,
+        inn,
+        payload.kladr_code,
+    )
+    return InnAcceptResponse(ok=True, applicant_id=applicant.id, inn=inn)
