@@ -406,10 +406,11 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
                     continue
                 batch.append(record)
                 if len(batch) >= BATCH_SIZE:
-                    log.debug(f"[importer] Inserting batch of {len(batch)} records...")
                     t_insert = time.time()
+                    log.info(f"[importer] Inserting batch of {len(batch)} records to Postgres...")
                     _insert_batch(session, batch)
                     insert_time = time.time() - t_insert
+                    log.info(f"[importer] Batch inserted in {insert_time:.2f}s")
                     if insert_time > 5:
                         log.warning(
                             f"[importer] SLOW INSERT: {len(batch)} records "
@@ -553,6 +554,16 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
 
 
 def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
+    """
+    Bulk insert батча через RAW psycopg2 connection с execute_values.
+
+    Pack 17.2.5.3: переписан с SQLAlchemy session.execute() на raw psycopg2
+    потому что через прокси Railway (switchyard.proxy.rlwy.net) обычные
+    INSERT'ы зависали без таймаута.
+
+    execute_values делает ОДИН INSERT с многими VALUES — намного быстрее
+    чем executemany, особенно через медленные сетевые соединения.
+    """
     if not batch:
         return
     now = datetime.utcnow()
@@ -560,17 +571,8 @@ def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
     from app.db.session import engine
     is_postgres = engine.url.get_backend_name() in ("postgresql", "postgres")
 
-    if is_postgres:
-        sql = text("""
-            INSERT INTO self_employed_registry
-                (inn, region_code, full_name, support_begin_date,
-                 registry_create_date, imported_at, is_used)
-            VALUES
-                (:inn, :region_code, :full_name, :support_begin_date,
-                 :registry_create_date, :imported_at, FALSE)
-            ON CONFLICT (inn) DO NOTHING
-        """)
-    else:
+    if not is_postgres:
+        # SQLite fallback (для локального dev)
         sql = text("""
             INSERT OR IGNORE INTO self_employed_registry
                 (inn, region_code, full_name, support_begin_date,
@@ -579,25 +581,55 @@ def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
                 (:inn, :region_code, :full_name, :support_begin_date,
                  :registry_create_date, :imported_at, 0)
         """)
+        params = [
+            {
+                "inn": r.inn, "region_code": r.region_code, "full_name": r.full_name,
+                "support_begin_date": r.support_begin_date,
+                "registry_create_date": r.registry_create_date,
+                "imported_at": now,
+            }
+            for r in batch
+        ]
+        session.execute(sql, params)
+        session.commit()
+        return
 
-    params = [
-        {
-            "inn": r.inn,
-            "region_code": r.region_code,
-            "full_name": r.full_name,
-            "support_begin_date": r.support_begin_date,
-            "registry_create_date": r.registry_create_date,
-            "imported_at": now,
-        }
+    # Postgres: делаем через raw psycopg2 с execute_values
+    from psycopg2.extras import execute_values
+    import time as _time
+
+    rows = [
+        (
+            r.inn, r.region_code, r.full_name,
+            r.support_begin_date, r.registry_create_date,
+            now, False,
+        )
         for r in batch
     ]
 
-    # Retry up to 3 times если timeout/connection error
     last_error = None
     for attempt in range(1, 4):
+        # Берём raw connection из пула SQLAlchemy
+        # session.connection() даст connection — извлечём DBAPI cursor
         try:
-            session.execute(sql, params)
+            t_start = _time.time()
+            raw_conn = session.connection().connection  # это psycopg2 connection
+            with raw_conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO self_employed_registry
+                        (inn, region_code, full_name, support_begin_date,
+                         registry_create_date, imported_at, is_used)
+                    VALUES %s
+                    ON CONFLICT (inn) DO NOTHING
+                    """,
+                    rows,
+                    page_size=BATCH_SIZE,
+                )
             session.commit()
+            elapsed = _time.time() - t_start
+            log.debug(f"[importer] INSERT batch {len(batch)} rows in {elapsed:.2f}s")
             return
         except Exception as e:
             last_error = e
@@ -606,7 +638,7 @@ def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
                 marker in err_msg
                 for marker in (
                     "timeout", "timed out", "connection", "ssl", "broken pipe",
-                    "could not", "operationalerror",
+                    "could not", "operationalerror", "server closed",
                 )
             )
             log.warning(
@@ -619,8 +651,7 @@ def _insert_batch(session: Session, batch: list[ParsedRecord]) -> None:
                 pass
             if not is_retriable or attempt == 3:
                 raise
-            import time as _time
-            _time.sleep(2 * attempt)  # backoff: 2s, 4s
+            _time.sleep(2 * attempt)
 
     if last_error:
         raise last_error
