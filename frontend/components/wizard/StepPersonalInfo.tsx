@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { TextInput, SelectInput, StepHeader, Callout } from "@/components/ui/Form";
+import { TextInput, SelectInput, StepHeader } from "@/components/ui/Form";
 import { ApplicantData, NATIONALITY_OPTIONS } from "@/lib/api";
 
 interface Props {
@@ -180,16 +180,6 @@ export function StepPersonalInfo({ data, onChange }: Props) {
               { value: "V", label: "Вдовец / вдова" },
             ]}
           />
-        </div>
-
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3">
-            Налоговые данные
-          </h3>
-          <Callout type="info">
-            ИНН самозанятого будет назначен вашим менеджером после подачи документов.
-            Вам не нужно заполнять его вручную.
-          </Callout>
         </div>
       </div>
     </div>
