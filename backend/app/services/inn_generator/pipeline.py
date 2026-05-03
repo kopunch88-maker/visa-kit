@@ -37,6 +37,10 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.models import Applicant, Application, Company, Region, SelfEmployedRegistry
+from app.models.self_employed_registry import (
+    RegistryImportLog,
+    SelfEmployedRegistryStats,
+)
 
 from .kladr_address_gen import KNOWN_REGIONS, generate_address
 from .region_picker import (
@@ -454,4 +458,57 @@ def _resolve_known_kladr(region_kladr: Optional[str], region_code: str) -> str:
     raise InnPipelineError(
         f"Pack 18.1: KNOWN_REGIONS does not contain kladr matching region_kladr={region_kladr!r} "
         f"or region_code={region_code!r}. Update kladr_address_gen.KNOWN_REGIONS to cover this region."
+    )
+
+# ---------------------------------------------------------------------------
+# Pack 17.2.4 compat: статистика реестра (используется в registry_admin endpoint)
+# ---------------------------------------------------------------------------
+
+
+def get_registry_stats(session: Session) -> SelfEmployedRegistryStats:
+    """
+    Сводная статистика по реестру self_employed_registry для админ-эндпоинта
+    GET /admin/registry/import-status.
+
+    Pack 18.1: восстановлена из старого pipeline (импортируется в
+    backend/app/api/registry_admin.py).
+
+    Возвращает:
+        - total_records: всего записей в реестре
+        - available_records: с is_used=False (доступны для выдачи)
+        - used_records: с is_used=True (уже выданы applicant'ам)
+        - last_import_date: started_at последнего импорта (если есть)
+        - last_import_status: 'success' | 'failed' | 'running' | 'queued' | None
+        - last_import_dump_date: dump_date последнего импорта (если есть)
+    """
+    total = session.exec(
+        select(func.count()).select_from(SelfEmployedRegistry)  # type: ignore[arg-type]
+    ).one()
+    used = session.exec(
+        select(func.count())
+        .select_from(SelfEmployedRegistry)
+        .where(SelfEmployedRegistry.is_used == True)  # noqa: E712
+    ).one()
+
+    # session.exec(scalar_select).one() в SQLModel возвращает int (не Row).
+    # Подстраховка для разных версий SQLModel:
+    if isinstance(total, tuple):
+        total = total[0]
+    if isinstance(used, tuple):
+        used = used[0]
+
+    available = int(total) - int(used)
+
+    # Последний импорт по started_at DESC
+    last_log = session.exec(
+        select(RegistryImportLog).order_by(RegistryImportLog.started_at.desc()).limit(1)  # type: ignore[union-attr]
+    ).first()
+
+    return SelfEmployedRegistryStats(
+        total_records=int(total),
+        available_records=int(available),
+        used_records=int(used),
+        last_import_date=(last_log.started_at if last_log else None),
+        last_import_status=(last_log.status if last_log else None),
+        last_import_dump_date=(last_log.dump_date if last_log else None),
     )
