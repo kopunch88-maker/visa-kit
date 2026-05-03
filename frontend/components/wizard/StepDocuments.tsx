@@ -287,7 +287,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
           className="px-5 py-2.5 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
           style={{ borderWidth: 0.5 }}
         >
-          Пропустить > заполнить вручную
+          Пропустить → заполнить вручную
         </button>
 
         <button
