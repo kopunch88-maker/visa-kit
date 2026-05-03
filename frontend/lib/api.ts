@@ -1,3 +1,4 @@
+
 /**
  * Pack 8.7 — добавлены:
  * - patchApplication(): partial-update заявки
@@ -846,6 +847,16 @@ export async function updateApplicant(
     email: string;
     phone: string;
     inn: string;
+    // Pack 17 — INN auto-generation
+    inn_registration_date: string | null;
+    inn_source: string | null;
+    inn_kladr_code: string | null;
+    // Pack 16 — банк
+    bank_id: number | null;
+    bank_account: string | null;
+    bank_name: string | null;
+    bank_bic: string | null;
+    bank_correspondent_account: string | null;
   }>,
 ): Promise<ApplicantResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, {
@@ -872,7 +883,7 @@ export async function updateApplicant(
 /**
  * Pack 14 finishing — транслитерирует латинское ФИО в русский черновик.
  *
- * Используется в ApplicantDrawer — кнопка «✨ Транслитерировать с латиницы».
+ * Используется в ApplicantDrawer — кнопка «? Транслитерировать с латиницы».
  * Возвращает черновик который менеджер может поправить.
  */
 export async function transliterateLatToRu(
@@ -1590,8 +1601,8 @@ export async function deleteRegion(id: number): Promise<void> {
 
 export type InnSuggestionResponse = {
   inn: string;
-  full_name_rmsp: string;
-  region_code: string;
+  full_name_rmsp: string | null;
+  region_code: string | null;
 
   home_address: string;
   address_was_generated: boolean;
@@ -1607,14 +1618,17 @@ export type InnSuggestionResponse = {
 
   yandex_search_url: string;
   rusprofile_url: string;
+
+  // Pack 17.2.4: данные из локальной БД (источник, дата создания записи и т.д.)
+  rmsp_raw: Record<string, any>;
 };
 
 export type InnAcceptPayload = {
   inn: string;
-  registration_date?: string | null;
-  home_address: string;
-  kladr_code: string;
-  region_pick_source?: string;
+  // Pack 17.3 fix: имена полей под backend
+  inn_registration_date?: string | null;
+  home_address?: string | null;
+  region_kladr_code?: string | null;
 };
 
 export type InnAcceptResult = {
@@ -1663,3 +1677,6 @@ export async function acceptInn(
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
+
+
+

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -10,6 +11,7 @@ import {
   listBanks,
   generateAccount,
 } from "@/lib/api";
+import { InnSuggestionModal } from "./InnSuggestionModal";
 
 interface Props {
   applicant: ApplicantResponse;
@@ -87,6 +89,14 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [email, setEmail] = useState(applicant.email || "");
   const [phone, setPhone] = useState(applicant.phone || "");
   const [inn, setInn] = useState(applicant.inn || "");
+  // Pack 17.3 — модал генерации ИНН + дата регистрации НПД
+  const [innModalOpen, setInnModalOpen] = useState(false);
+  const [inn_registration_date, setInnRegistrationDate] = useState(
+    applicant.inn_registration_date || ""
+  );
+  const [inn_kladr_code, setInnKladrCode] = useState(
+    applicant.inn_kladr_code || ""
+  );
 
   // Pack 16 — банковские поля
   const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
@@ -149,7 +159,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
     setAccountGenerating(true);
     setError(null);
     try {
-      // Резидент ли клиент: если nationality === "RUS" → резидент (40817), иначе нерезидент (40820)
+      // Резидент ли клиент: если nationality === "RUS" > резидент (40817), иначе нерезидент (40820)
       const isResident = nationality === "RUS";
       const result = await generateAccount(bank_id as number, isResident);
       setBankAccount(result.account);
@@ -204,6 +214,8 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         email: email.trim(),
         phone: phone.trim(),
         inn: inn.trim(),
+        inn_registration_date: inn_registration_date || null,
+        inn_kladr_code: inn_kladr_code || null,
         // Pack 16
         bank_account: bank_account.trim() || null,
         ...bankFields,
@@ -216,6 +228,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   }
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex justify-end"
       style={{ background: "rgba(0,0,0,0.5)" }}
@@ -282,7 +295,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                   У клиента не заполнены ФИО на русском
                 </div>
                 <div className="text-xs">
-                  Нажмите <b>«✨ Транслитерировать»</b> ниже — система предложит черновик.
+                  Нажмите <b>«? Транслитерировать»</b> ниже — система предложит черновик.
                   После этого проверьте и при необходимости поправьте.
                 </div>
               </div>
@@ -382,7 +395,28 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               <Field label="Email" value={email} onChange={setEmail} placeholder="user@example.com" />
               <Field label="Телефон" value={phone} onChange={setPhone} placeholder="+7 999 ..." />
             </div>
-            <Field label="ИНН" value={inn} onChange={setInn} placeholder="123456789012" />
+            <Field label="ИНН" value={inn} onChange={setInn} placeholder="123456789012"
+              actionButton={
+                <button
+                  type="button"
+                  onClick={() => setInnModalOpen(true)}
+                  className="text-xs px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1 whitespace-nowrap"
+                  style={{ background: "var(--color-accent)" }}
+                  title="Подобрать ИНН реального самозанятого из реестра ФНС"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Сгенерировать
+                </button>
+              }
+            />
+            {inn_registration_date && (
+              <Field
+                label="Дата регистрации как самозанятого"
+                value={inn_registration_date}
+                onChange={setInnRegistrationDate}
+                type="date"
+              />
+            )}
           </Section>
 
           {/* Pack 16: Банк */}
@@ -448,9 +482,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               </div>
               <p className="text-[11px] text-tertiary mt-1">
                 {nationality === "RUS"
-                  ? "Резидент РФ → префикс 40817 (физлица)"
+                  ? "Резидент РФ > префикс 40817 (физлица)"
                   : nationality
-                  ? `Нерезидент (${nationality}) → префикс 40820`
+                  ? `Нерезидент (${nationality}) > префикс 40820`
                   : "Укажите гражданство для правильного префикса (40817 для РФ / 40820 для остальных)"}
               </p>
             </div>
@@ -495,6 +529,23 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         </div>
       </div>
     </div>
+
+    {/* Pack 17.3 — модал генерации ИНН */}
+    {innModalOpen && (
+      <InnSuggestionModal
+        applicantId={applicant.id}
+        hadAddressBefore={!!(home_address && home_address.trim().length > 5)}
+        onClose={() => setInnModalOpen(false)}
+        onAccepted={() => {
+          // Обновим локальные поля формы по тому, что мог изменить backend.
+          // Полные актуальные данные будут получены через onSaved -> родитель
+          // обновит applicant и передаст его обратно в Drawer при следующем рендере.
+          setInnModalOpen(false);
+          onSaved();
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -529,7 +580,7 @@ function Section({
 
 
 function Field({
-  label, value, onChange, onBlur, placeholder, textarea, type,
+  label, value, onChange, onBlur, placeholder, textarea, type, actionButton,
 }: {
   label: string;
   value: string;
@@ -538,6 +589,7 @@ function Field({
   placeholder?: string;
   textarea?: boolean;
   type?: string;
+  actionButton?: React.ReactNode;
 }) {
   const style = {
     borderColor: "var(--color-border-tertiary)",
@@ -548,7 +600,10 @@ function Field({
 
   return (
     <div>
-      <label className="block text-xs text-tertiary mb-1">{label}</label>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-xs text-tertiary">{label}</label>
+        {actionButton}
+      </div>
       {textarea ? (
         <textarea
           value={value}
@@ -606,3 +661,6 @@ function FieldSelect({
     </div>
   );
 }
+
+
+
