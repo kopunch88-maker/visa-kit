@@ -1,7 +1,13 @@
 """
 Pack 18.0 — CRUD endpoints для справочников ИФНС и МФЦ.
 
-FIX 2: region_code везде как str (varchar(2)).
+FIX 3 (Pack 18.1 v6): replaced bogus 'from app.security import get_current_admin_user'
+with the project's real auth dependency 'require_manager' from app.api.dependencies.
+Also changed router prefix from '/api/admin' to '/admin' to match the rest of the
+project (applicants.py, registry_admin.py and inn_generation.py all use '/admin'
+prefix; main.py adds the '/api' part on include_router).
+
+region_code is varchar(2) everywhere (matches self_employed_registry).
 """
 from __future__ import annotations
 
@@ -14,9 +20,17 @@ from sqlmodel import Session, select
 
 from app.db.session import get_session
 from app.models.ifns_mfc import IfnsOffice, MfcOffice
-from app.security import get_current_admin_user  # adjust import to actual path
 
-router = APIRouter(prefix="/api/admin", tags=["ifns-mfc"])
+from .dependencies import require_manager
+
+# Pack 18.1 v6: protect ALL endpoints in this router with require_manager
+# (matches registry_admin.py pattern). Removes need to repeat
+# `_admin=Depends(...)` on every handler signature.
+router = APIRouter(
+    prefix="/admin",
+    tags=["ifns-mfc"],
+    dependencies=[Depends(require_manager)],
+)
 
 
 # ============================================================================
@@ -98,7 +112,6 @@ def list_ifns(
     region_code: Optional[str] = Query(None, description="Filter by 2-char subject code"),
     only_active: bool = Query(True),
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     q = select(IfnsOffice).order_by(IfnsOffice.region_code, IfnsOffice.code)
     if region_code is not None:
@@ -112,7 +125,6 @@ def list_ifns(
 def get_ifns(
     ifns_id: int,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(IfnsOffice, ifns_id)
     if not obj:
@@ -124,7 +136,6 @@ def get_ifns(
 def create_ifns(
     body: IfnsCreate,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     if body.is_default:
         existing = s.exec(
@@ -149,7 +160,6 @@ def patch_ifns(
     ifns_id: int,
     body: IfnsPatch,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(IfnsOffice, ifns_id)
     if not obj:
@@ -180,7 +190,6 @@ def patch_ifns(
 def delete_ifns(
     ifns_id: int,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(IfnsOffice, ifns_id)
     if not obj:
@@ -201,7 +210,6 @@ def list_mfc(
     region_code: Optional[str] = Query(None),
     only_active: bool = Query(True),
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     q = select(MfcOffice).order_by(MfcOffice.region_code, MfcOffice.city, MfcOffice.name)
     if region_code is not None:
@@ -215,7 +223,6 @@ def list_mfc(
 def get_mfc(
     mfc_id: int,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(MfcOffice, mfc_id)
     if not obj:
@@ -227,7 +234,6 @@ def get_mfc(
 def create_mfc(
     body: MfcCreate,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = MfcOffice(**body.model_dump())
     s.add(obj)
@@ -241,7 +247,6 @@ def patch_mfc(
     mfc_id: int,
     body: MfcPatch,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(MfcOffice, mfc_id)
     if not obj:
@@ -259,7 +264,6 @@ def patch_mfc(
 def delete_mfc(
     mfc_id: int,
     s: Session = Depends(get_session),
-    _admin=Depends(get_current_admin_user),
 ):
     obj = s.get(MfcOffice, mfc_id)
     if not obj:
