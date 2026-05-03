@@ -30,6 +30,8 @@ const DOCUMENTS: DocItem[] = [
   { id: "designacion",     filename: "12_Designacion_representante.pdf",         kind: "pdf"  },
   { id: "compromiso",      filename: "13_Compromiso_RETA.pdf",                   kind: "pdf"  },
   { id: "declaracion",     filename: "14_Declaracion_antecedentes.pdf",          kind: "pdf"  },
+  // Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
+  { id: "npd_certificate", filename: "15_Справка_НПД.docx",                      kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId }: Props) {
