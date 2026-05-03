@@ -5,19 +5,27 @@ Pack 18.3 — Контекст для DOCX-шаблона `npd_certificate_templ
 Намеренно отделён от основного `context.build_context()` — справке не нужны
 банковская выписка, курсы ЦБ, акты, договоры и прочая обвязка пакета.
 
-Логика подбора ИФНС/МФЦ:
+Pack 18.3.4 (свежие изменения):
+- Восстановлен auto-fill Pack 18.3.1 (видимо был потерян при переписываниях).
+  Если у applicant'а пустые inn_registration_date или inn_kladr_code — генерим
+  на лету и сохраняем в БД. Поддержка ручного ввода ИНН менеджером.
+- Логика даты НПД теперь использует submission_date (дату подачи в консул)
+  как базу, диапазон 120-210 дней (4-7 месяцев). Раньше было contract_sign_date
+  и 30-90 дней — этого было НЕДОСТАТОЧНО для критерия консула «3 месяца
+  самозанятости на дату подачи». Теперь критерий проходит с запасом 30 дней.
+- Логика идентична _synthetic_npd_registration_date в pipeline.py (один
+  алгоритм для двух точек входа: inn-suggest И генерация справки).
+
+Логика подбора ИФНС/МФЦ (без изменений):
 - Берём region_code = applicant.inn_kladr_code[:2]. Если пусто — fallback
   на applicant.inn[:2]. Если и ИНН пуст — поднимаем ValueError.
 - IfnsOffice: WHERE region_code=... AND is_active=True, ORDER BY
-  is_default DESC, code → берём первую (если default есть — он будет первым,
-  иначе самая первая по коду).
-- MfcOffice: список всех is_active в этом регионе. Если несколько —
-  детерминистично выбираем по applicant.id % len(list) (Q2: повторная
-  генерация даёт тот же МФЦ).
-- mfc.staff_names: детерминистично applicant.id % len(staff_names) (Q3).
+  is_default DESC, code → берём первую.
+- MfcOffice: список всех is_active в регионе. Детерминистично
+  applicant.id % len(list).
+- mfc.staff_names: детерминистично applicant.id % len(staff_names).
 - Если ИФНС или МФЦ для региона не найдены — fallback на регион '77' (Москва).
-- Если и в Москве пусто — это критическая ошибка конфигурации (поднимаем
-  ValueError с понятным сообщением).
+- Если и в Москве пусто — критическая ошибка конфигурации.
 """
 from __future__ import annotations
 
@@ -102,7 +110,6 @@ def _pick_ifns(session: Session, region_code: str) -> Optional[IfnsOffice]:
         select(IfnsOffice)
         .where(IfnsOffice.region_code == region_code)
         .where(IfnsOffice.is_active == True)  # noqa: E712
-        # is_default DESC: True (=1) идёт перед False (=0) в сортировке desc
         .order_by(IfnsOffice.is_default.desc(), IfnsOffice.code)
     )
     return session.exec(stmt).first()
@@ -119,7 +126,7 @@ def _pick_mfc(
         select(MfcOffice)
         .where(MfcOffice.region_code == region_code)
         .where(MfcOffice.is_active == True)  # noqa: E712
-        .order_by(MfcOffice.id)  # стабильная сортировка для детерминизма
+        .order_by(MfcOffice.id)
     )
     mfc_list = list(session.exec(stmt).all())
     if not mfc_list:
@@ -142,6 +149,101 @@ def _pick_mfc_employee(mfc: MfcOffice, applicant_id: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Pack 18.3.1 — auto-fill для ручного ввода ИНН (восстановлено в 18.3.4)
+# ---------------------------------------------------------------------------
+
+def _ensure_inn_registration_date(
+    applicant: Applicant,
+    application: Application,
+    session: Session,
+) -> date:
+    """
+    Pack 18.3.4: auto-fill inn_registration_date (поддержка ручного ввода ИНН).
+
+    Если менеджер ввёл ИНН руками (не через ✨ + Принять модалку), у applicant'а
+    inn_registration_date останется пустым. При первой генерации справки эта
+    функция:
+    1. Генерит дату по той же схеме что pipeline.py (Pack 18.3.4):
+       база = submission_date (или fallback на contract_sign_date+90 / today+30)
+       минус random(120..210) дней
+    2. Сохраняет в БД (session.commit) — повторные генерации справки дают
+       стабильную дату.
+    3. Если inn_source был None — ставит "manual".
+
+    Логика синхронизирована с _synthetic_npd_registration_date в pipeline.py.
+    Любые изменения в одной функции должны зеркалиться в другой.
+    """
+    if applicant.inn_registration_date is not None:
+        return applicant.inn_registration_date
+
+    # Базовая дата — submission_date / contract_sign_date+90 / today()+30
+    if application.submission_date is not None:
+        base = application.submission_date
+    elif application.contract_sign_date is not None:
+        base = application.contract_sign_date + timedelta(days=90)
+    else:
+        base = date.today() + timedelta(days=30)
+
+    rng = Random(applicant.id or 0)
+    days_before = rng.randint(120, 210)  # 4-7 месяцев
+    derived = base - timedelta(days=days_before)
+
+    log.info(
+        "Pack 18.3.4: applicant id=%s has no inn_registration_date, deriving "
+        "%s (base=%s, days_before=%s) and writing back to DB",
+        applicant.id,
+        derived,
+        base,
+        days_before,
+    )
+
+    applicant.inn_registration_date = derived
+    if not applicant.inn_source:
+        applicant.inn_source = "manual"  # ИНН видимо ввёлся руками
+    session.add(applicant)
+    session.commit()
+    session.refresh(applicant)
+
+    return derived
+
+
+def _ensure_inn_kladr_code(
+    applicant: Applicant,
+    session: Session,
+) -> str:
+    """
+    Pack 18.3.4 (восстановлено из 18.3.1): если inn_kladr_code пустой,
+    генерируем заглушку из inn[:2] + 11 нулей (валидный 13-значный KLADR
+    на уровне субъекта) и сохраняем в БД.
+    """
+    existing = (applicant.inn_kladr_code or "").strip()
+    if len(existing) >= 2:
+        return existing
+
+    inn = (applicant.inn or "").strip()
+    if len(inn) < 2:
+        raise ValueError(
+            f"Applicant id={applicant.id} has neither inn_kladr_code nor inn — "
+            f"cannot derive region. Run inn-suggest first."
+        )
+
+    derived = inn[:2] + "0" * 11
+    log.info(
+        "Pack 18.3.4: applicant id=%s has no inn_kladr_code, deriving %s from "
+        "inn prefix and writing back to DB",
+        applicant.id,
+        derived,
+    )
+
+    applicant.inn_kladr_code = derived
+    session.add(applicant)
+    session.commit()
+    session.refresh(applicant)
+
+    return derived
+
+
+# ---------------------------------------------------------------------------
 # Главный entry point
 # ---------------------------------------------------------------------------
 
@@ -154,9 +256,12 @@ def build_npd_certificate_context(
     """
     Собирает context для DOCX-шаблона `npd_certificate_template.docx`.
 
+    Pack 18.3.4: автоматически дозаполняет inn_registration_date и
+    inn_kladr_code если они пустые (для сценариев ручного ввода ИНН).
+    Эти поля сохраняются обратно в БД при первой генерации.
+
     Аргументы:
-        application — заявка (нужна только чтобы найти applicant_id; реально
-            справка персональная, нужны только данные applicant'а)
+        application — заявка
         session — DB session
         today — для тестов; в проде = date.today()
 
@@ -176,12 +281,12 @@ def build_npd_certificate_context(
             f"Applicant id={applicant_id} not found"
         )
 
-    # Базовая валидация — без этих полей справка лишена смысла
+    # Pack 18.3.4: только inn и passport_number обязательны на входе.
+    # inn_registration_date и inn_kladr_code дозаполняются автоматически
+    # через _ensure_* функции.
     missing: list[str] = []
     if not applicant.inn:
         missing.append("inn")
-    if not applicant.inn_registration_date:
-        missing.append("inn_registration_date")
     if not applicant.passport_number:
         missing.append("passport_number")
     if missing:
@@ -190,12 +295,16 @@ def build_npd_certificate_context(
             f"certificate: {', '.join(missing)}. Run inn-suggest and fill passport first."
         )
 
+    # Pack 18.3.4: auto-fill недостающих полей с записью в БД
+    inn_registration_date = _ensure_inn_registration_date(applicant, application, session)
+    _ensure_inn_kladr_code(applicant, session)
+
     # ---- 1. Регион + ИФНС + МФЦ ----
     region_code = _resolve_region_code(applicant)
     ifns = _pick_ifns(session, region_code)
     mfc = _pick_mfc(session, region_code, applicant_id)
 
-    # Fallback на Москву если в регионе пусто (для ИФНС или МФЦ отдельно)
+    # Fallback на Москву если в регионе пусто
     if ifns is None:
         log.warning(
             "build_npd_certificate_context: no IfnsOffice for region_code=%s, "
@@ -224,13 +333,10 @@ def build_npd_certificate_context(
 
     employee_name = _pick_mfc_employee(mfc, applicant_id)
 
-    # ---- 2. Дата выдачи справки (Q: за 2-3 недели до today) ----
-    # Детерминистично по applicant_id (одинаковая дата при повторной генерации
-    # того же applicant'а).
+    # ---- 2. Дата выдачи справки (за 14-21 день до today) ----
     rng = Random(applicant_id or 0)
     days_back = rng.randint(14, 21)
     issued_date = today - timedelta(days=days_back)
-    # Время — рабочие часы 09:00-17:00, рандом по applicant_id
     issued_hour = rng.randint(9, 17)
     issued_minute = rng.randint(0, 59)
     issued_datetime = datetime(
@@ -238,20 +344,13 @@ def build_npd_certificate_context(
         issued_hour, issued_minute,
     )
 
-    # ---- 3. Номер справки (Q5 вариант C: формула) ----
-    # 9-значный, "псевдо-нарастающий". Базовое значение около образца (106735761).
-    # Формула: 106_800_000 + applicant_id*7 + (issued_date_ordinal % 100).
+    # ---- 3. Номер справки ----
     base = 106_800_000
     cert_number = base + (applicant_id or 0) * 7 + (issued_date.toordinal() % 100)
-    # Гарантия 9 цифр (на всякий случай)
     cert_number = cert_number % 1_000_000_000
 
     # ---- 4. Код документа удостоверения личности ----
-    # Pack 18.3.1 (фикс): по реальным образцам справки КНД 1122035 от ФНС:
-    #   21 = паспорт гражданина Российской Федерации
-    #   10 = паспорт иностранного гражданина
-    # (в первом образце Сахиджафарлы было ошибочно прочитано как "1 21" — на самом
-    # деле "1" это надстрочный знак сноски ¹, а код = 21)
+    # 21 = паспорт РФ, 10 = паспорт иностранного гражданина (Pack 18.3.1)
     nat = (applicant.nationality or "").upper()
     passport_code = "21" if nat == "RUS" else "10"
 
@@ -268,7 +367,7 @@ def build_npd_certificate_context(
             "issued_date_short": _format_date_short(issued_date),
             "issued_datetime_ru": _format_datetime_ru(issued_datetime),
             "passport_code": passport_code,
-            "npd_start_date_short": _format_date_short(applicant.inn_registration_date),
+            "npd_start_date_short": _format_date_short(inn_registration_date),
         },
         "ifns": {
             "full_name": ifns.full_name,

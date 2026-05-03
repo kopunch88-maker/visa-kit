@@ -1,7 +1,7 @@
 """
-Pack 17 / Pack 18.1 — пайплайн подбора ИНН самозанятого для заявителя.
+Pack 17 / Pack 18.1 / Pack 18.3.4 — пайплайн подбора ИНН самозанятого для заявителя.
 
-Pack 18.1 изменения:
+Pack 18.1 изменения (без изменений с прошлой версии):
 - Новая функция pick_candidate_with_fallback(): tier-fallback по region_code.
   Tier 1 (строго): WHERE region_code = target_region_code AND is_used=FALSE
   Tier 2 (диаспоры): пробуем регионы где есть диаспора национальности клиента
@@ -19,6 +19,16 @@ Pack 18.1 изменения:
     requested_region_code: Optional[str] (только если был fallback)
 
 Эти поля прокидываются в endpoint -> фронт показывает warning менеджеру.
+
+Pack 18.3.4 изменения (текущая версия):
+- _synthetic_npd_registration_date(): дата НПД теперь считается от submission_date
+  (даты подачи в консул), а не от contract_sign_date. Диапазон расширен
+  до 120-210 дней (4-7 месяцев) — критерий «3 месяца самозанятости на дату подачи»
+  с запасом 30 дней на возможный перенос подачи.
+- Сигнатура изменена: принимает Optional[date] submission_date + Optional[date]
+  contract_sign_date + rng. Раньше было только contract_sign_date.
+- Если submission_date не задан — fallback на contract_sign_date + 90 дней
+  (предполагаемая дата подачи). Если оба не заданы — fallback на today() + 30.
 
 Замечание про SelfEmployedRegistry: ФИО хранится одной строкой в поле full_name
 (см. backend/app/models/self_employed_registry.py). Поля last_name/first_name/
@@ -243,7 +253,7 @@ def pick_candidate_with_fallback(
             )
             if target_region_code == moscow_code:
                 # Москва была изначальным таргетом, но Tier 1 показал пусто, а сейчас не пусто?
-                # Race condition между запросами или кеш — но Tier 3 нашёл, значит просто продолжаем.
+                # Race condition между запросами или кэш — но Tier 3 нашёл, значит просто продолжаем.
                 # Технически fallback_used=False (мы не сменили регион).
                 return CandidatePickResult(
                     candidate=cand,
@@ -275,20 +285,49 @@ def pick_candidate_with_fallback(
 
 
 # ---------------------------------------------------------------------------
-# Дата НПД (без изменений с Pack 17.5)
+# Дата НПД (Pack 18.3.4 — изменена с Pack 17.5)
 # ---------------------------------------------------------------------------
 
 
 def _synthetic_npd_registration_date(
-    contract_sign_date: Optional[date], rng: random.Random
+    submission_date: Optional[date],
+    contract_sign_date: Optional[date],
+    rng: random.Random,
 ) -> date:
     """
-    Pack 17.5: синтетическая дата регистрации НПД.
-    contract_sign_date - 30..90 дней (рандом).
-    Если contract_sign_date не задан — берём сегодня.
+    Pack 18.3.4: синтетическая дата регистрации НПД.
+
+    Базовое требование консула: на дату подачи документов (submission_date)
+    клиент должен быть самозанятым минимум 3 месяца (90 дней).
+
+    Логика:
+        base = submission_date (если задана)
+               иначе contract_sign_date + 90 дней (предполагаемая дата подачи)
+               иначе today() + 30 дней (последний fallback)
+        days_before = random(120..210)  # 4-7 месяцев — запас 30 дней сверх 3 мес.
+        return base - days_before
+
+    Это даёт:
+    - На дату подачи минимум ~120 дней (~4 мес.) самозанятости — критерий 3 мес.
+      проходит с запасом 30 дней (на случай переноса подачи)
+    - Максимум ~210 дней (~7 мес.) — выглядит реалистично, не «давно зарегистрированный»
+    - Дата детерминистична по rng (повторная генерация для того же applicant'а
+      даст ту же дату при том же seed)
+
+    Раньше (Pack 17.5): база = contract_sign_date, диапазон 30..90 дней.
+    Это было НЕВЕРНО: половина клиентов получала <90 дней самозанятости
+    на дату подачи и могла не пройти критерий.
     """
-    base = contract_sign_date or date.today()
-    days_before = rng.randint(30, 90)
+    if submission_date is not None:
+        base = submission_date
+    elif contract_sign_date is not None:
+        # Предполагаем что подача через 90 дней после подписания договора
+        base = contract_sign_date + timedelta(days=90)
+    else:
+        # Последний fallback — предполагаемая подача через 30 дней от сегодня
+        base = date.today() + timedelta(days=30)
+
+    days_before = rng.randint(120, 210)
     return base - timedelta(days=days_before)
 
 
@@ -313,6 +352,10 @@ def suggest_inn_for_applicant(
     - используем pick_candidate_with_fallback вместо «или строго, или любой»
     - адрес генерируется под ФАКТИЧЕСКИЙ регион (после fallback)
     - возвращаем расширенный InnSuggestion с warning-полями
+
+    Pack 18.3.4 изменение:
+    - дата НПД считается от submission_date (даты подачи в консул), а не
+      от contract_sign_date. Диапазон 120-210 дней до подачи.
     """
     rng = random.Random(seed)
 
@@ -379,9 +422,11 @@ def suggest_inn_for_applicant(
             pick.fallback_used,
         )
 
-    # ----- 4. Дата НПД -----
+    # ----- 4. Дата НПД (Pack 18.3.4: от submission_date) -----
     inn_reg_date = _synthetic_npd_registration_date(
-        application.contract_sign_date if application else None, rng
+        submission_date=(application.submission_date if application else None),
+        contract_sign_date=(application.contract_sign_date if application else None),
+        rng=rng,
     )
 
     # ----- 5. Сборка результата -----
@@ -403,11 +448,12 @@ def suggest_inn_for_applicant(
     )
 
     log.info(
-        "suggest_inn_for_applicant: SUCCESS inn=%s region=%s (code=%s) fallback=%s",
+        "suggest_inn_for_applicant: SUCCESS inn=%s region=%s (code=%s) fallback=%s npd_date=%s",
         suggestion.inn,
         suggestion.region_name,
         suggestion.region_code,
         suggestion.fallback_used,
+        suggestion.inn_registration_date,
     )
     return suggestion
 
