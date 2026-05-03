@@ -373,6 +373,8 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
 
         batch: list[ParsedRecord] = []
 
+        log.info(f"[importer] Starting to process XMLs (batch_size={BATCH_SIZE})...")
+
         for i, xml_name in enumerate(xml_files, 1):
             # Лог каждые 5 секунд: на каком файле сейчас
             now = time.time()
@@ -390,25 +392,41 @@ def _parse_zip_directly(session: Session, zip_path: Path, stats: ImportStats) ->
                 last_file_log_at = now
 
             with zf.open(xml_name) as raw:
-                for record in _iter_npd_records(raw, stats):
-                    if record.inn in used_inns:
-                        stats.records_skipped_used += 1
-                        continue
-                    batch.append(record)
-                    if len(batch) >= BATCH_SIZE:
-                        log.debug(f"[importer] Inserting batch of {len(batch)} records...")
-                        t_insert = time.time()
-                        _insert_batch(session, batch)
-                        insert_time = time.time() - t_insert
-                        if insert_time > 5:
-                            log.warning(
-                                f"[importer] SLOW INSERT: {len(batch)} records "
-                                f"took {insert_time:.1f}s"
-                            )
-                        stats.records_imported += len(batch)
-                        batch.clear()
+                # КРИТИЧНО: читаем XML целиком в BytesIO.
+                # lxml.iterparse некорректно работает со stream от zipfile.open()
+                # (в некоторых случаях зависает потому что пытается seek() который не поддерживается).
+                # Каждый XML всего ~350 КБ, читать его целиком в память безопасно.
+                xml_bytes = raw.read()
+
+            # Парсим из BytesIO (полностью в памяти)
+            xml_stream = io.BytesIO(xml_bytes)
+            for record in _iter_npd_records(xml_stream, stats):
+                if record.inn in used_inns:
+                    stats.records_skipped_used += 1
+                    continue
+                batch.append(record)
+                if len(batch) >= BATCH_SIZE:
+                    log.debug(f"[importer] Inserting batch of {len(batch)} records...")
+                    t_insert = time.time()
+                    _insert_batch(session, batch)
+                    insert_time = time.time() - t_insert
+                    if insert_time > 5:
+                        log.warning(
+                            f"[importer] SLOW INSERT: {len(batch)} records "
+                            f"took {insert_time:.1f}s"
+                        )
+                    stats.records_imported += len(batch)
+                    batch.clear()
 
             stats.xml_files_processed += 1
+
+            # Гарантированный лог после первого файла — чтобы убедиться что парсер живой
+            if i == 1:
+                log.info(
+                    f"[importer] FIRST FILE PROCESSED: "
+                    f"docs={stats.records_total}, NPD found={len(batch)}, "
+                    f"skipped_no_npd={stats.records_skipped_no_npd}"
+                )
 
         # Хвост
         if batch:
