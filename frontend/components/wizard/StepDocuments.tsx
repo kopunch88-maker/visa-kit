@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState, useRef } from "react";
@@ -286,7 +287,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
           className="px-5 py-2.5 rounded-md text-sm border border-tertiary text-secondary hover:bg-secondary disabled:opacity-50 transition-colors"
           style={{ borderWidth: 0.5 }}
         >
-          Пропустить → заполнить вручную
+          Пропустить > заполнить вручную
         </button>
 
         <button
@@ -310,7 +311,7 @@ export function StepDocuments({ token, onSkip, onContinue }: Props) {
               <Sparkles className="w-4 h-4" />
               {uploadedCount === 0
                 ? "Загрузите хотя бы один документ"
-                : `Распознать всё (${uploadedCount}) →`}
+                : `Распознать всё (${uploadedCount}) >`}
             </>
           )}
         </button>
@@ -617,7 +618,7 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
             <ul className="mt-2 space-y-1 pl-4">
               {preview.same.map((item) => (
                 <li key={item.field} className="text-xs text-tertiary">
-                  ✓ {FIELD_LABELS[item.field] || item.field}: {formatValue(item.field, item.value)}
+                  ? {FIELD_LABELS[item.field] || item.field}: {formatValue(item.field, item.value)}
                 </li>
               ))}
             </ul>
@@ -689,8 +690,8 @@ function ReviewMode({ token, preview, documents, onConfirm, onBack, error }: Rev
             <>
               <CheckCircle2 className="w-4 h-4" />
               {totalChanges === 0
-                ? "Продолжить →"
-                : `Применить (${totalChanges}) и продолжить →`}
+                ? "Продолжить >"
+                : `Применить (${totalChanges}) и продолжить >`}
             </>
           )}
         </button>
@@ -878,7 +879,7 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
               />
             ) : (
               <div className="text-center text-tertiary text-xs p-2">
-                📄<br />
+                ??<br />
                 {doc.content_type.split("/")[1]?.toUpperCase() || "FILE"}
               </div>
             )}
@@ -1030,3 +1031,6 @@ function DocumentSlot({ slot, doc, isRecognizing, onUpload, onDelete }: Document
     </>
   );
 }
+
+
+
