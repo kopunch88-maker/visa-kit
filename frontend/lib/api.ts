@@ -1689,4 +1689,40 @@ export async function acceptInn(
 }
 
 
+// Pack 18.8 — перегенерация адреса в том же городе куда привязан ИНН.
+// Не требует обращения в ФНС, не пишет в БД — только возвращает новый случайный
+// адрес из шаблонов KNOWN_REGIONS для KLADR'а который уже у applicant.
+// Запись в БД — через обычный PATCH /applicants/{id} (UI «Сохранить»).
+export type RegenAddressResult = {
+  home_address: string;
+  kladr_code: string;
+};
+
+/**
+ * Pack 18.8: перегенерировать случайный адрес в том же городе что у ИНН.
+ *
+ * По умолчанию использует applicant.inn_kladr_code как KLADR.
+ * Опционально можно передать kladr_code (override) — пока во фронте не используется,
+ * заложено на будущее (если когда-нибудь добавим выбор региона из выпадающего меню).
+ *
+ * Может выкинуть 400 если у applicant'а нет inn_kladr_code (ИНН не выдан) или
+ * если KLADR не в KNOWN_REGIONS (старые данные до Pack 18.6).
+ */
+export async function regenerateAddress(
+  applicantId: number,
+  kladr_code?: string,
+): Promise<RegenAddressResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-address`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(kladr_code ? { kladr_code } : {}),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+
 

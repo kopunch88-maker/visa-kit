@@ -13,6 +13,7 @@ import {
   BankResponse,
   listBanks,
   generateAccount,
+  regenerateAddress, // Pack 18.8: перегенерация адреса
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
 
@@ -108,6 +109,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [banksLoading, setBanksLoading] = useState(true);
   const [accountGenerating, setAccountGenerating] = useState(false);
 
+  // Pack 18.8: перегенерация адреса
+  const [addressRegenerating, setAddressRegenerating] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [translitLoading, setTranslitLoading] = useState(false);
   const [translitWarning, setTranslitWarning] = useState<string | null>(null);
@@ -170,6 +174,28 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
       setError(`Не удалось сгенерировать счёт: ${(e as Error).message}`);
     } finally {
       setAccountGenerating(false);
+    }
+  }
+
+  // Pack 18.8: сгенерировать новый адрес в том же городе куда привязан ИНН.
+  // Бэк по умолчанию использует applicant.inn_kladr_code — поэтому кнопка
+  // disabled пока ИНН не выдан (или старый формат до Pack 18.6).
+  async function handleRegenerateAddress() {
+    if (!inn_kladr_code) {
+      setError(
+        "Сначала сгенерируйте ИНН — без него неизвестно для какого города делать адрес.",
+      );
+      return;
+    }
+    setAddressRegenerating(true);
+    setError(null);
+    try {
+      const result = await regenerateAddress(applicant.id);
+      setHomeAddress(result.home_address);
+    } catch (e) {
+      setError(`Не удалось перегенерировать адрес: ${(e as Error).message}`);
+    } finally {
+      setAddressRegenerating(false);
     }
   }
 
@@ -392,8 +418,42 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
           </Section>
 
           <Section title="Адрес и контакты">
-            <Field label="Адрес проживания" value={home_address} onChange={setHomeAddress}
-              placeholder="г. Москва, ул. Ленина, д. 10, кв. 5" textarea />
+            <Field
+              label="Адрес проживания"
+              value={home_address}
+              onChange={setHomeAddress}
+              placeholder="г. Москва, ул. Ленина, д. 10, кв. 5"
+              textarea
+              actionButton={
+                /* Pack 18.8: перегенерация случайного адреса в том же городе.
+                   Disabled пока ИНН не выдан (нет inn_kladr_code) — без него
+                   бэк не знает для какого города делать адрес. */
+                <button
+                  type="button"
+                  onClick={handleRegenerateAddress}
+                  disabled={!inn_kladr_code || addressRegenerating}
+                  className="text-xs px-2.5 py-1 rounded-md text-white disabled:opacity-40 transition-colors flex items-center gap-1 whitespace-nowrap"
+                  style={{ background: "var(--color-accent)" }}
+                  title={
+                    inn_kladr_code
+                      ? "Сгенерировать другой случайный адрес в том же городе"
+                      : "Сначала сгенерируйте ИНН — без него неизвестно для какого города делать адрес"
+                  }
+                >
+                  {addressRegenerating ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Генерация...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3 h-3" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              }
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Email" value={email} onChange={setEmail} placeholder="user@example.com" />
               <Field label="Телефон" value={phone} onChange={setPhone} placeholder="+7 999 ..." />

@@ -22,6 +22,15 @@ Pack 18.2 изменения (текущая версия):
 - Если ФНС вернул status=True → проставляем last_npd_check_at=now() и
   продолжаем как раньше.
 
+Pack 18.8 изменения (текущая версия):
+- Новый endpoint POST /admin/applicants/{id}/regen-address — генерирует новый
+  случайный адрес из того же города куда привязан ИНН (applicant.inn_kladr_code).
+  Не пишет в БД, только возвращает {home_address, kladr_code}. Запись через
+  обычный PATCH /applicants/{id} (UI «Сохранить»).
+- Используется кнопкой ✨ рядом с полем «Адрес проживания» в ApplicantDrawer.
+  Менеджер может перегенерировать адрес сколько угодно раз — например, если
+  клиент сказал что в этом районе не живёт.
+
 Rate limit ФНС (2 req/min) реализован в NpdStatusChecker через class-level
 asyncio.Lock + 31 секундный sleep между запросами.
 
@@ -34,6 +43,7 @@ asyncio.Lock + 31 секундный sleep между запросами.
 from __future__ import annotations
 
 import logging
+import random  # Pack 18.8: для regen-address
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
@@ -47,6 +57,10 @@ from app.models import (
     Application,
     Company,
     SelfEmployedRegistry,
+)
+from app.services.inn_generator.kladr_address_gen import (
+    KNOWN_REGIONS,         # Pack 18.8: для валидации kladr_code в regen-address
+    generate_address,      # Pack 18.8: для regen-address
 )
 from app.services.inn_generator.npd_status import (
     NpdStatusChecker,
@@ -119,6 +133,25 @@ class InnAcceptResponse(BaseModel):
     ] = "confirmed"
     manual_check_url: Optional[str] = None
     npd_check_message: Optional[str] = None  # человекочитаемое описание
+
+
+class RegenAddressRequest(BaseModel):
+    """
+    Pack 18.8: запрос на перегенерацию адреса.
+    Все поля опциональны — по умолчанию берётся applicant.inn_kladr_code.
+    """
+    # Если задан — используется вместо applicant.inn_kladr_code (override).
+    # Полезно если в будущем добавим выбор региона из выпадающего списка.
+    kladr_code: Optional[str] = None
+
+
+class RegenAddressResponse(BaseModel):
+    """
+    Pack 18.8: новый сгенерированный адрес. НЕ записывается в БД —
+    запись через PATCH /applicants/{id} (UI «Сохранить»).
+    """
+    home_address: str
+    kladr_code: str  # KLADR города из которого сгенерирован адрес
 
 
 # ---------------------------------------------------------------------------
@@ -417,4 +450,83 @@ async def inn_accept(
         npd_check_status=npd_check_status,
         manual_check_url=manual_check_url,
         npd_check_message=npd_check_message,
+    )
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/applicants/{applicant_id}/regen-address
+# Pack 18.8: перегенерировать случайный адрес в том же городе что у ИНН
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{applicant_id}/regen-address",
+    response_model=RegenAddressResponse,
+    summary="Сгенерировать новый случайный адрес из того же города куда привязан ИНН",
+)
+def regen_address(
+    applicant_id: int,
+    payload: RegenAddressRequest,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> RegenAddressResponse:
+    """
+    Pack 18.8: помогает менеджеру выдать клиенту другой адрес без перевыдачи ИНН.
+
+    Сценарии использования:
+    - Клиент посмотрел сгенерированный адрес и сказал «я там не живу/не нравится»
+    - Менеджер хочет посмотреть пару вариантов до принятия решения
+    - Случайно сгенерировался адрес в неудобном районе
+
+    Логика:
+    1. По умолчанию берёт applicant.inn_kladr_code (KLADR города куда привязан ИНН).
+    2. Если payload.kladr_code задан — используется он (override).
+    3. Валидируем что KLADR есть в KNOWN_REGIONS (kladr_address_gen.py).
+       Если нет — 400 с подсказкой что нужно перевыдать ИНН.
+    4. Генерируем случайный адрес через generate_address(kladr_code, rng).
+    5. Возвращаем {home_address, kladr_code}. В БД НЕ пишем — это сделает фронт
+       через обычный PATCH /applicants/{id} когда менеджер нажмёт «Сохранить».
+
+    Не требует ни обращений к ФНС, ни поиска ИНН в реестре — это «лёгкая»
+    операция (~10ms). Можно дёргать сколько угодно раз.
+    """
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    # 1. Определяем целевой KLADR
+    kladr_code = (payload.kladr_code or applicant.inn_kladr_code or "").strip()
+
+    if not kladr_code:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Невозможно сгенерировать адрес: у клиента не задан inn_kladr_code. "
+                "Сначала выдайте ИНН через ✨ — KLADR региона запишется автоматически."
+            ),
+        )
+
+    # 2. Валидируем KLADR — должен быть в KNOWN_REGIONS
+    # (KNOWN_REGIONS — это dict[kladr_code, RegionTemplate] из kladr_address_gen.py)
+    if kladr_code not in KNOWN_REGIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"KLADR {kladr_code} не поддерживается генератором адресов. "
+                f"Возможно ИНН был выдан до Pack 18.6 — рекомендуем перевыдать через ✨ "
+                f"чтобы записался актуальный KLADR из KNOWN_REGIONS."
+            ),
+        )
+
+    # 3. Генерируем адрес
+    rng = random.Random()  # Pack 18.8: без seed — каждый вызов даёт разный адрес
+    address = generate_address(kladr_code, rng)
+
+    log.info(
+        "regen-address: applicant_id=%s kladr_code=%s generated %r",
+        applicant_id, kladr_code, address,
+    )
+
+    return RegenAddressResponse(
+        home_address=address,
+        kladr_code=kladr_code,
     )
