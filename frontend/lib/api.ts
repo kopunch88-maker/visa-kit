@@ -42,6 +42,11 @@ export type ApplicantData = {
   npd_check_status?: "no_inn" | "verified" | "invalid" | "not_checked" | null;
   npd_last_check_at?: string | null;
   // /Pack 18.5
+  // Pack 18.9 — переопределение подписанта апостиля (если null — дефолт Байрамова)
+  apostille_signer_short?: string | null;
+  apostille_signer_signature?: string | null;
+  apostille_signer_position?: string | null;
+  // /Pack 18.9
   // Pack 16 — банк
   bank_id?: number | null;
   bank_account?: string | null;

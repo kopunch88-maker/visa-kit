@@ -97,6 +97,25 @@ class Applicant(TimestampMixin, table=True):
                     "Используется для отслеживания распределения по регионам.",
     )
 
+    # Pack 18.9: подписант апостиля. Все 3 поля — переопределение дефолта
+    # «Байрамов Н.А.» / стандартная должность. Если пустые — используется
+    # дефолт. Менеджер может задать другого подписанта в UI ApplicantDrawer.
+    apostille_signer_short: Optional[str] = Field(
+        default=None, max_length=100,
+        description="Pack 18.9: 'Фамилия И.О.' для таблицы апостиля. "
+                    "Если пусто — дефолт 'Байрамов Н.А.'",
+    )
+    apostille_signer_signature: Optional[str] = Field(
+        default=None, max_length=100,
+        description="Pack 18.9: 'И.О. Фамилия' для подписи внизу апостиля. "
+                    "Если пусто — дефолт 'Н.А. Байрамов'",
+    )
+    apostille_signer_position: Optional[str] = Field(
+        default=None, max_length=500,
+        description="Pack 18.9: должность подписанта апостиля. "
+                    "Если пусто — дефолт 'Заместитель начальника отдела ...'",
+    )
+
     # === Personal banking ===
     # Pack 16: bank_id — FK на справочник банков (новый способ).
     # Старые поля bank_name/bic/correspondent_account остаются для обратной
@@ -243,6 +262,10 @@ class ApplicantUpdate(SQLModel):
     inn_registration_date: Optional[date] = None
     inn_source: Optional[str] = None
     inn_kladr_code: Optional[str] = None
+    # Pack 18.9: подписант апостиля (опциональное переопределение дефолта)
+    apostille_signer_short: Optional[str] = None
+    apostille_signer_signature: Optional[str] = None
+    apostille_signer_position: Optional[str] = None
     # Pack 16: banking
     bank_id: Optional[int] = None
     bank_account: Optional[str] = None

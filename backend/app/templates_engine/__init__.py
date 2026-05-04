@@ -14,6 +14,9 @@ from .context_npd_certificate import build_npd_certificate_context
 from .npd_certificate_renderer import render_npd_certificate
 # Pack 18.3.3: тот же контекст, второй шаблон в формате ЛКН (электронная подпись ФНС)
 from .npd_certificate_lkn_renderer import render_npd_certificate_lkn
+# Pack 18.9: апостиль к справке НПД
+from .context_apostille import build_apostille_context
+from .apostille_renderer import render_apostille
 
 __all__ = [
     "build_context",
@@ -28,4 +31,7 @@ __all__ = [
     "render_npd_certificate",
     # Pack 18.3.3
     "render_npd_certificate_lkn",
+    # Pack 18.9
+    "build_apostille_context",
+    "render_apostille",
 ]

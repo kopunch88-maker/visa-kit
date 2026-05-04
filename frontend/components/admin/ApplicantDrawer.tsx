@@ -112,6 +112,17 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   // Pack 18.8: перегенерация адреса
   const [addressRegenerating, setAddressRegenerating] = useState(false);
 
+  // Pack 18.9: подписант апостиля (опционально, если пусто — backend подставит дефолт Байрамова)
+  const [apostille_signer_short, setApostilleSignerShort] = useState(
+    applicant.apostille_signer_short || "",
+  );
+  const [apostille_signer_signature, setApostilleSignerSignature] = useState(
+    applicant.apostille_signer_signature || "",
+  );
+  const [apostille_signer_position, setApostilleSignerPosition] = useState(
+    applicant.apostille_signer_position || "",
+  );
+
   const [saving, setSaving] = useState(false);
   const [translitLoading, setTranslitLoading] = useState(false);
   const [translitWarning, setTranslitWarning] = useState<string | null>(null);
@@ -248,6 +259,10 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         // Pack 16
         bank_account: bank_account.trim() || null,
         ...bankFields,
+        // Pack 18.9 — подписант апостиля (пустое = null = бэкенд подставит дефолт)
+        apostille_signer_short: apostille_signer_short.trim() || null,
+        apostille_signer_signature: apostille_signer_signature.trim() || null,
+        apostille_signer_position: apostille_signer_position.trim() || null,
       });
       onSaved();
     } catch (e) {
@@ -557,6 +572,35 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                   : "Укажите гражданство для правильного префикса (40817 для РФ / 40820 для остальных)"}
               </p>
             </div>
+          </Section>
+
+          {/* Pack 18.9 — подписант апостиля (опционально, по умолчанию Байрамов Н.А.) */}
+          <Section title="Апостиль">
+            <p className="text-xs text-tertiary mb-3">
+              Поля для апостиля к справке НПД. Если оставить пустыми — будет использован
+              подписант по умолчанию: <strong>Байрамов Н.А.</strong>, заместитель начальника
+              отдела международной правовой помощи и предоставления апостиля Главного управления
+              Министерства юстиции РФ по Москве.
+            </p>
+            <Field
+              label="ФИО для таблицы (Фамилия И.О.)"
+              value={apostille_signer_short}
+              onChange={setApostilleSignerShort}
+              placeholder="Байрамов Н.А."
+            />
+            <Field
+              label="ФИО для подписи (И.О. Фамилия)"
+              value={apostille_signer_signature}
+              onChange={setApostilleSignerSignature}
+              placeholder="Н.А. Байрамов"
+            />
+            <Field
+              label="Должность"
+              value={apostille_signer_position}
+              onChange={setApostilleSignerPosition}
+              placeholder="Заместитель начальника отдела международной правовой помощи..."
+              textarea
+            />
           </Section>
         </div>
 

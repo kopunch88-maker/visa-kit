@@ -34,6 +34,8 @@ const DOCUMENTS: DocItem[] = [
   { id: "npd_certificate",     filename: "15_Справка_НПД.docx",                     kind: "docx" },
   // Pack 18.3.3 — то же содержание, но в формате ЛКН (электронная подпись ФНС внизу)
   { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",                kind: "docx" },
+  // Pack 18.9 — апостиль к справке НПД
+  { id: "apostille",           filename: "16_Апостиль.docx",                        kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId }: Props) {
