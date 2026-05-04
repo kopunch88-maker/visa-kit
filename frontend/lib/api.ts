@@ -199,9 +199,14 @@ export type CompanyResponse = {
 
 export type PositionResponse = {
   id: number;
-  company_id: number;
+  company_id?: number;
   company_short_name?: string;
+  primary_specialty_id?: number | null;
+  level?: number | null;
+  specialty_code?: string | null;
+  specialty_name?: string | null;
   title_ru: string;
+  title_ru_genitive?: string | null;
   title_es?: string;
   duties: string[];
   salary_rub_default: number;
