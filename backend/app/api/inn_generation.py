@@ -519,14 +519,16 @@ def regen_address(
 
     # 3. Генерируем адрес
     rng = random.Random()  # Pack 18.8: без seed — каждый вызов даёт разный адрес
+    # generate_address возвращает GeneratedAddress (dataclass), не строку.
+    # .full — полный адрес одной строкой, .kladr_code — KLADR города
     address = generate_address(kladr_code, rng)
 
     log.info(
         "regen-address: applicant_id=%s kladr_code=%s generated %r",
-        applicant_id, kladr_code, address,
+        applicant_id, kladr_code, address.full,
     )
 
     return RegenAddressResponse(
-        home_address=address,
-        kladr_code=kladr_code,
+        home_address=address.full,
+        kladr_code=address.kladr_code,
     )
