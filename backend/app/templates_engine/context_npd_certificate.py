@@ -5,6 +5,14 @@ Pack 18.3 — Контекст для DOCX-шаблона `npd_certificate_templ
 Намеренно отделён от основного `context.build_context()` — справке не нужны
 банковская выписка, курсы ЦБ, акты, договоры и прочая обвязка пакета.
 
+Pack 18.9.0 (свежие изменения):
+- _pick_mfc() теперь сначала ищет МФЦ с is_universal=True. Если такой найден —
+  возвращает его для ВСЕХ клиентов независимо от region_code. Это означает
+  что в справке у всех клиентов будет один и тот же московский МФЦ
+  (Новоясеневский просп. д.1), а варьироваться будут только staff_names.
+- Если is_universal-запись отсутствует в БД (флаг убрали или не было
+  миграции 18.9.0) — возвращается старое поведение по region_code.
+
 Pack 18.3.4 (свежие изменения):
 - Восстановлен auto-fill Pack 18.3.1 (видимо был потерян при переписываниях).
   Если у applicant'а пустые inn_registration_date или inn_kladr_code — генерим
@@ -119,9 +127,32 @@ def _pick_mfc(
     session: Session, region_code: str, applicant_id: int
 ) -> Optional[MfcOffice]:
     """
-    Q2: детерминистично по applicant.id % len(list). Если в регионе нет МФЦ —
-    None.
+    Pack 18.9.0: сначала ищем универсальный МФЦ (is_universal=True).
+    Если найден — возвращаем его независимо от region_code (один МФЦ для всех клиентов).
+
+    Если не найден — старая логика Pack 18.0:
+    Q2 — детерминистично по applicant.id % len(list). Если в регионе нет МФЦ — None.
+
+    Этот fallback оставлен на случай если is_universal-запись будет отключена
+    или удалена — система автоматически вернётся к региональному выбору.
     """
+    # Pack 18.9.0: сначала ищем универсальный МФЦ
+    universal_stmt = (
+        select(MfcOffice)
+        .where(MfcOffice.is_universal == True)  # noqa: E712
+        .where(MfcOffice.is_active == True)  # noqa: E712
+        .order_by(MfcOffice.id)
+    )
+    universal = session.exec(universal_stmt).first()
+    if universal is not None:
+        log.debug(
+            "_pick_mfc: returning universal MFC id=%s for applicant_id=%s "
+            "(ignoring region_code=%s)",
+            universal.id, applicant_id, region_code,
+        )
+        return universal
+
+    # Старая логика — региональный выбор
     stmt = (
         select(MfcOffice)
         .where(MfcOffice.region_code == region_code)
