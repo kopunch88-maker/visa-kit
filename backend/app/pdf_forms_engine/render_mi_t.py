@@ -87,9 +87,12 @@ def _build_mi_t_fields(
         fields["DEX_APE1"] = (applicant.last_name_latin or "").upper()
         fields["DEX_NOMBRE"] = (applicant.first_name_latin or "").upper()
 
-        # Место рождения и страна гражданства = страна рождения (упрощение)
+        # Место рождения (город) и страна рождения
+        # Pack 18.10: País — это страна РОЖДЕНИЯ (DEX_PAIS), отдельно от гражданства.
+        # Если applicant.birth_country не задан (legacy applicant'ы) — fallback
+        # на nationality (как было до Pack 18.10).
         fields["DEX_LN"] = (applicant.birth_place_latin or "").upper()
-        fields["DEX_PAIS"] = country_es(applicant.nationality)
+        fields["DEX_PAIS"] = country_es(applicant.birth_country or applicant.nationality)
         fields["DEX_NACION"] = country_es(applicant.nationality)
 
         # Пол: H = Hombre, M = Mujer

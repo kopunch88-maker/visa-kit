@@ -104,6 +104,7 @@ _PATCHABLE_FIELDS = {
     "last_name_native", "first_name_native", "middle_name_native",
     "last_name_latin", "first_name_latin",
     "birth_date", "birth_place_latin",
+    "birth_country",  # Pack 18.10
     "nationality", "sex",
     "passport_number", "passport_issue_date", "passport_expiry_date", "passport_issuer",
     "inn",

@@ -52,6 +52,15 @@ class Applicant(TimestampMixin, table=True):
     # === Demographics — все Optional для пошагового сохранения ===
     birth_date: Optional[date] = Field(default=None)
     birth_place_latin: Optional[str] = Field(default=None, max_length=128)
+    # Pack 18.10: страна рождения (отдельно от гражданства). ISO-3 код.
+    # Если NULL — render_mi_t / render_designacion подставляют nationality
+    # как fallback (обратная совместимость для legacy applicant'ов).
+    birth_country: Optional[CountryCode] = Field(
+        default=None,
+        max_length=3,
+        description="ISO-3 страна рождения. Может отличаться от nationality "
+                    "(человек родился в одной стране, гражданство другой).",
+    )
     nationality: Optional[CountryCode] = Field(
         default=None,
         max_length=3,
@@ -205,6 +214,7 @@ class ApplicantCreate(SQLModel):
     first_name_latin: str
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
+    birth_country: Optional[CountryCode] = None  # Pack 18.10
     nationality: Optional[CountryCode] = None
     sex: Optional[str] = None
     marital_status: Optional[str] = "S"
@@ -248,6 +258,7 @@ class ApplicantUpdate(SQLModel):
     first_name_latin: Optional[str] = None
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
+    birth_country: Optional[CountryCode] = None  # Pack 18.10
     nationality: Optional[CountryCode] = None
     sex: Optional[str] = None
     marital_status: Optional[str] = None

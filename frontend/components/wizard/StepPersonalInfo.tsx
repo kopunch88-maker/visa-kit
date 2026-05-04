@@ -3,7 +3,7 @@
 
 import { useEffect, useRef } from "react";
 import { TextInput, SelectInput, StepHeader } from "@/components/ui/Form";
-import { ApplicantData, NATIONALITY_OPTIONS } from "@/lib/api";
+import { ApplicantData, NATIONALITY_OPTIONS, COUNTRY_OPTIONS } from "@/lib/api";
 
 interface Props {
   data: ApplicantData;
@@ -132,7 +132,7 @@ export function StepPersonalInfo({ data, onChange }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <TextInput
             type="date"
             label="Дата рождения"
@@ -148,6 +148,13 @@ export function StepPersonalInfo({ data, onChange }: Props) {
             }
             placeholder="MOSCOW"
             className="uppercase"
+            hint="Город"
+          />
+          <SelectInput
+            label="Страна рождения"
+            value={data.birth_country || ""}
+            onChange={(e) => onChange({ birth_country: e.target.value })}
+            options={COUNTRY_OPTIONS}
           />
         </div>
 

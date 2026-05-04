@@ -90,6 +90,8 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [passport_issuer, setPassportIssuer] = useState(applicant.passport_issuer || "");
   const [birth_date, setBirthDate] = useState(applicant.birth_date || "");
   const [birth_place_latin, setBirthPlaceLatin] = useState(applicant.birth_place_latin || "");
+  // Pack 18.10 — страна рождения (отдельно от гражданства)
+  const [birth_country, setBirthCountry] = useState(applicant.birth_country || "");
   // Поля для анкеты MI-T (Nombre del padre / Nombre de la madre)
   const [father_name_latin, setFatherNameLatin] = useState(applicant.father_name_latin || "");
   const [mother_name_latin, setMotherNameLatin] = useState(applicant.mother_name_latin || "");
@@ -254,6 +256,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         passport_issuer: passport_issuer.trim(),
         birth_date,
         birth_place_latin: birth_place_latin.trim(),
+        birth_country: birth_country || null,  // Pack 18.10
         // Имена родителей для анкеты MI-T (Nombre del padre / Nombre de la madre)
         father_name_latin: father_name_latin.trim() || null,
         mother_name_latin: mother_name_latin.trim() || null,
@@ -436,6 +439,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               placeholder="Ministry of Internal Affairs / ГУ МВД..." />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
+            {/* Pack 18.10 — страна рождения (для País в MI-T, отдельно от гражданства) */}
+            <FieldSelect label="Страна рождения" value={birth_country} onChange={setBirthCountry}
+              options={COUNTRY_OPTIONS} />
           </Section>
 
           {/* Сведения о родителях — для анкеты MI-T (Nombre del padre / Nombre de la madre) */}

@@ -80,7 +80,9 @@ def _build_designacion_fields(
 
         # Место рождения
         fields["Texto10"] = (applicant.birth_place_latin or "").upper()
-        fields["Texto11"] = country_es(applicant.nationality)  # País de nacimiento
+        # Pack 18.10: País de nacimiento — отдельная страна рождения,
+        # fallback на nationality для legacy applicant'ов
+        fields["Texto11"] = country_es(applicant.birth_country or applicant.nationality)
 
         # Имена родителей
         fields["Texto12"] = (applicant.father_name_latin or "").upper()
