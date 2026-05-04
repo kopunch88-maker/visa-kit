@@ -129,6 +129,10 @@ _PATCHABLE_FIELDS = {
     "apostille_signer_short",
     "apostille_signer_signature",
     "apostille_signer_position",
+    # Pack 19.0 — JSON-поля анкеты (education[], work_history[], languages[])
+    "education",
+    "work_history",
+    "languages",
 }
 
 # Поля русского ФИО — к ним применяется normalize_russian_case при сохранении

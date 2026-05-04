@@ -10,16 +10,16 @@ Pack 18.1 изменения (без изменений):
 - В /inn-accept проставляется used_at=utcnow() помимо is_used=True.
 
 Pack 18.2 изменения (текущая версия):
-- /inn-accept теперь ASYNC (def → async def).
+- /inn-accept теперь ASYNC (def > async def).
 - Перед сохранением проверяет ИНН через ФНС API
   (statusnpd.nalog.ru/api/v1/tracker/taxpayer_status).
-- Если ФНС вернул status=False → помечаем кандидат is_invalid=True в БД и
+- Если ФНС вернул status=False > помечаем кандидат is_invalid=True в БД и
   возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать другого».
-  Менеджер нажимает ✨ ИНН ещё раз.
-- Если ФНС timeout/недоступен → мягкий пропуск: выдаём ИНН без проверки,
+  Менеджер нажимает ? ИНН ещё раз.
+- Если ФНС timeout/недоступен > мягкий пропуск: выдаём ИНН без проверки,
   в response добавляются npd_check_status=skipped + manual_check_url для
   ручной проверки менеджером.
-- Если ФНС вернул status=True → проставляем last_npd_check_at=now() и
+- Если ФНС вернул status=True > проставляем last_npd_check_at=now() и
   продолжаем как раньше.
 
 Pack 18.8 изменения (текущая версия):
@@ -27,14 +27,14 @@ Pack 18.8 изменения (текущая версия):
   случайный адрес из того же города куда привязан ИНН (applicant.inn_kladr_code).
   Не пишет в БД, только возвращает {home_address, kladr_code}. Запись через
   обычный PATCH /applicants/{id} (UI «Сохранить»).
-- Используется кнопкой ✨ рядом с полем «Адрес проживания» в ApplicantDrawer.
+- Используется кнопкой ? рядом с полем «Адрес проживания» в ApplicantDrawer.
   Менеджер может перегенерировать адрес сколько угодно раз — например, если
   клиент сказал что в этом районе не живёт.
 
 Rate limit ФНС (2 req/min) реализован в NpdStatusChecker через class-level
 asyncio.Lock + 31 секундный sleep между запросами.
 
-⚠️ Замечание про async:
+?? Замечание про async:
 До Pack 18.2 endpoint был синхронным (def inn_accept). Теперь async, потому
 что NpdStatusChecker — асинхронный httpx-клиент. FastAPI поддерживает оба,
 переход прозрачный для вызывающего кода (фронт ничего не замечает).
@@ -210,10 +210,10 @@ def inn_suggest(
     """
     Pack 18.1: подбор ИНН с tier-fallback.
     Параметр filter_by_region удалён — всегда фильтруем по региону, гарантия
-    результата обеспечивается fallback'ом на диаспоры → Москву.
+    результата обеспечивается fallback'ом на диаспоры > Москву.
 
     Pack 18.2: НЕ делаем проверку через ФНС здесь (rate limit 2 req/min,
-    держать менеджера 31+ сек на каждом ✨ — неюзабельно). Проверка
+    держать менеджера 31+ сек на каждом ? — неюзабельно). Проверка
     выполняется в /inn-accept когда менеджер уже принял решение.
 
     Кандидаты с is_invalid=True (помеченные предыдущей проверкой как
@@ -290,13 +290,13 @@ async def inn_accept(
 
     Сценарии:
     1. ФНС подтвердил статус НПД (status=True):
-       → сохраняем как раньше, npd_check_status=confirmed
+       > сохраняем как раньше, npd_check_status=confirmed
     2. ФНС сообщил что не плательщик (status=False):
-       → помечаем кандидат is_invalid=True в БД
-       → возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать
-         другого». Менеджер жмёт ✨ ИНН ещё раз.
+       > помечаем кандидат is_invalid=True в БД
+       > возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать
+         другого». Менеджер жмёт ? ИНН ещё раз.
     3. ФНС timeout/недоступен:
-       → мягкий пропуск, ИНН выдаётся БЕЗ проверки,
+       > мягкий пропуск, ИНН выдаётся БЕЗ проверки,
          npd_check_status=skipped_fns_unavailable + manual_check_url с
          ссылкой на сайт ФНС для ручной проверки
 
@@ -376,7 +376,7 @@ async def inn_accept(
                     f"ФНС сообщил что ИНН {inn} не является плательщиком НПД "
                     f"(сообщение: {result.message or 'нет деталей'}). "
                     "Кандидат помечен как недействительный. "
-                    "Подберите другого через кнопку ✨ ИНН."
+                    "Подберите другого через кнопку ? ИНН."
                 ),
             )
 
@@ -501,7 +501,7 @@ def regen_address(
             status_code=400,
             detail=(
                 "Невозможно сгенерировать адрес: у клиента не задан inn_kladr_code. "
-                "Сначала выдайте ИНН через ✨ — KLADR региона запишется автоматически."
+                "Сначала выдайте ИНН через ? — KLADR региона запишется автоматически."
             ),
         )
 
@@ -512,7 +512,7 @@ def regen_address(
             status_code=400,
             detail=(
                 f"KLADR {kladr_code} не поддерживается генератором адресов. "
-                f"Возможно ИНН был выдан до Pack 18.6 — рекомендуем перевыдать через ✨ "
+                f"Возможно ИНН был выдан до Pack 18.6 — рекомендуем перевыдать через ? "
                 f"чтобы записался актуальный KLADR из KNOWN_REGIONS."
             ),
         )
@@ -531,4 +531,87 @@ def regen_address(
     return RegenAddressResponse(
         home_address=address.full,
         kladr_code=address.kladr_code,
+    )
+
+
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/applicants/{applicant_id}/regen-education
+# Pack 19.0: автогенерация образования (вуз + специальность + год выпуска)
+# ---------------------------------------------------------------------------
+
+
+class RegenEducationResponse(BaseModel):
+    """Pack 19.0 — ответ для UI: данные для applicant.education[]."""
+    institution: str
+    institution_short: str
+    degree: str
+    specialty: str
+    graduation_year: int
+    fallback_used: bool = False
+    matched_pattern: Optional[str] = None
+
+
+@router.post(
+    "/{applicant_id}/regen-education",
+    response_model=RegenEducationResponse,
+    summary="Pack 19.0: подобрать вуз+специальность+год выпуска "
+            "по региону и должности",
+)
+def regen_education(
+    applicant_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> RegenEducationResponse:
+    """
+    Подбирает один вуз для applicant'а по логике:
+      1. Регион из applicant.inn_kladr_code (первые 2 цифры)
+      2. Должность из applicant.work_history[0].position
+         → специальность через PositionSpecialtyMap
+      3. Год выпуска = год_рождения + 22 + randint(0, 5)
+
+    Если вуза в регионе нет — fallback на Москву (fallback_used=True).
+    Если должность не определена — generic паттерн «менеджер».
+
+    Возвращает данные для frontend'а — не пишет в БД (фронт делает это
+    через PATCH /applicants/{id} с education[]).
+
+    Если ничего не подобралось (редкий случай) — 500 с диагностикой.
+    """
+    # Поздний импорт чтобы не циклить (Pack 19.0)
+    from app.services.university_generator import suggest_education
+
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    suggestion = suggest_education(applicant, session)
+
+    if suggestion is None:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Не удалось подобрать вуз. Возможные причины: (1) у клиента "
+                "не задана должность в work_history и нет дефолтного маппинга; "
+                "(2) в БД нет вузов с подходящей специальностью даже в Москве. "
+                "Проверьте PositionSpecialtyMap и University seed."
+            ),
+        )
+
+    log.info(
+        "regen-education: applicant_id=%s position from work_history → "
+        "uni=%s specialty=%s grad=%d",
+        applicant_id, suggestion.institution_short,
+        suggestion.specialty, suggestion.graduation_year,
+    )
+
+    return RegenEducationResponse(
+        institution=suggestion.institution,
+        institution_short=suggestion.institution_short,
+        degree=suggestion.degree,
+        specialty=suggestion.specialty,
+        graduation_year=suggestion.graduation_year,
+        fallback_used=suggestion.fallback_used,
+        matched_pattern=suggestion.matched_pattern,
     )

@@ -14,6 +14,7 @@ import {
   listBanks,
   generateAccount,
   regenerateAddress, // Pack 18.8: перегенерация адреса
+  regenerateEducation, // Pack 19.0: автогенерация образования
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
 
@@ -128,6 +129,13 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
     applicant.apostille_signer_position || "",
   );
 
+  // Pack 19.0 — образование (List[EducationRecord]) и состояние регенерации
+  const [education, setEducation] = useState<
+    Array<{ institution: string; graduation_year: number; degree: string; specialty: string }>
+  >((applicant.education as any) || []);
+  const [educationRegenerating, setEducationRegenerating] = useState(false);
+  const [educationFallbackUsed, setEducationFallbackUsed] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [translitLoading, setTranslitLoading] = useState(false);
   const [translitWarning, setTranslitWarning] = useState<string | null>(null);
@@ -215,6 +223,37 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
     }
   }
 
+  // Pack 19.0: автогенерация вуза + специальности + года выпуска по
+  // региону клиента и должности из work_history. Если уже что-то есть —
+  // перезаписывает (UI запрашивает подтверждение через native confirm()).
+  async function handleRegenerateEducation() {
+    if (education.length > 0) {
+      const ok = window.confirm(
+        "У клиента уже заполнено образование. Перегенерировать (старая запись будет удалена)?",
+      );
+      if (!ok) return;
+    }
+    setEducationRegenerating(true);
+    setError(null);
+    try {
+      const result = await regenerateEducation(applicant.id);
+      // Записываем в state — реальная запись в БД произойдёт при «Сохранить»
+      setEducation([
+        {
+          institution: result.institution,
+          graduation_year: result.graduation_year,
+          degree: result.degree,
+          specialty: result.specialty,
+        },
+      ]);
+      setEducationFallbackUsed(result.fallback_used);
+    } catch (e) {
+      setError(`Не удалось подобрать вуз: ${(e as Error).message}`);
+    } finally {
+      setEducationRegenerating(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
     if (!last_name_native?.trim() || !first_name_native?.trim()) {
@@ -272,6 +311,8 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         apostille_signer_short: apostille_signer_short.trim() || null,
         apostille_signer_signature: apostille_signer_signature.trim() || null,
         apostille_signer_position: apostille_signer_position.trim() || null,
+        // Pack 19.0 — образование (передаём только если что-то есть)
+        education: education.length > 0 ? education : undefined,
       });
       onSaved();
     } catch (e) {
@@ -633,6 +674,72 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               placeholder="Заместитель начальника отдела международной правовой помощи..."
               textarea
             />
+          </Section>
+
+          {/* Pack 19.0 — Образование с кнопкой ✨ автогенерации */}
+          <Section title="Образование">
+            <p className="text-xs text-tertiary mb-3">
+              Если клиент не указал ВУЗ — кнопка ✨ подберёт подходящий вуз
+              по региону и должности из последнего места работы.
+            </p>
+
+            {education.length === 0 ? (
+              <div
+                className="text-xs italic mb-3"
+                style={{ color: "var(--color-text-tertiary)" }}
+              >
+                Образование не заполнено.
+              </div>
+            ) : (
+              education.map((edu, i) => (
+                <div
+                  key={i}
+                  className="rounded-md p-3 mb-3 text-sm"
+                  style={{
+                    background: "var(--color-bg-secondary)",
+                    border: "1px solid var(--color-border-tertiary)",
+                  }}
+                >
+                  <div className="font-medium">{edu.institution}</div>
+                  <div className="text-xs text-tertiary mt-1">
+                    {edu.degree} · {edu.specialty} · выпуск {edu.graduation_year}
+                  </div>
+                </div>
+              ))
+            )}
+
+            {educationFallbackUsed && education.length > 0 && (
+              <div
+                className="text-xs mb-3 px-3 py-2 rounded-md"
+                style={{
+                  background: "rgba(234, 179, 8, 0.1)",
+                  color: "#b45309",
+                  border: "1px solid rgba(234, 179, 8, 0.3)",
+                }}
+              >
+                ⚠ В регионе клиента не нашлось подходящих вузов — подобрали
+                из Москвы. Можно нажать ✨ ещё раз для другого варианта.
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleRegenerateEducation}
+              disabled={educationRegenerating}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
+              style={{
+                background: "var(--color-bg-secondary)",
+                border: "1px solid var(--color-border-tertiary)",
+                color: "var(--color-text-primary)",
+              }}
+            >
+              {educationRegenerating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Sparkles size={14} />
+              )}
+              {education.length > 0 ? "Подобрать другой вуз" : "Подобрать вуз"}
+            </button>
           </Section>
         </div>
 

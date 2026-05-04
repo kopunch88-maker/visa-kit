@@ -36,6 +36,17 @@ from .self_employed_registry import (
     StartImportRequest,
 )
 
+# Pack 19.0: University / Specialty / PositionSpecialtyMap (генератор образования)
+from .university import (
+    University,
+    Specialty,
+    UniversitySpecialtyLink,
+    PositionSpecialtyMap,
+    UniversityRead,
+    SpecialtyRead,
+    UniversitySuggestion,
+)
+
 # Application entities
 from .applicant import (
     Applicant, ApplicantCreate, ApplicantUpdate, ApplicantRead,
@@ -90,6 +101,14 @@ __all__ = [
     "SelfEmployedRegistryStats",
     "RegistryImportLogRead",
     "StartImportRequest",
+    # Pack 19.0: University / Specialty
+    "University",
+    "Specialty",
+    "UniversitySpecialtyLink",
+    "PositionSpecialtyMap",
+    "UniversityRead",
+    "SpecialtyRead",
+    "UniversitySuggestion",
     # Application
     "Applicant", "ApplicantCreate", "ApplicantUpdate", "ApplicantRead",
     "EducationRecord", "WorkRecord",
@@ -114,3 +133,6 @@ __all__ = [
     "IfnsOffice",
     "MfcOffice",
 ]
+
+
+

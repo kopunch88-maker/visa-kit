@@ -1844,3 +1844,46 @@ export async function regenerateAddress(
 
 
 
+
+// ============================================================================
+// Pack 19.0 — Автогенерация образования (вуз + специальность + год выпуска)
+// ============================================================================
+// Подбирает один вуз по региону клиента (из inn_kladr_code) и специальности,
+// которая в свою очередь определяется по последней должности из work_history.
+// Год выпуска вычисляется как (год_рождения + 22 + случайный 0-5).
+// Не пишет в БД — только возвращает данные для UI; запись в БД делается
+// обычным PATCH /applicants/{id} (UI «Сохранить»).
+
+export type RegenEducationResult = {
+  institution: string;        // Полное название вуза (для CV)
+  institution_short: string;  // Короткое название (для UI)
+  degree: string;             // Бакалавр / Специалист / Магистр
+  specialty: string;          // "08.03.01 Строительство"
+  graduation_year: number;
+  fallback_used: boolean;     // True если регион клиента не нашёлся → подобрали Москву
+  matched_pattern: string | null;  // Какой position_pattern сработал (для отладки)
+};
+
+/**
+ * Pack 19.0: автогенерация образования.
+ *
+ * Может выкинуть 500 если:
+ *  - у клиента нет должности в work_history и нет дефолтного маппинга
+ *  - в БД нет вузов с подходящей специальностью даже в Москве (рассинхрон seed'а)
+ *
+ * UX: фронт получает результат, кладёт в applicant.education[0] и просит
+ * менеджера нажать «Сохранить» (либо сохраняет автоматически).
+ */
+export async function regenerateEducation(
+  applicantId: number,
+): Promise<RegenEducationResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-education`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
