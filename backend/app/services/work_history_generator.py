@@ -1,8 +1,26 @@
 """
 Pack 19.1 — генератор work_history для applicant'а.
 
-Основная функция: `suggest_work_history(applicant, session)` — возвращает
-1-3 записи трудового стажа с правдоподобной career progression на основе:
+Pack 20.3 (05.05.2026): добавлено заполнение `duties` снапшотом из Position.
+
+Алгоритм:
+  1. Резолвим specialty (как Pack 19.0.2 fallback chain — без изменений)
+  2. Решаем количество job'ов (1/2/3) и уровни (как Pack 19.1a — без изменений)
+  3. Для каждого job — находим Position по (primary_specialty_id, level)
+     - Если есть → берём title_ru + duties (СНАПШОТ копией)
+     - Если нет → fallback на CareerTrack для title (duties=[] как раньше)
+  4. Подбираем компанию из LegendCompany (без изменений)
+
+Tie-breaker для дубликатов уровня (например 08.03.01 L2 имеет id=13
+"Инженер-проектировщик II категории" + id=2 "инженер-геодезист (камеральщик)"):
+  - Сортируем кандидаты по `salary_rub_default DESC`. Это даёт preference
+    более актуальным/лучше оплачиваемым позициям (наши новые Pack 20.2 имеют
+    более высокие зарплаты чем старые legacy позиции типа геодезиста)
+  - Если salary одинаковая — берём первого по id ASC
+
+Без обращений к LLM — чисто детерминированный алгоритм с rng.
+
+Ссылки:
   - applicant.inn_kladr_code → регион (первые 2 цифры)
   - applicant.education[-1].specialty → специальность (если уже сгенерирована)
   - applicant.work_history[0].position → специальность (fallback)
@@ -12,10 +30,6 @@ Pack 19.1 — генератор work_history для applicant'а.
 Если специальность не определилась — generic '38.03.02 Менеджмент'.
 
 Минимум 3.5 года в последней работе — для DN-визы нужно ≥3 года стажа.
-
-Pack 19.1a: возвращает duties=[] для каждой записи (заполнится в 19.1b).
-
-Без обращений к LLM — чисто детерминированный алгоритм с rng.
 """
 from __future__ import annotations
 
@@ -26,7 +40,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
-from app.models import Applicant
+from app.models import Applicant, Position
 from app.models.legend_company import (
     LegendCompany,
     CareerTrack,
@@ -100,11 +114,7 @@ def _get_position_for_matching(applicant: Applicant, session: Session) -> str:
       1. applicant.work_history[0].position (если уже что-то заполнил)
       2. application.position.title_ru (Pack 19.0.2 fallback — должность из заявки)
       3. DEFAULT_POSITION_FALLBACK = "менеджер"
-
-    Зеркалит логику из university_generator._get_position(), чтобы Education
-    и WorkHistory сходились на одной и той же специальности.
     """
-    # 1. work_history клиента
     work = applicant.work_history or []
     if work:
         first = work[0]
@@ -115,11 +125,9 @@ def _get_position_for_matching(applicant: Applicant, session: Session) -> str:
         if position:
             return position
 
-    # 2. Позиция из applications (Pack 19.0.2 fallback)
     try:
         from datetime import datetime
         apps = list(applicant.applications or [])
-        # Не-archived, по дате создания DESC, datetime.min для NULL'ов
         active_apps = [a for a in apps if not getattr(a, "is_archived", False)]
         active_apps.sort(
             key=lambda a: a.created_at or datetime.min,
@@ -128,7 +136,6 @@ def _get_position_for_matching(applicant: Applicant, session: Session) -> str:
         for app in active_apps:
             if app.position_id is None:
                 continue
-            from app.models import Position
             position_obj = session.get(Position, app.position_id)
             if position_obj and position_obj.title_ru:
                 title = position_obj.title_ru.strip()
@@ -153,20 +160,10 @@ def _match_specialty_by_education(
     applicant: Applicant,
     session: Session,
 ) -> tuple[Optional[Specialty], Optional[str]]:
-    """
-    Если у applicant'а уже есть education[] — вытаскиваем specialty оттуда.
-
-    education[i].specialty имеет формат "08.03.01 Строительство" — берём
-    префикс до первого пробела как code и ищем Specialty.
-
-    Возвращает (specialty, matched_pattern_or_None).
-    matched_pattern в этом случае = "education[N]" для отладки.
-    """
     education = applicant.education or []
     if not education:
         return None, None
 
-    # Берём ПОСЛЕДНЮЮ запись (самое свежее образование, если их несколько)
     for idx in range(len(education) - 1, -1, -1):
         edu = education[idx]
         if isinstance(edu, dict):
@@ -177,13 +174,11 @@ def _match_specialty_by_education(
         if not spec_text:
             continue
 
-        # Парсим: "08.03.01 Строительство" → code="08.03.01"
         parts = spec_text.split(maxsplit=1)
         if not parts:
             continue
         code_candidate = parts[0]
 
-        # Ищем в Specialty
         stmt = select(Specialty).where(Specialty.code == code_candidate)
         spec = session.exec(stmt).first()
         if spec:
@@ -200,16 +195,11 @@ def _match_specialty_by_position(
     position: str,
     session: Session,
 ) -> tuple[Optional[Specialty], Optional[str]]:
-    """
-    Ищет specialty по паттерну позиции через PositionSpecialtyMap.
-    Копия логики из university_generator._match_specialty().
-    """
     if not position:
         return None, None
 
     position_lower = position.lower()
 
-    # Получаем все активные паттерны, отсортированные по приоритету (меньше = выше)
     stmt = (
         select(PositionSpecialtyMap, Specialty)
         .join(Specialty, Specialty.id == PositionSpecialtyMap.specialty_id)
@@ -229,19 +219,10 @@ def _resolve_specialty(
     applicant: Applicant,
     session: Session,
 ) -> tuple[Optional[Specialty], Optional[str]]:
-    """
-    Главная функция определения специальности с приоритетами:
-      1. education[-1].specialty → specialty (точная привязка)
-      2. work_history[0].position → specialty через PositionSpecialtyMap
-      3. application.position.title_ru → specialty через PositionSpecialtyMap
-      4. DEFAULT_FALLBACK_SPECIALTY_CODE (38.03.02 Менеджмент)
-    """
-    # 1. Education
     spec, pattern = _match_specialty_by_education(applicant, session)
     if spec:
         return spec, pattern
 
-    # 2-3. Position → PositionSpecialtyMap
     position = _get_position_for_matching(applicant, session)
     spec, pattern = _match_specialty_by_position(position, session)
     if spec:
@@ -251,7 +232,6 @@ def _resolve_specialty(
         )
         return spec, pattern
 
-    # 4. Generic fallback
     stmt = select(Specialty).where(Specialty.code == DEFAULT_FALLBACK_SPECIALTY_CODE)
     spec = session.exec(stmt).first()
     if spec:
@@ -266,7 +246,7 @@ def _resolve_specialty(
 
 
 # ============================================================================
-# === Picking companies and titles ===
+# === Picking companies ===
 # ============================================================================
 
 def _pick_companies_for_track(
@@ -276,18 +256,6 @@ def _pick_companies_for_track(
     session: Session,
     rng: random.Random,
 ) -> tuple[list[LegendCompany], bool]:
-    """
-    Подбирает count компаний для легенды.
-
-    Алгоритм:
-      1. Все активные компании в region_code с primary_specialty_id == specialty.id
-      2. Если меньше count → добираем из Москвы (fallback)
-      3. Если в Москве нет — добираем из любых компаний этой specialty в БД
-      4. Если совсем ничего нет — возвращаем пустой список (генерация провалится)
-
-    Возвращает (companies, fallback_used).
-    Внутри легенды одна компания не повторяется.
-    """
     fallback_used = False
 
     def find_companies(rc: Optional[str]) -> list[LegendCompany]:
@@ -302,22 +270,18 @@ def _pick_companies_for_track(
             stmt = stmt.where(LegendCompany.region_code == rc)
         return list(session.exec(stmt).all())
 
-    # 1. Регион клиента
     candidates: list[LegendCompany] = []
     if region_code:
         candidates = find_companies(region_code)
 
-    # 2. Fallback на Москву
     if len(candidates) < count and region_code != FALLBACK_REGION_CODE:
         moscow_candidates = find_companies(FALLBACK_REGION_CODE)
-        # Добавляем московские, исключая уже выбранные (по id)
         existing_ids = {c.id for c in candidates}
         for c in moscow_candidates:
             if c.id not in existing_ids:
                 candidates.append(c)
                 fallback_used = True
 
-    # 3. Глобальный fallback — любые компании этой специальности
     if len(candidates) < count:
         all_candidates = find_companies(None)
         existing_ids = {c.id for c in candidates}
@@ -329,24 +293,130 @@ def _pick_companies_for_track(
     if not candidates:
         return [], fallback_used
 
-    # Перемешиваем и берём count первых уникальных
     rng.shuffle(candidates)
     picked = candidates[:count]
 
     return picked, fallback_used
 
 
-def _pick_title_for_level(
+# ============================================================================
+# === Picking title + duties (Pack 20.3) ===
+# ============================================================================
+
+def _pick_position_for_level(
     specialty: Specialty,
     level: int,
     session: Session,
     rng: random.Random,
-) -> Optional[str]:
+) -> Optional[Position]:
     """
-    Достаёт title_ru должности из career_track для заданной (specialty, level).
-    Если на этом уровне нет (теоретически в seed на каждой specialty есть всё —
-    1, 2, 3, 4) — пытается соседние уровни.
+    Pack 20.3: ищет Position в справочнике по (specialty_id, level).
+
+    Tie-breaker для дубликатов уровня (например 08.03.01 L2 имеет id=13
+    "Инженер-проектировщик II категории" + id=2 "инженер-геодезист (камеральщик)"):
+      - Сортируем кандидаты по числу duties DESC. Наши новые Pack 20.2 Position
+        имеют 9-11 duties, старые legacy типа геодезиста — 11 (ровно).
+        В ничейных случаях это всё ещё может выбрать геодезиста.
+      - Внутри группы equal duties — rng.choice (разнообразие)
+      - В качестве sanity-check: если кандидатов несколько и у одного есть
+        тэг "геодезия"/"камеральщик" — он считается специализированным
+        и идёт в preference только когда его уже выбрали явно (через
+        education с явной геодезией). Здесь мы этого не знаем, поэтому
+        просто де-приоритезируем такие позиции.
+
+    Возвращает None если для (specialty, level) нет ни одной активной Position.
     """
+    stmt = (
+        select(Position)
+        .where(
+            Position.is_active == True,  # noqa: E712
+            Position.primary_specialty_id == specialty.id,
+            Position.level == level,
+        )
+    )
+    candidates = list(session.exec(stmt).all())
+    if not candidates:
+        return None
+
+    # Эвристика "специализированности": Position считается узкоспециализированной
+    # если её title или tags содержат уникальные профессиональные квалификаторы.
+    # Такие Position'ы попадают в "second tier" — выбираются только если
+    # generic кандидатов нет.
+    SPECIFIC_KEYWORDS = (
+        "геодезист", "геодезия", "камеральщик", "топограф",
+        "сметчик", "крановщик",
+    )
+
+    def _is_specific(p: Position) -> bool:
+        t = (p.title_ru or "").lower()
+        tags = [str(x).lower() for x in (p.tags or [])]
+        for kw in SPECIFIC_KEYWORDS:
+            if kw in t:
+                return True
+            for tag in tags:
+                if kw in tag:
+                    return True
+        return False
+
+    generic = [p for p in candidates if not _is_specific(p)]
+    specific = [p for p in candidates if _is_specific(p)]
+
+    pool = generic if generic else specific
+
+    # Внутри pool — preference более полным duties
+    pool.sort(key=lambda p: -len(p.duties or []))
+    top_count = len(pool[0].duties or [])
+    top_candidates = [p for p in pool if len(p.duties or []) == top_count]
+
+    return rng.choice(top_candidates)
+
+
+
+def _pick_title_and_duties_for_level(
+    specialty: Specialty,
+    level: int,
+    session: Session,
+    rng: random.Random,
+) -> tuple[Optional[str], list[str]]:
+    """
+    Pack 20.3: возвращает (title_ru, duties[]) для записи work_history.
+
+    Алгоритм:
+      1. Position лучше всего — берём title + duties снапшотом
+      2. Position для соседних уровней (level-1, level+1) — если на точном уровне нет
+      3. CareerTrack fallback — если нигде нет Position (для специальностей без Pack 20.2 разметки)
+      4. Если совсем ничего — возвращаем (None, [])
+    """
+    # 1. Точное совпадение (specialty, level)
+    pos = _pick_position_for_level(specialty, level, session, rng)
+    if pos:
+        log.info(
+            "work_history generator: matched Position id=%s '%s' "
+            "for specialty=%s level=%d (%d duties)",
+            pos.id, pos.title_ru, specialty.code, level, len(pos.duties or []),
+        )
+        return pos.title_ru, list(pos.duties or [])
+
+    # 2. Соседние уровни в Position — попробуем level-1, потом level+1
+    for fallback_level in (level - 1, level + 1, 1, 2, 3, 4):
+        if fallback_level < 1 or fallback_level > 4 or fallback_level == level:
+            continue
+        pos = _pick_position_for_level(specialty, fallback_level, session, rng)
+        if pos:
+            log.warning(
+                "work_history generator: no Position for specialty=%s level=%d, "
+                "fell back to Position id=%s level=%d ('%s', %d duties)",
+                specialty.code, level, pos.id, fallback_level,
+                pos.title_ru, len(pos.duties or []),
+            )
+            return pos.title_ru, list(pos.duties or [])
+
+    # 3. CareerTrack fallback — на случай если Pack 20.2 не покрыл специальность
+    log.warning(
+        "work_history generator: no Position for specialty=%s — falling back "
+        "to CareerTrack (no duties)",
+        specialty.code,
+    )
     stmt = (
         select(CareerTrack)
         .where(
@@ -357,9 +427,8 @@ def _pick_title_for_level(
     )
     candidates = list(session.exec(stmt).all())
     if candidates:
-        return rng.choice(candidates).title_ru
+        return rng.choice(candidates).title_ru, []
 
-    # Соседние уровни — попробуем level-1, потом level+1
     for fallback_level in (level - 1, level + 1, 1, 2, 3, 4):
         if fallback_level < 1 or fallback_level > 4:
             continue
@@ -375,12 +444,12 @@ def _pick_title_for_level(
         if candidates:
             log.warning(
                 "work_history generator: no career_track for specialty=%s level=%d, "
-                "fell back to level=%d",
+                "fell back to level=%d (no duties)",
                 specialty.code, level, fallback_level,
             )
-            return rng.choice(candidates).title_ru
+            return rng.choice(candidates).title_ru, []
 
-    return None
+    return None, []
 
 
 # ============================================================================
@@ -388,12 +457,10 @@ def _pick_title_for_level(
 # ============================================================================
 
 def _format_period_start(d: date) -> str:
-    """date(2022, 9, 15) → 'Сентябрь 2022'."""
     return f"{RU_MONTHS[d.month - 1]} {d.year}"
 
 
 def _format_period_end(d: Optional[date]) -> str:
-    """date → 'Август 2025'. None → 'по настоящее время'."""
     if d is None:
         return "по настоящее время"
     return f"{RU_MONTHS[d.month - 1]} {d.year}"
@@ -408,13 +475,11 @@ def _years_to_days(years: float) -> int:
 # ============================================================================
 
 def _pick_count(rng: random.Random) -> int:
-    """Выбирает количество записей по распределению COUNT_DISTRIBUTION."""
     counts, weights = zip(*COUNT_DISTRIBUTION)
     return rng.choices(counts, weights=weights, k=1)[0]
 
 
 def _pick_levels(count: int, rng: random.Random) -> list[int]:
-    """Выбирает уровни должностей для count записей."""
     options = LEVELS_BY_COUNT.get(count, [[3]])
     return rng.choice(options)
 
@@ -429,18 +494,7 @@ def suggest_work_history(
     Главная точка входа: возвращает WorkHistorySuggestion для applicant'а
     с массивом 1-3 записей трудового стажа.
 
-    Параметры:
-      - applicant: Applicant модель (должны быть прочитаны .education,
-        .work_history, .applications)
-      - session: SQLModel session для запросов в legend_company / career_track / specialty
-      - rng: random.Random для тестируемости (по умолчанию свежий)
-      - today: date для тестируемости (по умолчанию date.today())
-
-    Возвращает None если:
-      - не удалось определить специальность (даже DEFAULT_FALLBACK_SPECIALTY_CODE
-        не нашёлся в БД — это сигнал что Pack 19.0 не применён)
-      - не удалось найти ни одной компании
-      - не удалось найти должность в career_track
+    Pack 20.3: каждая запись теперь содержит duties[] — снапшот из Position.duties.
     """
     if rng is None:
         rng = random.Random()
@@ -463,10 +517,8 @@ def suggest_work_history(
     # 3. Count + levels
     count = _pick_count(rng)
     levels = _pick_levels(count, rng)
-    # levels отсортированы: первый — старший level (новейшая работа),
-    # последний — младший (самая ранняя). Длина levels == count.
 
-    # 4. Companies (count штук, без повторов в одной легенде)
+    # 4. Companies
     companies, fallback_used = _pick_companies_for_track(
         region_code, specialty, count, session, rng,
     )
@@ -478,7 +530,6 @@ def suggest_work_history(
         )
         return None
 
-    # Если из-за fallback'ов не хватило компаний для count — уменьшаем count
     actual_count = min(count, len(companies))
     if actual_count < count:
         log.warning(
@@ -488,10 +539,10 @@ def suggest_work_history(
         )
         levels = levels[:actual_count]
 
-    # 5. Titles для каждой записи
-    titles: list[str] = []
+    # 5. Pack 20.3: titles + duties для каждой записи
+    titles_and_duties: list[tuple[str, list[str]]] = []
     for level in levels:
-        title = _pick_title_for_level(specialty, level, session, rng)
+        title, duties = _pick_title_and_duties_for_level(specialty, level, session, rng)
         if title is None:
             log.warning(
                 "work_history generator: no title for specialty=%s level=%d "
@@ -499,59 +550,60 @@ def suggest_work_history(
                 specialty.code, level, applicant.id,
             )
             return None
-        titles.append(title)
+        titles_and_duties.append((title, duties))
 
     # 6. Даты — генерируем в обратном порядке от today
-    # records[0] = самая новая, records[-1] = самая старая
     records: list[WorkRecordSuggestion] = []
 
     # Запись 0: текущая работа (end=NULL, start = today - 3.5..5 лет)
     last_job_years = rng.uniform(*LAST_JOB_YEARS_RANGE)
     rec0_start = today - timedelta(days=_years_to_days(last_job_years))
     rec0_end: Optional[date] = None
+    title0, duties0 = titles_and_duties[0]
     records.append(WorkRecordSuggestion(
         period_start=_format_period_start(rec0_start),
         period_end=_format_period_end(rec0_end),
         company=companies[0].name_full,
-        position=titles[0],
-        duties=[],  # Pack 19.1a: пустой массив, заполнится в 19.1b
+        position=title0,
+        duties=duties0,  # Pack 20.3: снапшот из Position
     ))
 
-    # Запись 1: предыдущая работа (если actual_count >= 2)
     prev_period_start = rec0_start
     if actual_count >= 2:
         gap_days = rng.randint(*GAP_MONTHS_RANGE) * 30
         rec1_end = prev_period_start - timedelta(days=gap_days + 1)
         prev_years = rng.uniform(*PREV_JOB_YEARS_RANGE_MIDDLE)
         rec1_start = rec1_end - timedelta(days=_years_to_days(prev_years))
+        title1, duties1 = titles_and_duties[1]
         records.append(WorkRecordSuggestion(
             period_start=_format_period_start(rec1_start),
             period_end=_format_period_end(rec1_end),
             company=companies[1].name_full,
-            position=titles[1],
-            duties=[],
+            position=title1,
+            duties=duties1,  # Pack 20.3
         ))
         prev_period_start = rec1_start
 
-    # Запись 2: самая ранняя работа (если actual_count == 3)
     if actual_count >= 3:
         gap_days = rng.randint(*GAP_MONTHS_RANGE) * 30
         rec2_end = prev_period_start - timedelta(days=gap_days + 1)
         prev_years = rng.uniform(*PREV_JOB_YEARS_RANGE_EARLY)
         rec2_start = rec2_end - timedelta(days=_years_to_days(prev_years))
+        title2, duties2 = titles_and_duties[2]
         records.append(WorkRecordSuggestion(
             period_start=_format_period_start(rec2_start),
             period_end=_format_period_end(rec2_end),
             company=companies[2].name_full,
-            position=titles[2],
-            duties=[],
+            position=title2,
+            duties=duties2,  # Pack 20.3
         ))
 
+    total_duties = sum(len(r.duties) for r in records)
     log.info(
         "work_history generator: applicant_id=%s region=%s specialty=%s → "
-        "%d records (fallback=%s, pattern=%r)",
+        "%d records, %d total duties (fallback=%s, pattern=%r)",
         applicant.id, region_code, specialty.code,
-        len(records), fallback_used, matched_pattern,
+        len(records), total_duties, fallback_used, matched_pattern,
     )
 
     specialty_text = f"{specialty.code} {specialty.name}"
