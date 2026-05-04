@@ -46,9 +46,61 @@ LEVEL_NAMES = {
     "master": "Магистр",
 }
 
-# Возрастные предположения
-AGE_AT_GRADUATION = 22  # классика бакалавр
-WORK_EXPERIENCE_RANGE = (0, 5)  # годы стажа после выпуска до текущего момента
+# Pack 19.0.1: возрастные диапазоны выпуска для разных гражданств.
+#
+# Резиденты РФ оканчивают вуз в 22-23 (классика 4 года бакалавриата).
+# Нерезиденты получают 22-32 — потому что часто:
+#   - заканчивают вуз позже из-за службы / переезда
+#   - получают второе образование уже в России / Европе
+#   - идут в магистратуру после переезда
+RESIDENT_GRADUATION_AGE_RANGE = (22, 23)
+NON_RESIDENT_GRADUATION_AGE_RANGE = (22, 32)
+RESIDENT_NATIONALITIES = {"RUS"}
+
+# Pack 19.0.1: верхний cap по году выпуска. Не позже 2022 чтобы у клиента
+# было минимум 3 года стажа до текущего момента (2026 - 2022 = 4 года).
+# Это требование DN-визы: подтверждённый трудовой стаж по специальности.
+MAX_GRADUATION_YEAR = 2022
+
+
+def _calculate_graduation_year(
+    birth_date: Optional[date],
+    nationality: Optional[str],
+    rng: random.Random,
+    today: Optional[date] = None,
+) -> int:
+    """
+    Pack 19.0.1: год выпуска = год_рождения + случайный_возраст_выпуска,
+    но не позже MAX_GRADUATION_YEAR (= 2022) и не позже текущего года - 1.
+
+    Логика возраста:
+      - Резиденты РФ (nationality='RUS'): возраст ∈ [22, 23]
+      - Нерезиденты: возраст ∈ [22, 32] (учёт поздних программ, миграции)
+
+    Если birth_date нет — fallback на «5 лет назад от MAX_GRADUATION_YEAR»
+    как разумная середина для типичного DN-кандидата.
+    """
+    if today is None:
+        today = date.today()
+
+    cap_year = min(MAX_GRADUATION_YEAR, today.year - 1)
+
+    if birth_date is None:
+        # Без даты рождения — допустим середину диапазона: 2017 для 2022-ного cap
+        return cap_year - 5
+
+    # Выбираем возрастной диапазон по гражданству
+    is_resident = (nationality or "").upper() in RESIDENT_NATIONALITIES
+    age_range = (
+        RESIDENT_GRADUATION_AGE_RANGE if is_resident
+        else NON_RESIDENT_GRADUATION_AGE_RANGE
+    )
+
+    age_at_graduation = rng.randint(*age_range)
+    candidate = birth_date.year + age_at_graduation
+
+    # Не позже cap (2022 или today.year-1, что меньше)
+    return min(candidate, cap_year)
 
 
 def _get_region_code(applicant: Applicant) -> Optional[str]:
@@ -167,34 +219,6 @@ def _pick_university(
     return rng.choice(candidates), fallback_used
 
 
-def _calculate_graduation_year(
-    birth_date: Optional[date],
-    rng: random.Random,
-    today: Optional[date] = None,
-) -> int:
-    """
-    Год выпуска = year_рождения + 22 + randint(0, 5)
-    Но не позже текущего года - 1.
-
-    Если birth_date нет — fallback на (today.year - 30) — типичный возраст
-    самозанятого / DN-кандидата.
-    """
-    if today is None:
-        today = date.today()
-
-    if birth_date is None:
-        # Без даты рождения — допустим что человеку 30 лет → выпуск 8 лет назад
-        return today.year - 8
-
-    base_year = birth_date.year + AGE_AT_GRADUATION
-    extra_years = rng.randint(*WORK_EXPERIENCE_RANGE)
-    candidate = base_year + extra_years
-
-    # Не в будущем
-    max_year = today.year - 1
-    return min(candidate, max_year)
-
-
 def suggest_education(
     applicant: Applicant,
     session: Session,
@@ -250,8 +274,12 @@ def suggest_education(
         )
         return None
 
-    # 3. Год выпуска
-    graduation_year = _calculate_graduation_year(applicant.birth_date, rng)
+    # 3. Год выпуска (с учётом гражданства — резиденты vs нерезиденты)
+    graduation_year = _calculate_graduation_year(
+        applicant.birth_date,
+        applicant.nationality,
+        rng,
+    )
 
     # 4. Собираем результат
     degree = LEVEL_NAMES.get(specialty.level, "Бакалавр")
