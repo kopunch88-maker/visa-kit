@@ -2,7 +2,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Sparkles, AlertCircle, Save, User, Wand2, Landmark } from "lucide-react";
+import {
+  X, Loader2, Sparkles, AlertCircle, Save, User, Wand2, Landmark,
+  CheckCircle2, XCircle, MinusCircle, // Pack 18.5 — статус проверки ИНН через ФНС
+} from "lucide-react";
 import {
   ApplicantResponse,
   updateApplicant,
@@ -409,6 +412,12 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                 </button>
               }
             />
+            {/* Pack 18.5 — статус проверки ИНН через ФНС API */}
+            <NpdCheckBadge
+              status={applicant.npd_check_status ?? null}
+              lastCheckAt={applicant.npd_last_check_at ?? null}
+              hasInn={!!inn.trim()}
+            />
             {inn_registration_date && (
               <Field
                 label="Дата регистрации как самозанятого"
@@ -664,3 +673,89 @@ function FieldSelect({
 
 
 
+
+// Pack 18.5 — значок статуса проверки ИНН через ФНС API
+//
+// Показывает рядом с полем ИНН результат живой проверки на statusnpd.nalog.ru:
+//   verified    → 🟢 «Проверен ФНС DD.MM.YYYY» (зелёный, последняя успешная проверка)
+//   invalid     → 🔴 «Не действителен (ФНС подтвердил отзыв статуса НПД)» (красный)
+//   not_checked → ⚪ «Не проверен» (серый, ИНН выдан до Pack 18.2 или ФНС недоступен был)
+//   no_inn / null → ничего не рендерим (значок не нужен пока ИНН пуст)
+//
+// Источник статуса — backend `_compute_npd_check_status()` на основе
+// self_employed_registry.is_invalid + last_npd_check_at.
+function NpdCheckBadge({
+  status,
+  lastCheckAt,
+  hasInn,
+}: {
+  status: "no_inn" | "verified" | "invalid" | "not_checked" | null;
+  lastCheckAt: string | null | undefined;
+  hasInn: boolean;
+}) {
+  // Если ИНН пустой или backend сказал no_inn — значок не показываем вообще.
+  if (!hasInn || status === "no_inn" || status == null) return null;
+
+  const formatDate = (iso: string | null | undefined): string => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      return `${dd}.${mm}.${yyyy}`;
+    } catch {
+      return "";
+    }
+  };
+
+  let icon: React.ReactNode;
+  let text: string;
+  let bg: string;
+  let color: string;
+  let border: string;
+  let title: string;
+
+  if (status === "verified") {
+    icon = <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />;
+    const dateStr = formatDate(lastCheckAt);
+    text = dateStr ? `Проверен ФНС ${dateStr}` : "Проверен ФНС";
+    bg = "var(--color-bg-success, var(--color-bg-info))";
+    color = "var(--color-text-success, var(--color-text-info))";
+    border = "var(--color-border-success, var(--color-border-info))";
+    title = "ИНН подтверждён через ФНС API на statusnpd.nalog.ru — самозанятый активен";
+  } else if (status === "invalid") {
+    icon = <XCircle className="w-3.5 h-3.5 flex-shrink-0" />;
+    text = "Не действителен (ФНС подтвердил отзыв)";
+    bg = "var(--color-bg-danger)";
+    color = "var(--color-text-danger)";
+    border = "var(--color-border-danger)";
+    title = "ФНС вернул status=False — статус НПД отозван. Подберите другой ИНН через ✨";
+  } else {
+    // not_checked
+    icon = <MinusCircle className="w-3.5 h-3.5 flex-shrink-0" />;
+    text = "Не проверен";
+    bg = "var(--color-bg-secondary)";
+    color = "var(--color-text-tertiary)";
+    border = "var(--color-border-tertiary)";
+    title =
+      "ИНН не проверялся через ФНС API (выдан до Pack 18.2 или ФНС был недоступен в момент выдачи). " +
+      "Можно перевыдать через ✨ для свежей проверки.";
+  }
+
+  return (
+    <div
+      className="px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5"
+      style={{
+        background: bg,
+        color: color,
+        border: `0.5px solid ${border}`,
+      }}
+      title={title}
+    >
+      {icon}
+      <span>{text}</span>
+    </div>
+  );
+}

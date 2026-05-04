@@ -38,6 +38,10 @@ export type ApplicantData = {
   inn_source?: string | null;
   inn_kladr_code?: string | null;
   // /Pack 17
+  // Pack 18.5 — статус проверки ИНН через ФНС API (только в response GET /applicants/{id})
+  npd_check_status?: "no_inn" | "verified" | "invalid" | "not_checked" | null;
+  npd_last_check_at?: string | null;
+  // /Pack 18.5
   // Pack 16 — банк
   bank_id?: number | null;
   bank_account?: string | null;
