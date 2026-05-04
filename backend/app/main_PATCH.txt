@@ -1,54 +1,26 @@
 """
-ИНТЕГРАЦИЯ Pack 10 миграции в main.py.
+Pack 17.0 — изменения в backend/app/main.py
 
-Pack 10 добавляет 2 колонки в таблицу `application` (is_archived, archived_at).
-SQLite не поддерживает ALTER TABLE IF NOT EXISTS, поэтому нужна разовая миграция
-при старте сервера.
+================================================================================
+1. Импорт миграции — добавить в блок from app.db.migrations import (...):
+================================================================================
 
-В файле backend/app/main.py найдите секцию где создаются таблицы — обычно
-там есть SQLModel.metadata.create_all() или подобное в startup-событии.
+    apply_pack17_0_migration,
 
-ДОБАВЬТЕ вызов apply_pack10_migration() ПОСЛЕ create_all() (или там же на старте).
 
-Пример:
+================================================================================
+2. Вызов миграции — добавить рядом с другими apply_packX_migration() при старте
+   (обычно в @app.on_event("startup") или прямо в module-level):
+================================================================================
 
-```python
-# backend/app/main.py
+    apply_pack17_0_migration()
 
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from sqlmodel import SQLModel
-from app.db.session import engine
-from app.db.migrations import apply_pack10_migration  # ← НОВЫЙ ИМПОРТ
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Создаём таблицы (как было)
-    SQLModel.metadata.create_all(engine)
+================================================================================
+3. Регистрация роутера — добавить рядом с другими app.include_router(...):
+================================================================================
 
-    # Pack 10: применяем миграцию архива (идемпотентно)
-    apply_pack10_migration()  # ← НОВАЯ СТРОКА
+    from app.api import regions  # Pack 17
 
-    print(f"📦 Database ready at {engine.url}")
-    yield
-
-app = FastAPI(lifespan=lifespan)
-# ...
-```
-
-ИЛИ если у вас старый стиль с @app.on_event("startup"):
-
-```python
-@app.on_event("startup")
-def on_startup():
-    SQLModel.metadata.create_all(engine)
-    apply_pack10_migration()  # ← НОВАЯ СТРОКА
-```
-
-Проверка что миграция сработала — в логах при старте должно быть:
-
-    [migration:pack10] Added column application.is_archived
-    [migration:pack10] Added column application.archived_at
-
-При повторных запусках этих сообщений уже не будет — миграция идемпотентна.
+    app.include_router(regions.router)
 """
