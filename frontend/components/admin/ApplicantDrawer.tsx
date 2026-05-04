@@ -90,6 +90,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   const [passport_issuer, setPassportIssuer] = useState(applicant.passport_issuer || "");
   const [birth_date, setBirthDate] = useState(applicant.birth_date || "");
   const [birth_place_latin, setBirthPlaceLatin] = useState(applicant.birth_place_latin || "");
+  // Поля для анкеты MI-T (Nombre del padre / Nombre de la madre)
+  const [father_name_latin, setFatherNameLatin] = useState(applicant.father_name_latin || "");
+  const [mother_name_latin, setMotherNameLatin] = useState(applicant.mother_name_latin || "");
   const [email, setEmail] = useState(applicant.email || "");
   const [phone, setPhone] = useState(applicant.phone || "");
   const [inn, setInn] = useState(applicant.inn || "");
@@ -251,6 +254,9 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         passport_issuer: passport_issuer.trim(),
         birth_date,
         birth_place_latin: birth_place_latin.trim(),
+        // Имена родителей для анкеты MI-T (Nombre del padre / Nombre de la madre)
+        father_name_latin: father_name_latin.trim() || null,
+        mother_name_latin: mother_name_latin.trim() || null,
         email: email.trim(),
         phone: phone.trim(),
         inn: inn.trim(),
@@ -430,6 +436,26 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               placeholder="Ministry of Internal Affairs / ГУ МВД..." />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
+          </Section>
+
+          {/* Сведения о родителях — для анкеты MI-T (Nombre del padre / Nombre de la madre) */}
+          <Section title="Сведения о родителях">
+            <p className="text-xs text-tertiary mb-3">
+              Имена родителей нужны для испанской анкеты MI-T (поля Nombre del padre /
+              Nombre de la madre). Заполняются латиницей как в свидетельстве о рождении.
+            </p>
+            <Field
+              label="Имя отца (латиницей)"
+              value={father_name_latin}
+              onChange={setFatherNameLatin}
+              placeholder="ALIYEV NADIR"
+            />
+            <Field
+              label="Имя матери (латиницей)"
+              value={mother_name_latin}
+              onChange={setMotherNameLatin}
+              placeholder="ALIYEVA LEYLA"
+            />
           </Section>
 
           <Section title="Адрес и контакты">
