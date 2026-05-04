@@ -2,21 +2,25 @@
 
 /**
  * Pack 17.3 — Модал «Сгенерировать ИНН».
+ * Pack 18.1 — добавлен tier-fallback по регионам (бэкенд).
+ * Pack 18.2 — live-проверка статуса НПД через ФНС API при «Принять».
+ * Pack 18.6 — синхронизация с реальным API + два warning'а:
+ *   - 🟡 жёлтая плашка fallback (ИНН выдан из другого региона из-за пустоты целевого)
+ *   - 🟠 оранжевая плашка skipped_fns_unavailable (ФНС был недоступен, ручная проверка)
+ *   - убраны мёртвые блоки (full_name_rmsp / address_was_generated / region_pick_explanation)
+ *   - URL Яндекс/Rusprofile теперь генерируются на фронте из ИНН
+ *   - Фикс payload accept: `kladr_code` вместо несуществующего `region_kladr_code`
  *
  * Workflow:
  *  1. При открытии автоматически вызывает /inn-suggest → показывает кандидата
- *  2. Менеджер видит: ИНН, ФИО из реестра, адрес, дата НПД, ссылки на проверку
+ *  2. Менеджер видит: ИНН, адрес, регион, дата НПД, ссылки на проверку
+ *     + жёлтый warning если был fallback на другой регион
  *  3. Кнопки:
- *     - «Принять»     → /inn-accept → закрывает модал, обновляет родителя
+ *     - «Принять»     → /inn-accept → проверка через ФНС, закрывает модал
+ *                       (если ФНС вернул skipped — показываем оранжевый warning
+ *                        и НЕ закрываем модал, менеджер может перепринять)
  *     - «Другой»      → повторный /inn-suggest (ещё кандидат)
  *     - «Закрыть»     → закрывает без сохранения
- *
- * Что сохраняется в applicant при «Принять»:
- *  - inn
- *  - inn_registration_date (estimated_npd_start)
- *  - inn_kladr_code (target_kladr_code)
- *  - inn_source = "auto-generated"
- *  - home_address — ТОЛЬКО если он был сгенерирован (не было в БД)
  */
 
 import { useEffect, useState } from "react";
@@ -25,11 +29,12 @@ import {
   Loader2,
   Sparkles,
   AlertCircle,
+  AlertTriangle, // Pack 18.6: жёлтая плашка fallback
+  WifiOff,       // Pack 18.6: оранжевая плашка ФНС-недоступен
   Check,
   RefreshCw,
   ExternalLink,
   MapPin,
-  User,
   Calendar,
   Info,
 } from "lucide-react";
@@ -37,18 +42,24 @@ import {
   suggestInn,
   acceptInn,
   InnSuggestionResponse,
+  InnAcceptResult,
 } from "@/lib/api";
 
 interface Props {
   applicantId: number;
-  hadAddressBefore: boolean;  // у applicant.home_address был валидный текст до открытия модала
+  /**
+   * Pack 17.3: был флаг что у applicant был адрес ДО открытия модалки.
+   * Pack 18.6: больше не используется — раньше сравнивали с suggestion.address_was_generated,
+   * но бэкенд это поле не шлёт. Оставлен в Props чтобы не править ApplicantDrawer.tsx.
+   */
+  hadAddressBefore: boolean;
   onClose: () => void;
   onAccepted: () => void;     // вызывается после успешного accept
 }
 
 export function InnSuggestionModal({
   applicantId,
-  hadAddressBefore,
+  hadAddressBefore: _hadAddressBefore, // Pack 18.6: deprecated, см. Props
   onClose,
   onAccepted,
 }: Props) {
@@ -57,6 +68,8 @@ export function InnSuggestionModal({
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Pack 18.6: результат accept'а — для показа оранжевого warning'а если ФНС был недоступен
+  const [acceptResult, setAcceptResult] = useState<InnAcceptResult | null>(null);
 
   // Загружаем кандидата при открытии и по кнопке «Другой»
   useEffect(() => {
@@ -82,25 +95,47 @@ export function InnSuggestionModal({
     if (!suggestion) return;
     setAccepting(true);
     setError(null);
+    setAcceptResult(null);
     try {
-      await acceptInn(applicantId, {
+      // Pack 18.6 fixes vs Pack 17.3:
+      //   - kladr_code (не region_kladr_code — pydantic игнорировал это имя)
+      //   - inn_registration_date из реального поля (не estimated_npd_start)
+      //   - home_address передаём всегда (раньше только при address_was_generated,
+      //     но бэк это поле не шлёт). Бэк сам решает писать ли home_address —
+      //     см. inn_generation.py inn_accept(): if payload.home_address: applicant.home_address = ...
+      //     То есть для applicant с уже заполненным адресом он ВСЁ РАВНО будет перезаписан
+      //     значением из suggestion. Это намеренно: home_address из suggestion согласован с
+      //     ИНН (тот же регион), а старый адрес applicant'а мог быть из другого региона.
+      const result = await acceptInn(applicantId, {
         inn: suggestion.inn,
-        inn_registration_date: suggestion.estimated_npd_start || null,
-        // home_address передаём ТОЛЬКО если он был сгенерирован
-        // (если был у applicant — оставляем тот, что в БД, не трогаем)
-        home_address: suggestion.address_was_generated
-          ? suggestion.home_address
-          : null,
-        region_kladr_code: suggestion.target_kladr_code,
+        inn_registration_date: suggestion.inn_registration_date || null,
+        home_address: suggestion.home_address || null,
+        kladr_code: suggestion.kladr_code || null,
+        inn_source: "registry_snrip",
       });
+      setAcceptResult(result);
+
+      // Pack 18.6: если ФНС был недоступен — НЕ закрываем модал, показываем
+      // оранжевый warning + ссылку manual_check_url. Менеджер сам решает
+      // перепринять (нажать «Другой») или закрыть модал.
+      if (result.npd_check_status === "skipped_fns_unavailable") {
+        setAccepting(false);
+        return;
+      }
+
+      // Успех (confirmed или skipped_already_checked) — закрываем
       onAccepted();
     } catch (e) {
+      // 409 от бэка: ФНС подтвердил отзыв НПД — кандидат помечен is_invalid,
+      // менеджер должен жать «Другой кандидат». Бэк присылает понятный текст ошибки.
       setError((e as Error).message);
       setAccepting(false);
     }
   }
 
   function handleAnother() {
+    setAcceptResult(null); // Pack 18.6: сбрасываем оранжевый warning при смене кандидата
+    setError(null);
     setAttempt((n) => n + 1);
   }
 
@@ -174,6 +209,39 @@ export function InnSuggestionModal({
 
           {!loading && suggestion && (
             <>
+              {/* Pack 18.6: 🟡 жёлтая плашка fallback — выводим ПЕРВОЙ чтобы менеджер
+                  заметил что регион подменён до того как смотрит на адрес */}
+              {suggestion.fallback_used && (
+                <div
+                  className="p-3 rounded-md text-sm flex gap-2 items-start"
+                  style={{
+                    background: "var(--color-bg-warning)",
+                    color: "var(--color-text-warning)",
+                    border: "0.5px solid var(--color-border-warning)",
+                  }}
+                >
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-medium">
+                      ИНН выдан из региона{" "}
+                      <b>{suggestion.region_name}</b>
+                      {suggestion.requested_region_name && (
+                        <>
+                          {" "}вместо{" "}
+                          <b>{suggestion.requested_region_name}</b>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-xs">
+                      {fallbackReasonExplain(suggestion.fallback_reason)}
+                      {" "}
+                      Адрес тоже сгенерирован под фактический регион — он будет
+                      записан в карточку клиента при принятии.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Карточка кандидата */}
               <div
                 className="p-4 rounded-md space-y-3"
@@ -192,63 +260,31 @@ export function InnSuggestionModal({
                   </div>
                 </div>
 
-                {/* ФИО из реестра (для проверки в Яндексе) */}
-                {suggestion.full_name_rmsp && (
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1">
-                      <User className="w-3 h-3" />
-                      ФИО в реестре ФНС (НЕ используется в документах)
-                    </div>
-                    <div className="text-sm text-secondary">
-                      {suggestion.full_name_rmsp}
-                    </div>
-                  </div>
-                )}
-
-                {/* Дата начала НПД */}
-                {suggestion.estimated_npd_start && (
+                {/* Дата начала НПД (Pack 18.6: правильное поле inn_registration_date) */}
+                {suggestion.inn_registration_date && (
                   <div>
                     <div className="text-xs uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
-                      Дата начала статуса НПД (ориентировочно)
+                      Дата регистрации как самозанятого
                     </div>
                     <div className="text-sm text-primary">
-                      {formatDate(suggestion.estimated_npd_start)}
+                      {formatDate(suggestion.inn_registration_date)}
                     </div>
                   </div>
                 )}
 
-                {/* Адрес */}
+                {/* Адрес (Pack 18.6: убрана badge СГЕНЕРИРОВАН/ИЗ ПРОФИЛЯ —
+                    бэкенд не шлёт address_was_generated, всё равно сравнить не с чем) */}
                 <div>
                   <div className="text-xs uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1">
                     <MapPin className="w-3 h-3" />
                     Адрес проживания
-                    {suggestion.address_was_generated ? (
-                      <span
-                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                        style={{
-                          background: "var(--color-bg-warning)",
-                          color: "var(--color-text-warning)",
-                        }}
-                      >
-                        СГЕНЕРИРОВАН
-                      </span>
-                    ) : (
-                      <span
-                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                        style={{
-                          background: "var(--color-bg-info)",
-                          color: "var(--color-text-info)",
-                        }}
-                      >
-                        ИЗ ПРОФИЛЯ
-                      </span>
-                    )}
                   </div>
                   <div className="text-sm text-primary">{suggestion.home_address}</div>
                 </div>
 
-                {/* Регион + объяснение */}
+                {/* Регион + источник выбора (Pack 18.6: region_name из реального поля,
+                    region_pick_explanation бэкенд не шлёт — заменён на расшифровку source) */}
                 <div
                   className="text-xs p-2 rounded flex gap-1.5 items-start"
                   style={{
@@ -258,21 +294,66 @@ export function InnSuggestionModal({
                 >
                   <Info className="w-3 h-3 flex-shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-medium">{suggestion.target_region_name}</span>
+                    <span className="font-medium">{suggestion.region_name}</span>
                     {" — "}
-                    {suggestion.region_pick_explanation}
+                    {sourceExplain(suggestion.source)}
                   </div>
                 </div>
               </div>
 
-              {/* Ссылки на проверку «не светится ли» */}
+              {/* Pack 18.6: 🟠 оранжевая плашка — ФНС был недоступен при принятии.
+                  Показываем после accept'а если backend вернул skipped_fns_unavailable.
+                  Менеджер должен зайти по ссылке и проверить вручную. */}
+              {acceptResult?.npd_check_status === "skipped_fns_unavailable" && (
+                <div
+                  className="p-3 rounded-md text-sm space-y-2"
+                  style={{
+                    background: "var(--color-bg-warning)",
+                    color: "var(--color-text-warning)",
+                    border: "0.5px solid var(--color-border-warning)",
+                  }}
+                >
+                  <div className="flex gap-2 items-start">
+                    <WifiOff className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-medium mb-0.5">
+                        ФНС API временно недоступен
+                      </div>
+                      <div className="text-xs">
+                        {acceptResult.npd_check_message ||
+                          "ИНН сохранён без проверки актуальности статуса НПД. " +
+                            "Рекомендуем проверить вручную перед выдачей справки."}
+                      </div>
+                    </div>
+                  </div>
+                  {acceptResult.manual_check_url && (
+                    <a
+                      href={acceptResult.manual_check_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                      style={{
+                        background: "var(--color-text-warning)",
+                        color: "var(--color-bg-warning)",
+                      }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Открыть проверку на сайте ФНС
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Ссылки на проверку «не светится ли»
+                  Pack 18.6: URL генерируются на фронте из ИНН (бэкенд эти поля не шлёт).
+                  Без full_name (мы его и не показываем — см. убранный блок выше). */}
               <div className="space-y-2">
                 <div className="text-xs uppercase tracking-wide text-tertiary">
                   Ручная проверка перед принятием
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <a
-                    href={suggestion.yandex_search_url}
+                    href={`https://yandex.ru/search/?text=${encodeURIComponent(suggestion.inn)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm border transition-colors hover:bg-secondary"
@@ -283,10 +364,10 @@ export function InnSuggestionModal({
                     }}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
-                    Яндекс по ИНН и ФИО
+                    Яндекс по ИНН
                   </a>
                   <a
-                    href={suggestion.rusprofile_url}
+                    href={`https://www.rusprofile.ru/search?query=${encodeURIComponent(suggestion.inn)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm border transition-colors hover:bg-secondary"
@@ -306,24 +387,6 @@ export function InnSuggestionModal({
                   — нажмите «Принять».
                 </p>
               </div>
-
-              {hadAddressBefore && suggestion.address_was_generated && (
-                <div
-                  className="p-3 rounded-md text-xs flex gap-2 items-start"
-                  style={{
-                    background: "var(--color-bg-warning)",
-                    color: "var(--color-text-warning)",
-                    border: "0.5px solid var(--color-border-warning)",
-                  }}
-                >
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>
-                    У клиента в карточке был указан адрес, но регион из него не
-                    распознан. Используется новый сгенерированный адрес —
-                    <b> текущий адрес в карточке будет перезаписан</b> при принятии.
-                  </span>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -362,24 +425,38 @@ export function InnSuggestionModal({
             >
               Отмена
             </button>
-            <button
-              onClick={handleAccept}
-              disabled={loading || accepting || !suggestion}
-              className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 transition-colors flex items-center gap-2"
-              style={{ background: "var(--color-accent)" }}
-            >
-              {accepting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Сохраняем...
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4" />
-                  Принять
-                </>
-              )}
-            </button>
+            {/* Pack 18.6: после skipped_fns_unavailable accept уже произошёл на бэке.
+                Меняем «Принять» на «Готово, закрыть» — он просто триггерит onAccepted
+                (родитель перезагрузит applicant'а). */}
+            {acceptResult?.npd_check_status === "skipped_fns_unavailable" ? (
+              <button
+                onClick={onAccepted}
+                className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2"
+                style={{ background: "var(--color-accent)" }}
+              >
+                <Check className="w-4 h-4" />
+                Готово, закрыть
+              </button>
+            ) : (
+              <button
+                onClick={handleAccept}
+                disabled={loading || accepting || !suggestion}
+                className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 transition-colors flex items-center gap-2"
+                style={{ background: "var(--color-accent)" }}
+              >
+                {accepting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Сохраняем...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Принять
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -392,4 +469,36 @@ function formatDate(iso: string): string {
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return iso;
   return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+// Pack 18.6: расшифровка fallback_reason из бэкенда (см. inn_generator/pipeline.py).
+// Значения формирует pick_candidate_with_fallback() — два варианта.
+function fallbackReasonExplain(reason: string | null): string {
+  switch (reason) {
+    case "no_free_in_target_region":
+      return "В целевом регионе закончились свободные ИНН — взяли из соседнего (по диаспоре).";
+    case "no_free_in_target_or_diaspora":
+      return "В целевом регионе и регионах диаспоры свободных ИНН не осталось — взяли московский (safety net).";
+    default:
+      return "ИНН подобран из другого региона.";
+  }
+}
+
+// Pack 18.6: расшифровка поля source из бэкенда — откуда был взят регион для подбора.
+// Значения см. inn_generator/pipeline.py (resolve_target_region).
+function sourceExplain(source: string): string {
+  switch (source) {
+    case "home_address":
+      return "регион распознан из адреса проживания клиента";
+    case "contract_city":
+      return "регион взят из города подписания договора";
+    case "company_address":
+      return "регион взят из юридического адреса компании-заказчика";
+    case "diaspora":
+      return "регион выбран случайно из диаспоры по гражданству клиента";
+    case "fallback_moscow":
+      return "регион не определён — выбрана Москва (safety net)";
+    default:
+      return `источник: ${source}`;
+  }
 }

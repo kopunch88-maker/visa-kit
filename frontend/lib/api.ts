@@ -1603,45 +1603,51 @@ export async function deleteRegion(id: number): Promise<void> {
 // Pack 17.2 — INN auto-generation API client
 // ============================================================================
 
+// Pack 18.6 — синхронизация с реальным API (см. backend/app/api/inn_generation.py).
+// Старая версия (Pack 17.3) описывала поля которых бэкенд не шлёт:
+//   full_name_rmsp, address_was_generated, estimated_npd_start*, target_*,
+//   region_pick_*, yandex_search_url, rusprofile_url, rmsp_raw.
+// Реальные имена полей — ниже. Также добавлены fallback_* поля Pack 18.1.
 export type InnSuggestionResponse = {
   inn: string;
-  full_name_rmsp: string | null;
-  region_code: string | null;
-
+  full_name: string;
   home_address: string;
-  address_was_generated: boolean;
+  kladr_code: string;            // 13-значный KLADR (раньше назывался target_kladr_code)
+  region_name: string;           // ФАКТИЧЕСКИЙ регион ИНН (после возможного fallback)
+  region_code: string;           // 2-значный код субъекта
+  inn_registration_date: string; // ISO дата (раньше estimated_npd_start)
+  source: string;                // 'home_address' | 'contract_city' | 'company_address' | 'diaspora' | 'fallback_moscow'
 
-  estimated_npd_start: string | null;
-  estimated_npd_start_raw: string | null;
-
-  target_kladr_code: string;
-  target_region_name: string;
-
-  region_pick_source: string;
-  region_pick_explanation: string;
-
-  yandex_search_url: string;
-  rusprofile_url: string;
-
-  // Pack 17.2.4: данные из локальной БД (источник, дата создания записи и т.д.)
-  rmsp_raw: Record<string, any>;
+  // Pack 18.1: warning-поля (для Pack 18.6 yellow plate)
+  fallback_used: boolean;
+  requested_region_name: string | null; // имя ИЗНАЧАЛЬНО желаемого региона (если был fallback)
+  requested_region_code: string | null;
+  fallback_reason: string | null;       // 'no_free_in_target_region' | 'no_free_in_target_or_diaspora'
 };
 
+// Pack 18.6 fix: backend ждёт `kladr_code`, не `region_kladr_code`.
+// Старое имя молча игнорировалось pydantic'ом → applicant.inn_kladr_code не записывался.
+// Это был root cause костыля Pack 18.3.1 (auto-fill при генерации справки).
+// После этого фикса можно убирать костыль (см. Pack 17.7 в roadmap).
 export type InnAcceptPayload = {
   inn: string;
-  // Pack 17.3 fix: имена полей под backend
-  inn_registration_date?: string | null;
   home_address?: string | null;
-  region_kladr_code?: string | null;
+  kladr_code?: string | null;
+  inn_registration_date?: string | null;
+  inn_source?: string | null;
 };
 
+// Pack 18.6 — согласован с InnAcceptResponse из inn_generation.py.
+// Старая версия не показывала поля Pack 18.2 (npd_check_status / manual_check_url) —
+// менеджер не видел когда ФНС был недоступен и нужна ручная проверка.
 export type InnAcceptResult = {
+  ok: boolean;
   applicant_id: number;
   inn: string;
-  inn_registration_date: string | null;
-  inn_source: string;
-  inn_kladr_code: string;
-  home_address: string;
+  // Pack 18.2:
+  npd_check_status: "confirmed" | "skipped_fns_unavailable" | "skipped_already_checked";
+  manual_check_url: string | null;
+  npd_check_message: string | null;
 };
 
 /**
