@@ -1,9 +1,22 @@
 """
-Positions CRUD — типовые должности в наших компаниях.
-Каждая должность привязана к одной Company.
+Positions CRUD.
+
+Pack 20.0 (04.05.2026): Position отвязан от Company. Position теперь
+шаблон должности, переиспользуемый между разными компаниями. Связь
+Company↔Position идёт через Application (application.company_id +
+application.position_id, оба независимо).
+
+Изменения относительно прежней версии:
+- _enrich больше не подтягивает company_short_name (поля нет в PositionRead).
+- list_positions: query-параметр company_id остался для обратной
+  совместимости фронта, но игнорируется (фильтрация по компании теперь
+  бессмысленна — позиция не привязана к одной компании). При следующем
+  рефакторе фронта (Pack 20.1) параметр можно удалить.
+- create_position: валидация компании удалена, PositionCreate больше не
+  содержит company_id.
 """
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, func
@@ -11,7 +24,7 @@ from sqlmodel import Session, select, func
 from app.db.session import get_session
 from app.models import (
     Position, PositionCreate, PositionUpdate, PositionRead,
-    Company, Application,
+    Application,
 )
 from .dependencies import require_manager
 
@@ -19,33 +32,38 @@ router = APIRouter(prefix="/admin/positions", tags=["positions"])
 
 
 def _enrich(position: Position, session: Session) -> PositionRead:
-    """Add computed fields: application_count and company_short_name."""
+    """Add computed field: application_count.
+
+    Pack 20.0: company_short_name удалено — Position больше не привязан
+    к одной компании.
+    """
     app_count = session.exec(
         select(func.count(Application.id)).where(Application.position_id == position.id)
     ).one()
 
-    # Pull company short name in one tiny query (or use the relationship if loaded)
-    company_short = session.exec(
-        select(Company.short_name).where(Company.id == position.company_id)
-    ).first()
-
     return PositionRead(
         **position.model_dump(),
         application_count=app_count,
-        company_short_name=company_short,
     )
 
 
 @router.get("", response_model=List[PositionRead])
 def list_positions(
-    company_id: int | None = Query(None, description="Filter by company"),
+    company_id: Optional[int] = Query(
+        None,
+        description="Pack 20.0: deprecated. Параметр сохранён для обратной "
+                    "совместимости фронта, но игнорируется — Position больше "
+                    "не привязан к компании.",
+    ),
     include_inactive: bool = Query(False),
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> List[PositionRead]:
     query = select(Position)
-    if company_id is not None:
-        query = query.where(Position.company_id == company_id)
+    # Pack 20.0: company_id в фильтре игнорируется (см. описание параметра).
+    # Если в будущем понадобится «компании где использовалась эта позиция»
+    # — JOIN через Application: WHERE Application.company_id = X
+    # AND Application.position_id = Position.id.
     if not include_inactive:
         query = query.where(Position.is_active == True)  # noqa: E712
     query = query.order_by(Position.title_ru)
@@ -72,13 +90,7 @@ def create_position(
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> PositionRead:
-    # Validate company exists and is active
-    company = session.get(Company, payload.company_id)
-    if not company:
-        raise HTTPException(422, f"Company id={payload.company_id} not found")
-    if not company.is_active:
-        raise HTTPException(422, f"Company '{company.short_name}' is inactive")
-
+    """Pack 20.0: валидация компании удалена — Position больше не имеет company_id."""
     position = Position(**payload.model_dump())
     session.add(position)
     session.flush()
