@@ -6,6 +6,10 @@ Applications router — Pack 8.7 — добавлен PATCH endpoint для part
   любых полей заявки, в т.ч. данных распределения. Не требует чтобы все
   поля были заполнены сразу.
 - Старый POST /assign оставлен для обратной совместимости.
+
+Pack 20.0 (04.05.2026):
+- Снята валидация `position.company_id != company.id` в PATCH и legacy POST /assign
+  endpoints. Position теперь не имеет company_id (отвязан от Company).
 """
 
 import io
@@ -211,6 +215,10 @@ def patch_application(
     Принимает любой набор полей. Незаданные поля не трогает.
     Валидирует foreign keys только для тех связей которые передаются.
     Автоматически переводит статус в ASSIGNED если все 4 связи готовы.
+
+    Pack 20.0: убрана валидация связи Position-Company (Position больше
+    не привязан к Company; Company и Position на Application выбираются
+    независимо).
     """
     app = session.get(Application, app_id)
     if not app:
@@ -228,10 +236,8 @@ def patch_application(
         position = session.get(Position, update_data["position_id"])
         if not position:
             raise HTTPException(422, "Position not found")
-        # Если меняется только position но не company — проверяем что position принадлежит текущей компании
-        target_company_id = update_data.get("company_id", app.company_id)
-        if target_company_id and position.company_id != target_company_id:
-            raise HTTPException(422, "Position doesn't belong to selected company")
+        # Pack 20.0: убрана проверка position.company_id == app.company_id —
+        # Position больше не привязан к Company.
 
     if "representative_id" in update_data and update_data["representative_id"] is not None:
         rep = session.get(Representative, update_data["representative_id"])
@@ -318,6 +324,8 @@ def assign_application(
     """
     Старый endpoint — требует все поля сразу. Для частичного обновления
     используйте PATCH /admin/applications/{id}.
+
+    Pack 20.0: убрана проверка `position.company_id != company.id`.
     """
     app = session.get(Application, app_id)
     if not app:
@@ -327,8 +335,9 @@ def assign_application(
     if not company or not company.is_active:
         raise HTTPException(422, "Company not found or inactive")
     position = session.get(Position, payload.position_id)
-    if not position or position.company_id != company.id:
-        raise HTTPException(422, "Position not found or doesn't belong to company")
+    # Pack 20.0: position больше не имеет company_id, проверяем только наличие
+    if not position:
+        raise HTTPException(422, "Position not found")
     rep = session.get(Representative, payload.representative_id)
     if not rep or not rep.is_active:
         raise HTTPException(422, "Representative not found or inactive")
@@ -384,7 +393,7 @@ def update_status(
     session.add(app)
     _log_event(
         session, app.id, "manager", user_id, "status_changed",
-        f"Status: {old_status.value if hasattr(old_status, 'value') else old_status} → {payload.new_status.value}",
+        f"Status: {old_status.value if hasattr(old_status, 'value') else old_status} > {payload.new_status.value}",
         {"old": str(old_status), "new": payload.new_status.value, "notes": payload.notes},
     )
     session.commit()
@@ -432,7 +441,7 @@ def render_package(
 # Pack 9.1: скачивание одного файла из пакета
 # ============================================================================
 
-# Маппинг идентификатора файла → (тип, генератор)
+# Маппинг идентификатора файла > (тип, генератор)
 # id используется в URL чтобы не передавать русские/испанские имена с пробелами
 _DOWNLOAD_FILES = {
     # DOCX (рендерятся через templates_engine)
@@ -452,7 +461,7 @@ _DOWNLOAD_FILES = {
     "compromiso":       {"name": "13_Compromiso_RETA.pdf",                      "kind": "pdf", "pdf_key": "13_Compromiso_RETA.pdf"},
     "declaracion":      {"name": "14_Declaracion_antecedentes.pdf",             "kind": "pdf", "pdf_key": "14_Declaracion_antecedentes.pdf"},
        # Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
-    "npd_certificate":  {"name": "15_Справка_НПД.docx",        "kind": "docx", "fn": render_npd_certificate, "args": ()},  # ← ДОБАВИТЬ 
+    "npd_certificate":  {"name": "15_Справка_НПД.docx",        "kind": "docx", "fn": render_npd_certificate, "args": ()},  # < ДОБАВИТЬ 
     # Pack 18.3.3 — тот же документ в формате ЛКН (электронная подпись ФНС внизу, без блока МФЦ)
     "npd_certificate_lkn": {"name": "15b_Справка_НПД_ЛКН.docx", "kind": "docx", "fn": render_npd_certificate_lkn, "args": ()},
     # Pack 18.9 — апостиль к справке НПД
