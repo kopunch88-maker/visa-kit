@@ -15,6 +15,7 @@ from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv,
     render_npd_certificate,  # Pack 18.3
+    render_npd_certificate_lkn,  # Pack 18.3.3
 )
 from .dependencies import require_manager
 
@@ -94,7 +95,8 @@ def render_single_document(
         - 'employer_letter'
         - 'cv'
         - 'bank_statement'
-        - 'npd_certificate'  (Pack 18.3 — справка о постановке на учёт самозанятого, КНД 1122035)
+        - 'npd_certificate'  (Pack 18.3 — справка о постановке на учёт самозанятого, КНД 1122035, формат МФЦ)
+        - 'npd_certificate_lkn'  (Pack 18.3.3 — тот же документ в формате ЛКН с электронной подписью ФНС внизу)
     """
     application = session.get(Application, app_id)
     if not application:
@@ -122,6 +124,10 @@ def render_single_document(
             # Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
             content = render_npd_certificate(application, session)
             filename = "Справка_НПД.docx"
+        elif document_type == "npd_certificate_lkn":
+            # Pack 18.3.3 — тот же документ в формате ЛКН (электронная подпись ФНС внизу)
+            content = render_npd_certificate_lkn(application, session)
+            filename = "Справка_НПД_ЛКН.docx"
         elif document_type == "bank_statement":
             from app.templates_engine import render_bank_statement
             content = render_bank_statement(application, session)

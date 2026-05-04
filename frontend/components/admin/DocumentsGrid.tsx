@@ -31,7 +31,9 @@ const DOCUMENTS: DocItem[] = [
   { id: "compromiso",      filename: "13_Compromiso_RETA.pdf",                   kind: "pdf"  },
   { id: "declaracion",     filename: "14_Declaracion_antecedentes.pdf",          kind: "pdf"  },
   // Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
-  { id: "npd_certificate", filename: "15_Справка_НПД.docx",                      kind: "docx" },
+  { id: "npd_certificate",     filename: "15_Справка_НПД.docx",                     kind: "docx" },
+  // Pack 18.3.3 — то же содержание, но в формате ЛКН (электронная подпись ФНС внизу)
+  { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",                kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId }: Props) {
