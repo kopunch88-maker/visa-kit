@@ -212,7 +212,30 @@ class NpdStatusChecker:
         try:
             response = await self._client.post(NPD_CHECK_ENDPOINT, json=body)
         except httpx.HTTPError as e:
-            raise NpdStatusError(f"npd HTTP error: {e}") from e
+            # Pack 18.2.2: str(e) для большинства httpx-ошибок (ConnectError,
+            # ReadTimeout, ReadError, RemoteProtocolError, etc.) возвращает
+            # пустую строку — их идентифицируют по ТИПУ. Поэтому добавляем
+            # type(e).__name__ и repr(e) чтобы в логе и в response менеджеру
+            # было видно ЧТО именно сломалось.
+            err_type = type(e).__name__
+            err_msg = str(e) or repr(e) or "<no message>"
+            # log.warning с exc_info=True пишет полную трассировку в Railway —
+            # это поможет диагностировать дальше (DNS? TLS? таймаут на каком этапе?)
+            log.warning(
+                "[npd] HTTPError on check(inn=%s): %s: %s",
+                inn, err_type, err_msg,
+                exc_info=True,
+            )
+            raise NpdStatusError(f"npd HTTP error ({err_type}): {err_msg}") from e
+        except Exception as e:
+            # Pack 18.2.2: страховка на случай не-HTTPError исключений
+            # (например, asyncio.CancelledError, генерический OSError, etc.)
+            err_type = type(e).__name__
+            err_msg = str(e) or err_type
+            log.exception("[npd] Unexpected error on check(inn=%s)", inn)
+            raise NpdStatusError(
+                f"npd unexpected error ({err_type}): {err_msg}"
+            ) from e
 
         # 422 = бизнес-ошибка (некорректный запрос)
         if response.status_code == 422:
