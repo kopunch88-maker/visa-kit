@@ -181,6 +181,34 @@ export function StepPersonalInfo({ data, onChange }: Props) {
             ]}
           />
         </div>
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-3">
+            Родители
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <TextInput
+              label="Имя отца (на латинице)"
+              value={data.father_name_latin || ""}
+              onChange={(e) =>
+                onChange({ father_name_latin: e.target.value.toUpperCase() })
+              }
+              placeholder="IVAN"
+              className="uppercase"
+              hint="Для испанской анкеты MI-T"
+            />
+            <TextInput
+              label="Имя матери (на латинице)"
+              value={data.mother_name_latin || ""}
+              onChange={(e) =>
+                onChange({ mother_name_latin: e.target.value.toUpperCase() })
+              }
+              placeholder="MARIA"
+              className="uppercase"
+              hint="Для испанской анкеты MI-T"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
