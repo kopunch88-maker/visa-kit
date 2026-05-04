@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   X, Loader2, Sparkles, AlertCircle, Save, User, Wand2, Landmark,
   CheckCircle2, XCircle, MinusCircle, // Pack 18.5 — статус проверки ИНН через ФНС
+  Trash2, Plus, // Pack 19.0.3 — управление записями education
 } from "lucide-react";
 import {
   ApplicantResponse,
@@ -679,34 +680,154 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
           {/* Pack 19.0 — Образование с кнопкой ✨ автогенерации */}
           <Section title="Образование">
             <p className="text-xs text-tertiary mb-3">
-              Если клиент не указал ВУЗ — кнопка ✨ подберёт подходящий вуз
-              по региону и должности из последнего места работы.
+              Если клиент не указал ВУЗ — кнопка ✨ подберёт вуз по региону
+              и должности. Все поля можно редактировать вручную.
             </p>
 
-            {education.length === 0 ? (
+            {education.length === 0 && (
               <div
                 className="text-xs italic mb-3"
                 style={{ color: "var(--color-text-tertiary)" }}
               >
                 Образование не заполнено.
               </div>
-            ) : (
-              education.map((edu, i) => (
-                <div
-                  key={i}
-                  className="rounded-md p-3 mb-3 text-sm"
-                  style={{
-                    background: "var(--color-bg-secondary)",
-                    border: "1px solid var(--color-border-tertiary)",
-                  }}
-                >
-                  <div className="font-medium">{edu.institution}</div>
-                  <div className="text-xs text-tertiary mt-1">
-                    {edu.degree} · {edu.specialty} · выпуск {edu.graduation_year}
+            )}
+
+            {education.map((edu, i) => (
+              <div
+                key={i}
+                className="rounded-md p-3 mb-3 space-y-2"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span
+                    className="text-xs font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Запись #{i + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEducation(education.filter((_, idx) => idx !== i));
+                    }}
+                    className="p-1 rounded hover:bg-red-50"
+                    title="Удалить запись"
+                  >
+                    <Trash2 size={14} style={{ color: "#dc2626" }} />
+                  </button>
+                </div>
+
+                <div>
+                  <label
+                    className="text-xs block mb-1"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Название вуза (полное, для CV)
+                  </label>
+                  <textarea
+                    value={edu.institution}
+                    onChange={(e) => {
+                      const next = [...education];
+                      next[i] = { ...next[i], institution: e.target.value };
+                      setEducation(next);
+                    }}
+                    rows={3}
+                    className="w-full px-2 py-1 rounded text-sm"
+                    style={{
+                      background: "var(--color-bg-primary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-primary)",
+                    }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Степень
+                    </label>
+                    <select
+                      value={edu.degree}
+                      onChange={(e) => {
+                        const next = [...education];
+                        next[i] = { ...next[i], degree: e.target.value };
+                        setEducation(next);
+                      }}
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    >
+                      <option value="Бакалавр">Бакалавр</option>
+                      <option value="Специалист">Специалист</option>
+                      <option value="Магистр">Магистр</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Год выпуска
+                    </label>
+                    <input
+                      type="number"
+                      value={edu.graduation_year || ""}
+                      min={1950}
+                      max={2025}
+                      onChange={(e) => {
+                        const next = [...education];
+                        next[i] = {
+                          ...next[i],
+                          graduation_year: parseInt(e.target.value) || 0,
+                        };
+                        setEducation(next);
+                      }}
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    />
                   </div>
                 </div>
-              ))
-            )}
+
+                <div>
+                  <label
+                    className="text-xs block mb-1"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Специальность (код ОКСО + название)
+                  </label>
+                  <input
+                    type="text"
+                    value={edu.specialty}
+                    onChange={(e) => {
+                      const next = [...education];
+                      next[i] = { ...next[i], specialty: e.target.value };
+                      setEducation(next);
+                    }}
+                    placeholder="08.03.01 Строительство"
+                    className="w-full px-2 py-1 rounded text-sm"
+                    style={{
+                      background: "var(--color-bg-primary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-primary)",
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
 
             {educationFallbackUsed && education.length > 0 && (
               <div
@@ -722,24 +843,50 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleRegenerateEducation}
-              disabled={educationRegenerating}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
-              style={{
-                background: "var(--color-bg-secondary)",
-                border: "1px solid var(--color-border-tertiary)",
-                color: "var(--color-text-primary)",
-              }}
-            >
-              {educationRegenerating ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <Sparkles size={14} />
-              )}
-              {education.length > 0 ? "Подобрать другой вуз" : "Подобрать вуз"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleRegenerateEducation}
+                disabled={educationRegenerating}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                {educationRegenerating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                {education.length > 0 ? "Подобрать другой вуз" : "Подобрать вуз"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEducation([
+                    ...education,
+                    {
+                      institution: "",
+                      graduation_year: new Date().getFullYear() - 10,
+                      degree: "Бакалавр",
+                      specialty: "",
+                    },
+                  ]);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                <Plus size={14} />
+                Добавить вручную
+              </button>
+            </div>
           </Section>
         </div>
 

@@ -135,20 +135,32 @@ def _get_position(applicant: Applicant, session: Session) -> str:
     # 2. Pack 19.0.2: позиция из applications
     # Один applicant может иметь несколько заявок — берём самую свежую
     # (не-archived, по дате создания DESC). Через relationships:
+    #
+    # Pack 19.0.3 fix: вместо `created_at or 0` (TypeError при сравнении
+    # datetime с int) используем datetime.min для пустых дат.
     try:
+        from datetime import datetime
         from app.models import Application, Position
         apps = sorted(
             [a for a in (applicant.applications or []) if not a.is_archived],
-            key=lambda a: a.created_at or 0,
+            key=lambda a: a.created_at or datetime.min,
             reverse=True,
         )
         for app in apps:
             if app.position_id:
                 pos = session.get(Position, app.position_id)
-                if pos and getattr(pos, "title", None):
-                    return pos.title.strip()
+                if pos and getattr(pos, "title_ru", None):
+                    log.info(
+                        "_get_position: applicant_id=%s application=%s position_id=%s → title_ru=%r",
+                        applicant.id, app.id, app.position_id, pos.title_ru,
+                    )
+                    return pos.title_ru.strip()
     except Exception as e:
-        log.debug("could not load position from application: %s", e)
+        # Pack 19.0.3 fix: было log.debug — не видно в проде. Поставил warning.
+        log.warning(
+            "could not load position from application for applicant_id=%s: %s: %s",
+            applicant.id, type(e).__name__, e,
+        )
 
     # 3. Fallback
     return DEFAULT_POSITION_FALLBACK
