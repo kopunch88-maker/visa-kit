@@ -120,6 +120,14 @@ _PATCHABLE_FIELDS = {
     "bank_name",
     "bank_bic",
     "bank_correspondent_account",
+    # Имена родителей для анкеты MI-T (Nombre del padre / Nombre de la madre)
+    "father_name_latin",
+    "mother_name_latin",
+    # Pack 18.9 — переопределение подписанта апостиля (если null — backend
+    # подставляет дефолт «Байрамов Н.А.» / стандартная должность Минюста)
+    "apostille_signer_short",
+    "apostille_signer_signature",
+    "apostille_signer_position",
 }
 
 # Поля русского ФИО — к ним применяется normalize_russian_case при сохранении
