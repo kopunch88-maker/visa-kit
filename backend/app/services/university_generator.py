@@ -113,22 +113,45 @@ def _get_region_code(applicant: Applicant) -> Optional[str]:
     return code[:2]
 
 
-def _get_position(applicant: Applicant) -> str:
+def _get_position(applicant: Applicant, session: Session) -> str:
     """
-    Достаёт первую должность из work_history.
-    Если истории нет — возвращает DEFAULT_POSITION_FALLBACK.
+    Pack 19.0.2: ищем должность в трёх местах в порядке приоритета:
+      1. applicant.work_history[0].position (классика — если клиент заполнил)
+      2. application.position.title (Pack 19.0.2 — должность из заявки;
+         менеджер задаёт через UI «Компания и договор»)
+      3. DEFAULT_POSITION_FALLBACK = "менеджер" (последний fallback)
     """
+    # 1. work_history клиента
     work = applicant.work_history or []
-    if not work:
-        return DEFAULT_POSITION_FALLBACK
-    # work_history — List[dict] (JSON в БД). Первый элемент = последнее место работы.
-    first = work[0]
-    if isinstance(first, dict):
-        position = (first.get("position") or "").strip()
-    else:
-        # На случай если из API пришли SQLModel объекты
-        position = (getattr(first, "position", "") or "").strip()
-    return position or DEFAULT_POSITION_FALLBACK
+    if work:
+        first = work[0]
+        if isinstance(first, dict):
+            position = (first.get("position") or "").strip()
+        else:
+            position = (getattr(first, "position", "") or "").strip()
+        if position:
+            return position
+
+    # 2. Pack 19.0.2: позиция из applications
+    # Один applicant может иметь несколько заявок — берём самую свежую
+    # (не-archived, по дате создания DESC). Через relationships:
+    try:
+        from app.models import Application, Position
+        apps = sorted(
+            [a for a in (applicant.applications or []) if not a.is_archived],
+            key=lambda a: a.created_at or 0,
+            reverse=True,
+        )
+        for app in apps:
+            if app.position_id:
+                pos = session.get(Position, app.position_id)
+                if pos and getattr(pos, "title", None):
+                    return pos.title.strip()
+    except Exception as e:
+        log.debug("could not load position from application: %s", e)
+
+    # 3. Fallback
+    return DEFAULT_POSITION_FALLBACK
 
 
 def _match_specialty(
@@ -253,7 +276,7 @@ def suggest_education(
         rng = random.Random()
 
     # 1. Должность → специальность
-    position = _get_position(applicant)
+    position = _get_position(applicant, session)
     specialty, matched_pattern = _match_specialty(position, session)
 
     if specialty is None:
