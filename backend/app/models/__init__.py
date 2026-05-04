@@ -47,6 +47,19 @@ from .university import (
     UniversitySuggestion,
 )
 
+# Pack 19.1: LegendCompany / CareerTrack (генератор work_history)
+# LegendCompany — справочник «фейковых» компаний для CV-легенды
+# (префикс legend_* специально, чтобы НЕ путать с Company-нанимателями выше).
+# CareerTrack — career-track должностей по специальности (1=Junior...4=Lead).
+from .legend_company import (
+    LegendCompany,
+    CareerTrack,
+    LegendCompanyRead,
+    CareerTrackRead,
+    WorkRecordSuggestion,
+    WorkHistorySuggestion,
+)
+
 # Application entities
 from .applicant import (
     Applicant, ApplicantCreate, ApplicantUpdate, ApplicantRead,
@@ -109,6 +122,13 @@ __all__ = [
     "UniversityRead",
     "SpecialtyRead",
     "UniversitySuggestion",
+    # Pack 19.1: LegendCompany / CareerTrack (work_history generator)
+    "LegendCompany",
+    "CareerTrack",
+    "LegendCompanyRead",
+    "CareerTrackRead",
+    "WorkRecordSuggestion",
+    "WorkHistorySuggestion",
     # Application
     "Applicant", "ApplicantCreate", "ApplicantUpdate", "ApplicantRead",
     "EducationRecord", "WorkRecord",
@@ -133,6 +153,3 @@ __all__ = [
     "IfnsOffice",
     "MfcOffice",
 ]
-
-
-

@@ -70,6 +70,8 @@ from app.services.inn_generator.pipeline import (
     InnSuggestion,
     suggest_inn_for_applicant,
 )
+# Pack 19.1: генератор work_history (companies + career tracks)
+from app.services.work_history_generator import suggest_work_history
 from .dependencies import require_manager
 
 log = logging.getLogger(__name__)
@@ -568,7 +570,7 @@ def regen_education(
     Подбирает один вуз для applicant'а по логике:
       1. Регион из applicant.inn_kladr_code (первые 2 цифры)
       2. Должность из applicant.work_history[0].position
-         → специальность через PositionSpecialtyMap
+         > специальность через PositionSpecialtyMap
       3. Год выпуска = год_рождения + 22 + randint(0, 5)
 
     Если вуза в регионе нет — fallback на Москву (fallback_used=True).
@@ -600,7 +602,7 @@ def regen_education(
         )
 
     log.info(
-        "regen-education: applicant_id=%s position from work_history → "
+        "regen-education: applicant_id=%s position from work_history > "
         "uni=%s specialty=%s grad=%d",
         applicant_id, suggestion.institution_short,
         suggestion.specialty, suggestion.graduation_year,
@@ -613,5 +615,102 @@ def regen_education(
         specialty=suggestion.specialty,
         graduation_year=suggestion.graduation_year,
         fallback_used=suggestion.fallback_used,
+        matched_pattern=suggestion.matched_pattern,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/applicants/{applicant_id}/regen-work-history
+# Pack 19.1: автогенерация work_history (1-3 записи: компании + должности + даты)
+# ---------------------------------------------------------------------------
+
+
+class RegenWorkHistoryRecord(BaseModel):
+    """Pack 19.1 — одна запись для frontend, кладётся в applicant.work_history[]."""
+    period_start: str
+    period_end: str
+    company: str
+    position: str
+    duties: list[str]
+
+
+class RegenWorkHistoryResponse(BaseModel):
+    """Pack 19.1 — ответ /regen-work-history."""
+    records: list[RegenWorkHistoryRecord]
+    fallback_used: bool = False
+    specialty_used: str
+    matched_pattern: Optional[str] = None
+
+
+@router.post(
+    "/{applicant_id}/regen-work-history",
+    response_model=RegenWorkHistoryResponse,
+    summary="Pack 19.1: подобрать 1-3 записи work_history (компании + должности + даты)",
+)
+def regen_work_history(
+    applicant_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> RegenWorkHistoryResponse:
+    """
+    Подбирает 1-3 правдоподобные записи трудового стажа на основе:
+      1. Регион из applicant.inn_kladr_code (первые 2 цифры)
+      2. Специальность из applicant.education[-1].specialty (приоритет)
+         или из applicant.work_history[0].position через PositionSpecialtyMap
+         или из application.position.title_ru (Pack 19.0.2 fallback)
+      3. Career-track: уровни 1-4 в зависимости от количества записей
+         (1 = Senior текущая, 3 = Senior+Middle+Junior career progression)
+
+    Гарантии:
+      - Минимум 3.5 года в последней записи (требование DN-визы)
+      - Даты не пересекаются (rec[i].end < rec[i-1].start)
+      - Внутри легенды одна компания не повторяется
+
+    Если для региона нет компаний → fallback на Москву (fallback_used=True).
+    Если специальность не определилась → generic '38.03.02 Менеджмент'.
+
+    Не пишет в БД — фронт делает это через PATCH /applicants/{id} с work_history[].
+
+    Pack 19.1a: duties=[] для каждой записи (заполнится в Pack 19.1b после
+    ревью CV-шаблона).
+    """
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    suggestion = suggest_work_history(applicant, session)
+
+    if suggestion is None:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Не удалось подобрать work_history. Возможные причины: "
+                "(1) Pack 19.0 (specialty seed) не применён — таблица specialty пуста; "
+                "(2) Pack 19.1 (legend_company seed) не применён — нет компаний в БД; "
+                "(3) Не нашлось подходящего career_track. "
+                "Проверьте таблицы specialty / legend_company / career_track."
+            ),
+        )
+
+    log.info(
+        "regen-work-history: applicant_id=%s specialty=%s → %d records "
+        "(fallback=%s, pattern=%r)",
+        applicant_id, suggestion.specialty_used, len(suggestion.records),
+        suggestion.fallback_used, suggestion.matched_pattern,
+    )
+
+    return RegenWorkHistoryResponse(
+        records=[
+            RegenWorkHistoryRecord(
+                period_start=r.period_start,
+                period_end=r.period_end,
+                company=r.company,
+                position=r.position,
+                duties=r.duties,
+            )
+            for r in suggestion.records
+        ],
+        fallback_used=suggestion.fallback_used,
+        specialty_used=suggestion.specialty_used,
         matched_pattern=suggestion.matched_pattern,
     )

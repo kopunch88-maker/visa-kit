@@ -16,6 +16,7 @@ import {
   generateAccount,
   regenerateAddress, // Pack 18.8: перегенерация адреса
   regenerateEducation, // Pack 19.0: автогенерация образования
+  regenerateWorkHistory, // Pack 19.1: автогенерация work_history
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
 
@@ -136,6 +137,13 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
   >((applicant.education as any) || []);
   const [educationRegenerating, setEducationRegenerating] = useState(false);
   const [educationFallbackUsed, setEducationFallbackUsed] = useState(false);
+  // Pack 19.1 — работа (List[WorkRecord]) с генератором + editable полями.
+  // period_start/period_end — свободные строки ("Сентябрь 2022", "по настоящее время").
+  const [workHistory, setWorkHistory] = useState<
+    Array<{ period_start: string; period_end: string; company: string; position: string; duties: string[] }>
+  >((applicant.work_history as any) || []);
+  const [workHistoryRegenerating, setWorkHistoryRegenerating] = useState(false);
+  const [workHistoryFallbackUsed, setWorkHistoryFallbackUsed] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [translitLoading, setTranslitLoading] = useState(false);
@@ -255,6 +263,37 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
     }
   }
 
+  // Pack 19.1: автогенерация work_history (1-3 записи: компании + должности + даты).
+  // Если уже что-то есть — перезаписывает (UI запрашивает подтверждение).
+  async function handleRegenerateWorkHistory() {
+    if (workHistory.length > 0) {
+      const ok = window.confirm(
+        "У клиента уже заполнен опыт работы. Перегенерировать (старые записи будут удалены)?",
+      );
+      if (!ok) return;
+    }
+    setWorkHistoryRegenerating(true);
+    setError(null);
+    try {
+      const result = await regenerateWorkHistory(applicant.id);
+      // Записываем в state — реальная запись в БД произойдёт при «Сохранить»
+      setWorkHistory(
+        result.records.map((r) => ({
+          period_start: r.period_start,
+          period_end: r.period_end,
+          company: r.company,
+          position: r.position,
+          duties: r.duties,
+        })),
+      );
+      setWorkHistoryFallbackUsed(result.fallback_used);
+    } catch (e) {
+      setError(`Не удалось подобрать опыт работы: ${(e as Error).message}`);
+    } finally {
+      setWorkHistoryRegenerating(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
     if (!last_name_native?.trim() || !first_name_native?.trim()) {
@@ -314,6 +353,8 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
         apostille_signer_position: apostille_signer_position.trim() || null,
         // Pack 19.0 — образование (передаём только если что-то есть)
         education: education.length > 0 ? education : undefined,
+        // Pack 19.1 — опыт работы (передаём только если что-то есть)
+        work_history: workHistory.length > 0 ? workHistory : undefined,
       });
       onSaved();
     } catch (e) {
@@ -481,7 +522,7 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               placeholder="Ministry of Internal Affairs / ГУ МВД..." />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
-            {/* Pack 18.10 — страна рождения (для País в MI-T, отдельно от гражданства) */}
+            {/* Pack 18.10 — страна рождения (для Pais в MI-T, отдельно от гражданства) */}
             <FieldSelect label="Страна рождения" value={birth_country} onChange={setBirthCountry}
               options={COUNTRY_OPTIONS} />
           </Section>
@@ -677,10 +718,10 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
             />
           </Section>
 
-          {/* Pack 19.0 — Образование с кнопкой ✨ автогенерации */}
+          {/* Pack 19.0 — Образование с кнопкой ? автогенерации */}
           <Section title="Образование">
             <p className="text-xs text-tertiary mb-3">
-              Если клиент не указал ВУЗ — кнопка ✨ подберёт вуз по региону
+              Если клиент не указал ВУЗ — кнопка ? подберёт вуз по региону
               и должности. Все поля можно редактировать вручную.
             </p>
 
@@ -838,8 +879,8 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                   border: "1px solid rgba(234, 179, 8, 0.3)",
                 }}
               >
-                ⚠ В регионе клиента не нашлось подходящих вузов — подобрали
-                из Москвы. Можно нажать ✨ ещё раз для другого варианта.
+                ? В регионе клиента не нашлось подходящих вузов — подобрали
+                из Москвы. Можно нажать ? ещё раз для другого варианта.
               </div>
             )}
 
@@ -873,6 +914,237 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
                       graduation_year: new Date().getFullYear() - 10,
                       degree: "Бакалавр",
                       specialty: "",
+                    },
+                  ]);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                <Plus size={14} />
+                Добавить вручную
+              </button>
+            </div>
+          </Section>
+
+          {/* Pack 19.1 — Опыт работы с кнопкой ✨ автогенерации */}
+          <Section title="Опыт работы">
+            <p className="text-xs text-tertiary mb-3">
+              Если клиент не указал опыт работы — кнопка ✨ подберёт 1-3
+              правдоподобные записи (компании + должности + даты) по региону
+              и специальности. Минимум 3.5 года в последней работе для DN-визы.
+              Все поля можно редактировать вручную.
+            </p>
+
+            {workHistory.length === 0 && (
+              <div
+                className="text-xs italic mb-3"
+                style={{ color: "var(--color-text-tertiary)" }}
+              >
+                Опыт работы не заполнен.
+              </div>
+            )}
+
+            {workHistory.map((wh, i) => (
+              <div
+                key={i}
+                className="rounded-md p-3 mb-3 space-y-2"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span
+                    className="text-xs font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Запись #{i + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkHistory(workHistory.filter((_, idx) => idx !== i));
+                    }}
+                    className="p-1 rounded hover:bg-red-50"
+                    title="Удалить запись"
+                  >
+                    <Trash2 size={14} style={{ color: "#dc2626" }} />
+                  </button>
+                </div>
+
+                <div>
+                  <label
+                    className="text-xs block mb-1"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Компания (полное название, для CV)
+                  </label>
+                  <textarea
+                    value={wh.company}
+                    onChange={(e) => {
+                      const next = [...workHistory];
+                      next[i] = { ...next[i], company: e.target.value };
+                      setWorkHistory(next);
+                    }}
+                    rows={2}
+                    className="w-full px-2 py-1 rounded text-sm"
+                    style={{
+                      background: "var(--color-bg-primary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-primary)",
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label
+                    className="text-xs block mb-1"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Должность
+                  </label>
+                  <input
+                    type="text"
+                    value={wh.position}
+                    onChange={(e) => {
+                      const next = [...workHistory];
+                      next[i] = { ...next[i], position: e.target.value };
+                      setWorkHistory(next);
+                    }}
+                    placeholder="Главный инженер проекта"
+                    className="w-full px-2 py-1 rounded text-sm"
+                    style={{
+                      background: "var(--color-bg-primary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-primary)",
+                    }}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Начало (period_start)
+                    </label>
+                    <input
+                      type="text"
+                      value={wh.period_start}
+                      onChange={(e) => {
+                        const next = [...workHistory];
+                        next[i] = { ...next[i], period_start: e.target.value };
+                        setWorkHistory(next);
+                      }}
+                      placeholder="Сентябрь 2022"
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Окончание (period_end)
+                    </label>
+                    <input
+                      type="text"
+                      value={wh.period_end}
+                      onChange={(e) => {
+                        const next = [...workHistory];
+                        next[i] = { ...next[i], period_end: e.target.value };
+                        setWorkHistory(next);
+                      }}
+                      placeholder="по настоящее время"
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Pack 19.1a: duties отображаются read-only если есть, в 19.1b будет редактируемо */}
+                {wh.duties && wh.duties.length > 0 && (
+                  <div>
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Обязанности ({wh.duties.length})
+                    </label>
+                    <div
+                      className="text-xs px-2 py-1 rounded"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      {wh.duties.join(" • ")}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {workHistoryFallbackUsed && workHistory.length > 0 && (
+              <div
+                className="text-xs mb-3 px-3 py-2 rounded-md"
+                style={{
+                  background: "rgba(234, 179, 8, 0.1)",
+                  color: "#b45309",
+                  border: "1px solid rgba(234, 179, 8, 0.3)",
+                }}
+              >
+                ⚠ В регионе клиента не нашлось подходящих компаний — подобрали
+                из Москвы. Можно нажать ✨ ещё раз для другого варианта.
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleRegenerateWorkHistory}
+                disabled={workHistoryRegenerating}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  border: "1px solid var(--color-border-tertiary)",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                {workHistoryRegenerating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                {workHistory.length > 0 ? "Подобрать другой опыт" : "Подобрать опыт работы"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkHistory([
+                    ...workHistory,
+                    {
+                      period_start: "",
+                      period_end: "",
+                      company: "",
+                      position: "",
+                      duties: [],
                     },
                   ]);
                 }}
@@ -1067,10 +1339,10 @@ function FieldSelect({
 // Pack 18.5 — значок статуса проверки ИНН через ФНС API
 //
 // Показывает рядом с полем ИНН результат живой проверки на statusnpd.nalog.ru:
-//   verified    → 🟢 «Проверен ФНС DD.MM.YYYY» (зелёный, последняя успешная проверка)
-//   invalid     → 🔴 «Не действителен (ФНС подтвердил отзыв статуса НПД)» (красный)
-//   not_checked → ⚪ «Не проверен» (серый, ИНН выдан до Pack 18.2 или ФНС недоступен был)
-//   no_inn / null → ничего не рендерим (значок не нужен пока ИНН пуст)
+//   verified    > ?? «Проверен ФНС DD.MM.YYYY» (зелёный, последняя успешная проверка)
+//   invalid     > ?? «Не действителен (ФНС подтвердил отзыв статуса НПД)» (красный)
+//   not_checked > ? «Не проверен» (серый, ИНН выдан до Pack 18.2 или ФНС недоступен был)
+//   no_inn / null > ничего не рендерим (значок не нужен пока ИНН пуст)
 //
 // Источник статуса — backend `_compute_npd_check_status()` на основе
 // self_employed_registry.is_invalid + last_npd_check_at.
@@ -1121,7 +1393,7 @@ function NpdCheckBadge({
     bg = "var(--color-bg-danger)";
     color = "var(--color-text-danger)";
     border = "var(--color-border-danger)";
-    title = "ФНС вернул status=False — статус НПД отозван. Подберите другой ИНН через ✨";
+    title = "ФНС вернул status=False — статус НПД отозван. Подберите другой ИНН через ?";
   } else {
     // not_checked
     icon = <MinusCircle className="w-3.5 h-3.5 flex-shrink-0" />;
@@ -1131,7 +1403,7 @@ function NpdCheckBadge({
     border = "var(--color-border-tertiary)";
     title =
       "ИНН не проверялся через ФНС API (выдан до Pack 18.2 или ФНС был недоступен в момент выдачи). " +
-      "Можно перевыдать через ✨ для свежей проверки.";
+      "Можно перевыдать через ? для свежей проверки.";
   }
 
   return (

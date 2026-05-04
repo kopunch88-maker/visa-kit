@@ -1744,7 +1744,7 @@ export type InnSuggestionResponse = {
 };
 
 // Pack 18.6 fix: backend ждёт `kladr_code`, не `region_kladr_code`.
-// Старое имя молча игнорировалось pydantic'ом → applicant.inn_kladr_code не записывался.
+// Старое имя молча игнорировалось pydantic'ом > applicant.inn_kladr_code не записывался.
 // Это был root cause костыля Pack 18.3.1 (auto-fill при генерации справки).
 // После этого фикса можно убирать костыль (см. Pack 17.7 в roadmap).
 export type InnAcceptPayload = {
@@ -1860,7 +1860,7 @@ export type RegenEducationResult = {
   degree: string;             // Бакалавр / Специалист / Магистр
   specialty: string;          // "08.03.01 Строительство"
   graduation_year: number;
-  fallback_used: boolean;     // True если регион клиента не нашёлся → подобрали Москву
+  fallback_used: boolean;     // True если регион клиента не нашёлся > подобрали Москву
   matched_pattern: string | null;  // Какой position_pattern сработал (для отладки)
 };
 
@@ -1879,6 +1879,65 @@ export async function regenerateEducation(
 ): Promise<RegenEducationResult> {
   const res = await fetch(
     `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-education`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+
+// ============================================================================
+// Pack 19.1 — Автогенерация work_history (компании + должности + даты)
+// ============================================================================
+// Подбирает 1-3 правдоподобные записи трудового стажа на основе:
+//  - Регион клиента (из applicant.inn_kladr_code → first 2 chars)
+//  - Специальность из applicant.education[-1] (если уже сгенерирована Pack 19.0)
+//    или из work_history[0].position через PositionSpecialtyMap
+//    или из application.position.title_ru (Pack 19.0.2 fallback)
+//  - Career-track: уровни 1-4 (Junior/Middle/Senior/Lead)
+//
+// Гарантирует минимум 3.5 года в последней записи (требование DN-визы).
+// Не пишет в БД — фронт получает массив записей и сохраняет через PATCH
+// /applicants/{id} с work_history[].
+//
+// Pack 19.1a: duties=[] для каждой записи (заполнится в Pack 19.1b после
+// ревью CV-шаблона).
+
+export type RegenWorkHistoryRecord = {
+  period_start: string;       // "Сентябрь 2022" или "09/2022"
+  period_end: string;         // "Август 2025" или "по настоящее время"
+  company: string;            // Полное название (для CV)
+  position: string;           // Название должности на русском
+  duties: string[];           // Pack 19.1a: пустой массив
+};
+
+export type RegenWorkHistoryResult = {
+  records: RegenWorkHistoryRecord[];   // 1-3 записи
+  fallback_used: boolean;              // True если ушли в Москву из-за пустого региона
+  specialty_used: string;              // "08.03.01 Строительство" (для отладки)
+  matched_pattern: string | null;      // Какой position_pattern сработал ("education[0]" / "инженер" / null)
+};
+
+/**
+ * Pack 19.1: автогенерация work_history.
+ *
+ * Может выкинуть 500 если:
+ *  - Pack 19.0 (specialty seed) не применён — таблица specialty пуста
+ *  - Pack 19.1 (legend_company seed) не применён — нет компаний в БД
+ *  - Не нашлось подходящего career_track (рассинхрон seed'а)
+ *
+ * UX: фронт получает результат, заменяет applicant.work_history полностью
+ * на пришедшие records, и просит менеджера нажать «Сохранить» (либо
+ * сохраняет автоматически).
+ */
+export async function regenerateWorkHistory(
+  applicantId: number,
+): Promise<RegenWorkHistoryResult> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-work-history`,
     {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
