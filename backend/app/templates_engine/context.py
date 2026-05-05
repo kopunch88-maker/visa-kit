@@ -689,8 +689,20 @@ def _generate_monthly_documents(application: Application) -> list[dict]:
     months_count = application.payments_period_months or 3
     salary = application.salary_rub or Decimal("0")
 
-    last_year = submission.year if submission.month > 1 else submission.year - 1
-    last_month = submission.month - 1 if submission.month > 1 else 12
+    # Pack 30.0 — правило 5-го числа.
+    # До 5-го (1-4) последний учтённый месяц = позапрошлый (submission - 2).
+    # С 5-го (включительно) — предыдущий (submission - 1).
+    # Это стандартная буферная дата: к 5-му числу следующего месяца предыдущий
+    # считается полностью закрытым (зарплата выплачена, налоги учтены, чек НПД
+    # сформирован в "Моём налоге").
+    months_back = 1 if submission.day >= 5 else 2
+
+    # Вычисляем (year, month) последнего «закрытого» месяца, отступая months_back назад.
+    last_year = submission.year
+    last_month = submission.month - months_back
+    while last_month <= 0:
+        last_month += 12
+        last_year -= 1
 
     cur_year, cur_month = last_year, last_month
     collected = []
