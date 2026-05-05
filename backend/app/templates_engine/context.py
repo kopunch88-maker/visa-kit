@@ -965,6 +965,76 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
 # Main: build context dict for templates
 # ============================================================================
 
+# ============================================================================
+# Pack 25.7: DN-наниматель первой записью в CV work_history.
+# ============================================================================
+
+_RU_MONTHS_NAMES = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+
+def _previous_month_label(reference_date) -> str:
+    """Возвращает 'Сентябрь 2025' если reference_date = 14.10.2025."""
+    if not reference_date:
+        return ""
+    year = reference_date.year
+    month = reference_date.month - 1
+    if month == 0:
+        month = 12
+        year -= 1
+    return f"{_RU_MONTHS_NAMES[month - 1]} {year}"
+
+
+def _format_month_label(d) -> str:
+    if not d:
+        return ""
+    return f"{_RU_MONTHS_NAMES[d.month - 1]} {d.year}"
+
+
+def _build_cv_work_history(applicant, application, company, position) -> list:
+    """
+    Pack 25.7: вставляет DN-нанимателя (текущего работодателя по визе) ПЕРВОЙ
+    записью в work_history. Чинит предыдущую запись чтобы не было двух работ
+    с period_end='по настоящее время'.
+
+    Возвращает новый список — applicant.work_history НЕ модифицируется.
+    """
+    base = list(applicant.work_history or [])
+
+    # Если нет всех данных для DN-работы — возвращаем сырой work_history
+    if not application or not company or not position:
+        return base
+    if not application.contract_sign_date:
+        return base
+
+    # 1. Чиним предыдущую запись (первую в списке — самую свежую)
+    fixed_base = []
+    for i, item in enumerate(base):
+        if not isinstance(item, dict):
+            fixed_base.append(item)
+            continue
+        new_item = dict(item)  # копия чтобы не мутировать оригинал
+        if i == 0:  # самая свежая запись
+            pe = (new_item.get("period_end") or "").strip().lower()
+            if pe in ("по настоящее время", "настоящее время", "н.в.", "по н.в."):
+                new_item["period_end"] = _previous_month_label(application.contract_sign_date)
+        fixed_base.append(new_item)
+
+    # 2. Создаём DN-запись
+    dn_record = {
+        "period_start": _format_month_label(application.contract_sign_date),
+        "period_end": "по настоящее время",
+        "company": company.full_name_ru or "",
+        "position": position.title_ru or "",
+        "duties": list(position.duties or []),
+    }
+
+    # 3. Возвращаем DN первой + остальные
+    return [dn_record] + fixed_base
+
+
 def build_context(application: Application, session: Session) -> dict[str, Any]:
     applicant = session.get(Applicant, application.applicant_id) if application.applicant_id else None
     company = session.get(Company, application.company_id) if application.company_id else None
@@ -1027,7 +1097,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "bank_bic": applicant.bank_bic or "",
             "bank_correspondent_account": applicant.bank_correspondent_account or "",
             "education": applicant.education or [],
-            "work_history": applicant.work_history or [],
+            "work_history": _build_cv_work_history(applicant, application, company, position),
             "languages": applicant.languages or [],
         },
 
