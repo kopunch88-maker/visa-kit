@@ -146,8 +146,10 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
                 _apply_gray_shading_to_row(new_tr)
                 # Pack 25.0: жирная сумма у поступлений (как в эталонной выписке Алиева)
                 _apply_bold_to_amount_cell(new_tr)
-                # Pack 25.1: воздух сверху/снизу в ячейках поступлений
-                _add_vertical_padding_to_cells(new_tr)
+                # Pack 25.3: НЕ применяем tcMar — у Алиева его нет.
+                # Воздух в серых ячейках обеспечивается через spacing
+                # последнего параграфа описания (before=40 after=40),
+                # см. _replace_marker_with_multiline.
 
         # Pack 16.5b: <w:cantSplit/> — запрет разрыва строки между страницами.
         _set_cant_split(new_tr)
@@ -268,6 +270,19 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
                         # Удаляем firstLine
                         if firstLine_attr in ind.attrib:
                             del ind.attrib[firstLine_attr]
+
+                # Pack 25.3: у Алиева ПОСЛЕДНИЙ параграф (Назначение платежа)
+                # имеет spacing="before=40 after=40" вместо обычного
+                # "before=54 line=244 lineRule=auto". Это создаёт визуально
+                # одинаковый воздух сверху и снизу серого блока ячейки.
+                spacing = ppr.find('w:spacing', NS)
+                if spacing is None:
+                    spacing = etree.SubElement(ppr, f'{W_NS}spacing')
+                # Чистим все атрибуты spacing и ставим before=40 after=40
+                for attr in list(spacing.attrib.keys()):
+                    del spacing.attrib[attr]
+                spacing.set(f'{W_NS}before', '40')
+                spacing.set(f'{W_NS}after', '40')
 
         parent_of_p.insert(insert_position, new_p)
         insert_position += 1
