@@ -257,40 +257,135 @@ def _file_to_classifier_image(file_bytes: bytes, ext: str) -> tuple[bytes, str]:
 
 @router.post("/upload")
 async def upload_archive(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     session: Session = Depends(get_session),
 ):
-    """Шаг 1 — загрузить архив, распаковать, классифицировать через ИИ."""
+    """
+    Шаг 1 — загрузить пакет, классифицировать через ИИ.
+
+    Pack 27.0: принимает ДВА варианта входа:
+    - file (legacy): один файл — архив ZIP/RAR ИЛИ один PDF/JPG/PNG/WebP/HEIC
+    - files (новое): список файлов — каждый PDF/JPG/PNG/WebP/HEIC
+
+    Если на входе 1 файл с расширением .zip/.rar — распаковываем как раньше.
+    Иначе — собираем список напрямую, пропуская невалидные расширения.
+    """
     _cleanup_old_sessions()
 
-    contents = await file.read()
-    archive_size = len(contents)
+    # Нормализуем вход: всегда работаем со списком UploadFile
+    upload_list: List[UploadFile] = []
+    if files:
+        upload_list = [f for f in files if f and f.filename]
+    elif file and file.filename:
+        upload_list = [file]
+    if not upload_list:
+        raise HTTPException(422, "No files uploaded")
 
-    if archive_size == 0:
-        raise HTTPException(422, "Empty archive")
-    if archive_size > MAX_ARCHIVE_SIZE:
-        raise HTTPException(
-            413, f"Archive too large: {archive_size} bytes (max {MAX_ARCHIVE_SIZE // 1024 // 1024} MB)"
-        )
+    # Определяем сценарий: один файл-архив ИЛИ список файлов
+    is_single_archive = False
+    if len(upload_list) == 1:
+        only = upload_list[0]
+        ext = PathLib(only.filename or "").suffix.lower()
+        if ext in (".zip", ".rar"):
+            is_single_archive = True
 
-    archive_type = _detect_archive_type(file.filename or "", file.content_type or "")
+    # Имя «архива» / «пакета» для session metadata
+    archive_name: str
+    extracted_files: List[dict]
+    total_size = 0
 
-    if archive_type == "zip":
-        files = _extract_zip(contents)
+    if is_single_archive:
+        # === Старая ветка: распаковка ZIP/RAR ===
+        only = upload_list[0]
+        contents = await only.read()
+        archive_size = len(contents)
+        total_size = archive_size
+
+        if archive_size == 0:
+            raise HTTPException(422, "Empty archive")
+        if archive_size > MAX_ARCHIVE_SIZE:
+            raise HTTPException(
+                413,
+                f"Archive too large: {archive_size} bytes "
+                f"(max {MAX_ARCHIVE_SIZE // 1024 // 1024} MB)"
+            )
+
+        archive_type = _detect_archive_type(only.filename or "", only.content_type or "")
+        if archive_type == "zip":
+            extracted_files = _extract_zip(contents)
+        else:
+            extracted_files = _extract_rar(contents)
+
+        if not extracted_files:
+            raise HTTPException(
+                422,
+                "No supported files found in archive. "
+                "Supported formats: PDF, JPEG, PNG, WebP, HEIC."
+            )
+        archive_name = only.filename or "archive"
     else:
-        files = _extract_rar(contents)
+        # === Pack 27.0 новая ветка: список одиночных файлов ===
+        extracted_files = []
+        skipped: List[str] = []
 
-    if not files:
-        raise HTTPException(
-            422,
-            "No supported files found in archive. "
-            "Supported formats: PDF, JPEG, PNG, WebP, HEIC."
+        for uf in upload_list:
+            data = await uf.read()
+            sz = len(data)
+            base_name = PathLib(uf.filename or "").name
+            ext = PathLib(base_name).suffix.lower()
+
+            if not base_name:
+                continue
+            if ext not in SUPPORTED_FILE_EXTENSIONS:
+                skipped.append(f"{base_name} (неподдерживаемое расширение)")
+                continue
+            if sz == 0:
+                skipped.append(f"{base_name} (пустой файл)")
+                continue
+            if sz > MAX_FILE_SIZE_IN_ARCHIVE:
+                skipped.append(
+                    f"{base_name} ({sz // 1024 // 1024} МБ — больше "
+                    f"{MAX_FILE_SIZE_IN_ARCHIVE // 1024 // 1024} МБ лимита)"
+                )
+                continue
+
+            total_size += sz
+            if total_size > MAX_ARCHIVE_SIZE:
+                raise HTTPException(
+                    413,
+                    f"Total upload size exceeds {MAX_ARCHIVE_SIZE // 1024 // 1024} MB"
+                )
+
+            extracted_files.append({"name": base_name, "data": data, "size": sz})
+
+        if not extracted_files:
+            detail = (
+                "No valid files. Supported formats: PDF, JPEG, PNG, WebP, HEIC."
+            )
+            if skipped:
+                detail += " Skipped: " + "; ".join(skipped[:5])
+            raise HTTPException(422, detail)
+
+        if skipped:
+            log.warning(f"Pack 27.0 upload — skipped files: {skipped}")
+
+        archive_name = (
+            f"{len(extracted_files)} файл(ов): "
+            + ", ".join(f["name"] for f in extracted_files[:3])
+            + ("..." if len(extracted_files) > 3 else "")
         )
-    if len(files) > MAX_FILES_IN_ARCHIVE:
+
+    if len(extracted_files) > MAX_FILES_IN_ARCHIVE:
         raise HTTPException(
             413,
-            f"Too many files in archive: {len(files)} (max {MAX_FILES_IN_ARCHIVE})"
+            f"Too many files: {len(extracted_files)} (max {MAX_FILES_IN_ARCHIVE})"
         )
+
+    # Дальше вся логика как была — переиспользуем имя `files` для совместимости
+    files = extracted_files
+    # noinspection PyUnusedLocal
+    file = None  # legacy var, дальше не используется (защита от опечатки)
 
     session_id = secrets.token_urlsafe(16)
     storage = get_storage()
@@ -361,17 +456,17 @@ async def upload_archive(
     import_sessions[session_id] = {
         "created_at_ts": time.time(),
         "files": file_metas,
-        "archive_name": file.filename,
+        "archive_name": archive_name,
     }
 
     log.info(
         f"Import session created: id={session_id} "
-        f"archive={file.filename} files={len(file_metas)}"
+        f"archive={archive_name} files={len(file_metas)}"
     )
 
     return {
         "session_id": session_id,
-        "archive_name": file.filename,
+        "archive_name": archive_name,
         "files": file_metas,
     }
 

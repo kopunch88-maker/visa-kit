@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Loader2, X, Upload, FileText, AlertCircle, CheckCircle2,
   Sparkles, FileWarning, Package, ArrowLeft, Building2, AlertTriangle,
-  SkipForward,
+  SkipForward, Trash2, Files,
 } from "lucide-react";
 import {
   ClientDocumentType,
@@ -58,6 +58,20 @@ const DOC_TYPE_OPTIONS: Array<{ value: ClientDocumentType | "skip"; label: strin
 
 type Step = "upload" | "classify" | "company" | "submitting" | "done";
 
+// Pack 27.0 — допустимые расширения для одиночных файлов
+const SUPPORTED_FILE_EXTENSIONS = new Set([
+  ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif",
+]);
+const ARCHIVE_EXTENSIONS = new Set([".zip", ".rar"]);
+const MAX_FILES = 30;
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100 MB
+
+function getExt(name: string): string {
+  const idx = name.lastIndexOf(".");
+  return idx >= 0 ? name.slice(idx).toLowerCase() : "";
+}
+
 export function ImportPackageDialog({ applications, onClose, onImported }: Props) {
   const [step, setStep] = useState<Step>("upload");
   const [error, setError] = useState<string | null>(null);
@@ -82,22 +96,21 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSession?.session_id]);
 
-  async function handleArchiveSelected(file: File) {
+  async function handleFilesSelected(filesList: File[], clientName: string) {
     setError(null);
-
-    const ext = file.name.toLowerCase().split(".").pop();
-    if (ext !== "zip" && ext !== "rar") {
-      setError("Поддерживаются только архивы ZIP и RAR.");
+    if (filesList.length === 0) {
+      setError("Не выбрано ни одного файла.");
       return;
     }
-    if (file.size > 100 * 1024 * 1024) {
-      setError("Архив слишком большой. Максимум 100 МБ.");
-      return;
+
+    // Сохраняем имя клиента для дальнейшего использования (при создании заявки)
+    if (clientName) {
+      setInternalNotes(clientName);
     }
 
     setStep("submitting");
     try {
-      const session = await importPackageUpload(file);
+      const session = await importPackageUpload(filesList);
       setImportSession(session);
 
       // Pack 14c — Автоматически проставляем типы из ИИ-классификатора
@@ -105,11 +118,9 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
       session.files.forEach((f) => {
         let autoType: ClientDocumentType | "skip" = "skip";
         if (f.classified_type && f.classifier_confidence) {
-          // Проставляем для high и medium (с пометкой)
           if (f.classifier_confidence === "high" || f.classifier_confidence === "medium") {
             autoType = f.classified_type;
           }
-          // low — оставляем skip, менеджер выберет вручную
         }
         initialChoices[f.file_id] = {
           fileId: f.file_id,
@@ -213,7 +224,6 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
       // Pack 14b: если требуется создание компании из ЕГРЮЛ
       if (result.requires_company_creation && result.pending_company) {
         setPendingCompany(result.pending_company);
-        // Предзаполняем форму данными из ЕГРЮЛ + склонениями директора
         const ocr = result.pending_company.ocr_data;
         const decl = result.pending_company.director_declensions;
         setCompanyForm({
@@ -240,7 +250,6 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
         return;
       }
 
-      // Иначе — заявка создана, закрываем
       setStep("done");
       setTimeout(() => {
         onImported(result);
@@ -255,7 +264,6 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     if (!importSession || !companyForm) return;
     setError(null);
 
-    // Валидация — критичные поля
     const missing: string[] = [];
     if (!companyForm.short_name?.trim()) missing.push("Краткое название");
     if (!companyForm.full_name_ru?.trim()) missing.push("Полное название (рус)");
@@ -356,7 +364,7 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
             <span className="text-base font-semibold text-primary">
               {step === "company"
                 ? "Создание компании из ЕГРЮЛ"
-                : "Импорт пакета документов"}
+                : "Импорт документов"}
             </span>
           </div>
           <button
@@ -386,17 +394,17 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
           )}
 
           {step === "upload" && (
-            <UploadStep onFileSelected={handleArchiveSelected} />
+            <UploadStep onFilesSelected={handleFilesSelected} />
           )}
 
           {step === "submitting" && !importSession && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-secondary" />
               <div className="text-sm text-secondary font-medium">
-                Распаковываем архив...
+                Загружаем и распознаём...
               </div>
               <div className="text-xs text-tertiary">
-                Сейчас ИИ определит тип каждого документа
+                ИИ определит тип каждого документа
               </div>
             </div>
           )}
@@ -520,7 +528,7 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
                   borderColor: "var(--color-border-tertiary)",
                   borderWidth: 0.5,
                 }}
-                title="Создать заявку без компании. ЕГРЮЛ-файл будет пропущен. Компанию можно будет добавить позже вручную."
+                title="Создать заявку без компании"
               >
                 <SkipForward className="w-4 h-4" />
                 Пропустить компанию
@@ -543,68 +551,310 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
 
 
 // =============================================================================
-// Step 1: Upload archive
+// Step 1 (Pack 27.0): Upload — архив ИЛИ файлы + имя клиента
 // =============================================================================
 
-function UploadStep({ onFileSelected }: { onFileSelected: (file: File) => void }) {
+function UploadStep({ onFilesSelected }: { onFilesSelected: (files: File[], clientName: string) => void }) {
   const [dragOver, setDragOver] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [clientName, setClientName] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Что у нас выбрано — один архив или набор файлов?
+  const isArchive = useMemo(() => {
+    return selectedFiles.length === 1 && ARCHIVE_EXTENSIONS.has(getExt(selectedFiles[0].name));
+  }, [selectedFiles]);
+
+  function validateAndSet(files: File[]) {
+    setValidationError(null);
+    if (files.length === 0) return;
+
+    // Если выбран архив — он один
+    if (files.length === 1 && ARCHIVE_EXTENSIONS.has(getExt(files[0].name))) {
+      if (files[0].size > MAX_TOTAL_SIZE) {
+        setValidationError(`Архив слишком большой: максимум ${MAX_TOTAL_SIZE / 1024 / 1024} МБ.`);
+        return;
+      }
+      setSelectedFiles(files);
+      return;
+    }
+
+    // Иначе — набор обычных файлов
+    const valid: File[] = [];
+    const errors: string[] = [];
+    let totalSize = 0;
+
+    for (const f of files) {
+      const ext = getExt(f.name);
+      if (ARCHIVE_EXTENSIONS.has(ext)) {
+        errors.push(`${f.name} — архивы загружаются по одному`);
+        continue;
+      }
+      if (!SUPPORTED_FILE_EXTENSIONS.has(ext)) {
+        errors.push(`${f.name} — неподдерживаемый формат`);
+        continue;
+      }
+      if (f.size > MAX_FILE_SIZE) {
+        errors.push(`${f.name} — больше ${MAX_FILE_SIZE / 1024 / 1024} МБ`);
+        continue;
+      }
+      totalSize += f.size;
+      valid.push(f);
+    }
+
+    if (valid.length > MAX_FILES) {
+      setValidationError(`Слишком много файлов: ${valid.length} (максимум ${MAX_FILES}).`);
+      return;
+    }
+    if (totalSize > MAX_TOTAL_SIZE) {
+      setValidationError(`Суммарный размер слишком большой: максимум ${MAX_TOTAL_SIZE / 1024 / 1024} МБ.`);
+      return;
+    }
+    if (valid.length === 0) {
+      setValidationError(errors.length > 0 ? errors.join("; ") : "Не выбрано подходящих файлов.");
+      return;
+    }
+    if (errors.length > 0) {
+      setValidationError(`Пропущены: ${errors.slice(0, 3).join("; ")}`);
+    }
+
+    setSelectedFiles(valid);
+  }
 
   function handleSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (f) onFileSelected(f);
+    const list = Array.from(e.target.files || []);
+    validateAndSet(list);
+    // Сбрасываем input value чтобы можно было выбрать те же файлы повторно
+    e.target.value = "";
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) onFileSelected(f);
+    const list = Array.from(e.dataTransfer.files || []);
+    validateAndSet(list);
   }
 
+  function removeFile(idx: number) {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function clearAll() {
+    setSelectedFiles([]);
+    setValidationError(null);
+  }
+
+  function handleSubmit() {
+    if (selectedFiles.length === 0) return;
+    onFilesSelected(selectedFiles, clientName.trim());
+  }
+
+  const totalSizeMB = (selectedFiles.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(1);
+  const canSubmit = selectedFiles.length > 0;
+
   return (
-    <div
-      className="rounded-lg p-10 text-center transition-colors"
-      style={{
-        borderWidth: 1.5,
-        borderStyle: "dashed",
-        borderColor: dragOver
-          ? "var(--color-accent)"
-          : "var(--color-border-secondary)",
-        background: dragOver ? "var(--color-bg-secondary)" : "transparent",
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-      }}
-      onDrop={handleDrop}
-    >
-      <Package className="w-12 h-12 mx-auto mb-3 text-tertiary" />
-      <div className="text-base font-medium text-primary mb-1">
-        Перетащите архив сюда
-      </div>
-      <div className="text-sm text-tertiary mb-4">
-        ZIP или RAR с документами клиента (паспорт, ВНЖ, справки, диплом, ЕГРЮЛ)
-      </div>
-      <label
-        className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-white cursor-pointer transition-colors"
-        style={{ background: "var(--color-accent)" }}
-      >
-        <Upload className="w-4 h-4" />
-        Выбрать архив
+    <div className="space-y-4">
+      {/* Имя клиента */}
+      <div>
+        <label className="block text-xs font-semibold uppercase tracking-wide text-tertiary mb-2">
+          Имя клиента или примечание
+        </label>
         <input
-          type="file"
-          accept=".zip,.rar,application/zip,application/x-zip-compressed,application/x-rar-compressed,application/vnd.rar"
-          onChange={handleSelect}
-          className="hidden"
+          type="text"
+          value={clientName}
+          onChange={(e) => setClientName(e.target.value)}
+          placeholder="напр. «Юксел Ведат» или «пакет от 05.05» (опционально)"
+          className="w-full px-3 py-2 rounded-md text-sm border"
+          style={{
+            borderColor: "var(--color-border-secondary)",
+            borderWidth: 0.5,
+            background: "var(--color-bg-primary)",
+            color: "var(--color-text-primary)",
+          }}
         />
-      </label>
-      <div className="mt-4 text-xs text-tertiary">
-        После загрузки ИИ определит тип каждого документа автоматически
+        <div className="text-xs text-tertiary mt-1">
+          Будет видно только менеджерам в списке заявок
+        </div>
       </div>
+
+      {/* Зона загрузки */}
+      {selectedFiles.length === 0 ? (
+        <div
+          className="rounded-lg p-10 text-center transition-colors"
+          style={{
+            borderWidth: 1.5,
+            borderStyle: "dashed",
+            borderColor: dragOver
+              ? "var(--color-accent)"
+              : "var(--color-border-secondary)",
+            background: dragOver ? "var(--color-bg-secondary)" : "transparent",
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+          }}
+          onDrop={handleDrop}
+        >
+          <Package className="w-12 h-12 mx-auto mb-3 text-tertiary" />
+          <div className="text-base font-medium text-primary mb-1">
+            Перетащите файлы или архив сюда
+          </div>
+          <div className="text-sm text-tertiary mb-4">
+            ZIP/RAR с пакетом ИЛИ отдельные PDF, JPG, PNG, HEIC (паспорт, ВНЖ, справки, диплом, ЕГРЮЛ)
+          </div>
+          <label
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-white cursor-pointer transition-colors"
+            style={{ background: "var(--color-accent)" }}
+          >
+            <Upload className="w-4 h-4" />
+            Выбрать файлы
+            <input
+              type="file"
+              multiple
+              accept=".zip,.rar,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+              onChange={handleSelect}
+              className="hidden"
+            />
+          </label>
+          <div className="mt-4 text-xs text-tertiary">
+            ИИ автоматически определит тип каждого документа
+          </div>
+        </div>
+      ) : (
+        <div
+          className="rounded-lg p-4 transition-colors"
+          style={{
+            borderWidth: 1,
+            borderStyle: "solid",
+            borderColor: "var(--color-border-secondary)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              {isArchive ? (
+                <Package className="w-4 h-4 text-tertiary" />
+              ) : (
+                <Files className="w-4 h-4 text-tertiary" />
+              )}
+              <span className="text-sm font-medium text-primary">
+                {isArchive
+                  ? `Архив: ${selectedFiles[0].name}`
+                  : `Файлов выбрано: ${selectedFiles.length}`}
+              </span>
+              <span className="text-xs text-tertiary">
+                · {totalSizeMB} МБ
+              </span>
+            </div>
+            <button
+              onClick={clearAll}
+              className="text-xs text-tertiary hover:text-primary px-2 py-1 rounded-md hover:bg-secondary transition-colors"
+            >
+              Очистить
+            </button>
+          </div>
+
+          {/* Список файлов (только если не архив) */}
+          {!isArchive && (
+            <div className="space-y-1 max-h-60 overflow-auto mb-3">
+              {selectedFiles.map((f, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
+                  style={{ background: "var(--color-bg-secondary)" }}
+                >
+                  <FileText className="w-3.5 h-3.5 text-tertiary flex-shrink-0" />
+                  <span className="flex-1 truncate text-primary">{f.name}</span>
+                  <span className="text-tertiary">
+                    {(f.size / 1024 / 1024).toFixed(2)} МБ
+                  </span>
+                  <button
+                    onClick={() => removeFile(idx)}
+                    className="text-tertiary hover:text-danger transition-colors"
+                    title="Убрать"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Дроп-зона для добавления ещё файлов (только если не архив) */}
+          {!isArchive && (
+            <div
+              className="rounded-md p-3 text-center text-xs text-tertiary cursor-pointer transition-colors"
+              style={{
+                borderWidth: 1,
+                borderStyle: "dashed",
+                borderColor: dragOver
+                  ? "var(--color-accent)"
+                  : "var(--color-border-tertiary)",
+                background: dragOver ? "var(--color-bg-secondary)" : "transparent",
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const list = Array.from(e.dataTransfer.files || []);
+                validateAndSet([...selectedFiles, ...list]);
+              }}
+            >
+              <label className="cursor-pointer">
+                + Добавить ещё файлы
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                  onChange={(e) => {
+                    const list = Array.from(e.target.files || []);
+                    validateAndSet([...selectedFiles, ...list]);
+                    e.target.value = "";
+                  }}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
+      {validationError && (
+        <div
+          className="p-2 rounded-md text-xs flex items-start gap-1.5"
+          style={{
+            background: "var(--color-bg-warning)",
+            color: "var(--color-text-warning)",
+          }}
+        >
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>{validationError}</span>
+        </div>
+      )}
+
+      {/* Submit button */}
+      {canSubmit && (
+        <div className="flex justify-end">
+          <button
+            onClick={handleSubmit}
+            className="px-5 py-2 rounded-md text-sm font-medium text-white transition-colors flex items-center gap-2"
+            style={{ background: "var(--color-accent)" }}
+          >
+            <Sparkles className="w-4 h-4" />
+            Загрузить и распознать →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -641,7 +891,6 @@ function ClassifyStep({
   setExistingApplicationId: (id: number | null) => void;
   applications: ApplicationResponse[];
 }) {
-  // Считаем сколько ЕГРЮЛ выбрано — предупреждаем если несколько
   const egrylCount = Object.values(choices).filter((c) => c.docType === "egryl_extract").length;
 
   return (
@@ -686,7 +935,7 @@ function ClassifyStep({
                 type="text"
                 value={internalNotes}
                 onChange={(e) => setInternalNotes(e.target.value)}
-                placeholder="Внутренняя заметка (видна только менеджерам)"
+                placeholder="Имя клиента или внутренняя заметка"
                 className="mt-2 w-full px-2 py-1.5 rounded-md text-sm border"
                 style={{
                   borderColor: "var(--color-border-tertiary)",
@@ -760,7 +1009,7 @@ function ClassifyStep({
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-            Файлы из архива ({session.files.length})
+            Файлы пакета ({session.files.length})
           </div>
           <div className="text-xs text-tertiary flex items-center gap-1">
             <Sparkles className="w-3 h-3" />
@@ -828,7 +1077,6 @@ function FileRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needPdfPages]);
 
-  // Pack 14c — индикатор уверенности классификатора
   const confidence = file.classifier_confidence;
   const confidenceLabel =
     confidence === "high" ? "ИИ уверен"
@@ -840,7 +1088,6 @@ function FileRow({
     : confidence === "medium" ? { bg: "var(--color-bg-warning)", text: "var(--color-text-warning)" }
     : { bg: "var(--color-bg-secondary)", text: "var(--color-text-tertiary)" };
 
-  // Цвет рамки селекта зависит от confidence
   const selectBorderColor =
     choice.docType === "skip" ? "var(--color-border-tertiary)"
     : confidence === "medium" ? "var(--color-text-warning)"
@@ -855,7 +1102,6 @@ function FileRow({
       }}
     >
       <div className="flex gap-3 items-start">
-        {/* Иконка / превью */}
         <div
           className="w-16 h-16 flex-shrink-0 rounded-md overflow-hidden flex items-center justify-center"
           style={{
@@ -879,7 +1125,6 @@ function FileRow({
           )}
         </div>
 
-        {/* Данные */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-primary truncate">
@@ -926,7 +1171,6 @@ function FileRow({
             ))}
           </select>
 
-          {/* PDF page picker */}
           {file.is_pdf && choice.docType !== "skip" && (
             <div className="mt-3">
               <div className="text-xs text-tertiary mb-1.5">
@@ -1001,7 +1245,7 @@ function FileRow({
 
 
 // =============================================================================
-// Step 3: Company creation form (Pack 14b)
+// Step 3: Company creation form (Pack 14b) — без изменений
 // =============================================================================
 
 function CompanyFormStep({
@@ -1019,13 +1263,6 @@ function CompanyFormStep({
   ) {
     setCompanyForm({ ...companyForm, [key]: value });
   }
-
-  const inputStyle = {
-    borderColor: "var(--color-border-tertiary)",
-    borderWidth: 0.5,
-    background: "var(--color-bg-primary)",
-    color: "var(--color-text-primary)",
-  } as const;
 
   return (
     <div className="space-y-5">
@@ -1047,7 +1284,6 @@ function CompanyFormStep({
         </div>
       </div>
 
-      {/* Названия */}
       <FormSection title="Названия компании">
         <FormField
           label="Краткое название *"
@@ -1069,7 +1305,6 @@ function CompanyFormStep({
         />
       </FormSection>
 
-      {/* Идентификаторы */}
       <FormSection title="Регистрационные данные">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <FormField
@@ -1090,7 +1325,6 @@ function CompanyFormStep({
         )}
       </FormSection>
 
-      {/* Адреса */}
       <FormSection title="Адреса">
         <FormField
           label="Юридический адрес *"
@@ -1107,7 +1341,6 @@ function CompanyFormStep({
         />
       </FormSection>
 
-      {/* Директор */}
       <FormSection title="Директор">
         <FormField
           label="ФИО директора (Им. падеж) *"
@@ -1134,7 +1367,6 @@ function CompanyFormStep({
           />
         </div>
 
-        {/* Все остальные склонения — для просмотра */}
         <details className="mt-2">
           <summary
             className="text-xs cursor-pointer hover:text-primary"
@@ -1153,7 +1385,6 @@ function CompanyFormStep({
         </details>
       </FormSection>
 
-      {/* Банк */}
       <FormSection
         title="Банковские реквизиты"
         warning={
@@ -1186,7 +1417,6 @@ function CompanyFormStep({
         />
       </FormSection>
 
-      {/* ЕГРЮЛ дата */}
       <FormSection title="Прочее">
         <FormField
           label="Дата выдачи ЕГРЮЛ"

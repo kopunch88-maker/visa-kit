@@ -668,9 +668,14 @@ export type ImportFinalizeWithCompanyRequest = {
 /**
  * Загрузить архив (ZIP/RAR) — backend распакует и вернёт список файлов.
  */
-export async function importPackageUpload(file: File): Promise<ImportSession> {
+export async function importPackageUpload(files: File[]): Promise<ImportSession> {
+  // Pack 27.0: принимаем массив файлов. Для одного архива это [archive],
+  // для набора одиночных файлов это [pdf, jpg, png, ...].
+  // Backend сам разбирается какой это случай по расширениям.
   const formData = new FormData();
-  formData.append("file", file);
+  for (const f of files) {
+    formData.append("files", f);
+  }
 
   const res = await fetch(`${API_BASE_URL}/api/admin/import-package/upload`, {
     method: "POST",
