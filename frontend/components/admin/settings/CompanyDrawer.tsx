@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, AlertCircle } from "lucide-react";
+import { X, Loader2, AlertCircle, Sparkles } from "lucide-react";
 import {
   CompanyResponse,
+  BankResponse,
   getCompany,
   createCompany,
   updateCompany,
+  listBanks,
+  generateAccount,
 } from "@/lib/api";
 
 interface Props {
@@ -26,6 +29,11 @@ export function CompanyDrawer({ companyId, onClose, onSaved }: Props) {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Pack 29.0 — список банков из справочника + id выбранного банка
+  const [banks, setBanks] = useState<BankResponse[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<number | null>(null);
+  const [generatingAccount, setGeneratingAccount] = useState(false);
 
   // Все поля компании
   const [form, setForm] = useState<Partial<CompanyResponse>>({
@@ -68,8 +76,59 @@ export function CompanyDrawer({ companyId, onClose, onSaved }: Props) {
     })();
   }, [companyId, isNew]);
 
+  // Pack 29.0 — загрузка справочника банков
+  useEffect(() => {
+    listBanks().then(setBanks).catch((e) => {
+      console.warn("Failed to load banks:", e);
+    });
+  }, []);
+
+  // Pack 29.0 — после загрузки банков и формы пытаемся сматчить выбранный банк
+  // по БИК (для уже существующей компании). Это даст менеджеру нажать ✨ для Р/сч
+  // без повторного выбора банка.
+  useEffect(() => {
+    if (!banks.length || !form.bank_bic) return;
+    const match = banks.find((b) => b.bik === form.bank_bic);
+    if (match && selectedBankId !== match.id) {
+      setSelectedBankId(match.id);
+    }
+  }, [banks, form.bank_bic, selectedBankId]);
+
   function setField<K extends keyof CompanyResponse>(key: K, value: CompanyResponse[K] | string) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Pack 29.0 — выбор банка из dropdown: автозаполнение name/bic/correspondent_account
+  function handleBankChange(bankId: number | null) {
+    setSelectedBankId(bankId);
+    if (bankId === null) return;
+    const bank = banks.find((b) => b.id === bankId);
+    if (!bank) return;
+    setForm((prev) => ({
+      ...prev,
+      bank_name: bank.name,
+      bank_bic: bank.bik,
+      bank_correspondent_account: bank.correspondent_account,
+    }));
+  }
+
+  // Pack 29.0 — кнопка ✨ для генерации валидного 20-значного счёта
+  // через сервис ЦБ 579-П (контрольная цифра по БИК).
+  async function handleGenerateAccount() {
+    if (!selectedBankId) {
+      setError("Сначала выберите банк из списка — генерация Р/сч требует БИК из справочника.");
+      return;
+    }
+    setError(null);
+    setGeneratingAccount(true);
+    try {
+      const result = await generateAccount(selectedBankId, true);
+      setForm((prev) => ({ ...prev, bank_account: result.account }));
+    } catch (e) {
+      setError(`Не удалось сгенерировать счёт: ${(e as Error).message}`);
+    } finally {
+      setGeneratingAccount(false);
+    }
   }
 
   async function handleSave() {
@@ -186,19 +245,77 @@ export function CompanyDrawer({ companyId, onClose, onSaved }: Props) {
               </Section>
 
               <Section title="Банковские реквизиты">
+                {/* Pack 29.0 — dropdown банка из справочника */}
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    Банк (выбор из справочника)
+                  </label>
+                  <select
+                    value={selectedBankId || ""}
+                    onChange={(e) => handleBankChange(e.target.value ? parseInt(e.target.value, 10) : null)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  >
+                    <option value="">— Не из справочника (введу вручную) —</option>
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.short_name || b.name} (БИК {b.bik})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-tertiary mt-1">
+                    Если банка нет в списке — выберите «вручную» и впишите реквизиты сами. Чтобы добавить банк
+                    в справочник навсегда, перейдите в Настройки → Банки.
+                  </p>
+                </div>
+
                 <TextField label="Название банка" required value={form.bank_name || ""}
-                  onChange={(v) => setField("bank_name", v)}
+                  onChange={(v) => { setField("bank_name", v); setSelectedBankId(null); }}
                   placeholder="ПАО Банк ВТБ, г. Санкт-Петербург" />
+
                 <Grid>
-                  <TextField label="Расчётный счёт" required value={form.bank_account || ""}
-                    onChange={(v) => setField("bank_account", v)}
-                    placeholder="40702810500000998877" />
+                  {/* Pack 29.0 — Р/сч с кнопкой ✨ генерации */}
+                  <div>
+                    <label className="block text-xs font-medium text-secondary mb-1">
+                      Расчётный счёт <span className="text-danger">*</span>
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={form.bank_account || ""}
+                        onChange={(e) => setField("bank_account", e.target.value)}
+                        placeholder="40702810500000998877"
+                        className="flex-1 px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleGenerateAccount}
+                        disabled={generatingAccount || !selectedBankId}
+                        className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary disabled:opacity-40 transition-colors flex items-center"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                        title={
+                          selectedBankId
+                            ? "Сгенерировать валидный Р/сч (алгоритм ЦБ 579-П)"
+                            : "Сначала выберите банк из справочника"
+                        }
+                      >
+                        {generatingAccount ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                   <TextField label="БИК" required value={form.bank_bic || ""}
-                    onChange={(v) => setField("bank_bic", v)} placeholder="044030704" />
+                    onChange={(v) => { setField("bank_bic", v); setSelectedBankId(null); }}
+                    placeholder="044030704" />
                 </Grid>
+
                 <TextField label="Корреспондентский счёт"
                   value={form.bank_correspondent_account || ""}
-                  onChange={(v) => setField("bank_correspondent_account", v)}
+                  onChange={(v) => { setField("bank_correspondent_account", v); setSelectedBankId(null); }}
                   placeholder="30101810200000000704" />
               </Section>
 
