@@ -1,79 +1,73 @@
-# === Python / Backend ===
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+﻿# Backups (Pack 25 и любые .bak)
+*.bak
+*.bak[0-9]
+*.bak_pre_*
+*.before_*
+
+# Patch файлы (временные)
+*_PATCH.txt
+*_PATCH.ts
+*_PATCH.py
+
+# Дамп ФНС (огромный!)
+data-*-structure-*.zip
+*.zip
+
+# Diag/dump артефакты
+*_dump.txt
+*_diag.txt
+*_diag*.txt
+*_results.txt
+*_tests.txt
+deps_imports.txt
+inn_suggest_diag.txt
+NPD_CHECK_DAILY.md
+
+# Diag-скрипты, не для прода
+backend/diag_*.py
+backend/app/scripts/check_schema.py
+backend/app/scripts/check_region_code_schema.py
+backend/app/scripts/diagnose_*.py
+backend/app/scripts/count_modes.py
+
+# PROJECT_STATE копии (оставляем только мастер PROJECT_STATE.md)
+PROJECT_STATE_*.md
+PROJECT_STATE__*.md
+PROJECT_STATE___*.md
+PROJECT_STATE — *.md
+PROJECT_STATE - *.md
+*PROJECT_STATE*копия*.md
+
+# PDF / временные документы в корне
+*.md.pdf
+
+# Документация которая не должна быть в репо
+ежемесячное_обновление_базы_ИНН.md
+ежемесячное_обновление_базы_ИНН.md.pdf
+
+# venv/build
 .venv/
-venv/
-env/
-ENV/
+__pycache__/
+*.pyc
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-*.egg
+# === Дополнения ===
 
-# === Database (НИКОГДА не коммитим dev данные!) ===
-*.db
-*.sqlite
-*.sqlite3
-dev.db
-prod.db
-
-# === Storage (загруженные/сгенерированные файлы) ===
-/storage/
-/backend/storage/
-uploads/
-# === Environment variables ===
+# КРИТИЧНО: секреты
 .env
 .env.local
-.env.production
-.env.*.local
-*.env.backup
+.env.*
+backend/.env
+backend/.env.*
 
-# === Frontend / Next.js ===
-node_modules/
-.next/
-out/
-.vercel/
+# Локальные SQLite базы
+*.db
+*.db.backup
+dev.db
+backend/dev.db
 
-# === Build artifacts ===
-*.log
-.cache/
-coverage/
-.coverage
-htmlcov/
-.pytest_cache/
+# Python build artifacts
+*.egg-info/
+backend/visa_kit_backend.egg-info/
 
-# === IDE ===
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# === Temporary ===
-*.tmp
-*.bak
-*.backup
-
-# === OS ===
-.DS_Store
-ehthumbs.db
-Desktop.ini
-
-# === Test outputs ===
-test_output/
-/tmp/
-
-# === Pack folders (рабочие директории Claude) ===
-visa_kit_pack*/
-
-# === Шаблоны: оригиналы (с префиксом _) — не нужны в git ===
-# Опционально: расскомментируйте если хотите коммитить только рабочие шаблоны
-# templates/pdf/_*
-# templates/docx/_*
-.env.local
+# Patch (TS variant — забыл в первый раз)
+*_PATCH.ts
