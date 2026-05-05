@@ -109,11 +109,55 @@ def _resolve_region_code(applicant: Applicant) -> str:
     )
 
 
-def _pick_ifns(session: Session, region_code: str) -> Optional[IfnsOffice]:
+def _pick_ifns(
+    session: Session,
+    region_code: str,
+    applicant: Optional[Applicant] = None,
+) -> Optional[IfnsOffice]:
     """
-    Q4: ставим default-first, иначе первая по коду. Если в регионе ничего —
-    None (вызывающий код решит делать ли fallback на Москву).
+    Q4 + Pack 31.1: подбор ИФНС с учётом города из home_address самозанятого.
+
+    Логика:
+    1. Если задан applicant с home_address — ищем в регионе non-default ИФНС
+       у которой адрес содержит общий город с адресом клиента (Сочи, Адлер,
+       Краснодар и т.д.). Это позволяет выдавать МИФНС №8 жителю Сочи вместо
+       дефолтной УФНС по Краснодарскому краю.
+    2. Если совпадения нет (или applicant не передан) — старая логика:
+       default-first, иначе первая по коду.
+
+    Возвращает None если в регионе вообще нет ИФНС.
     """
+    # Pack 31.1: пытаемся сматчить по городу из home_address
+    if applicant and applicant.home_address:
+        addr_lower = applicant.home_address.lower()
+        non_default = session.exec(
+            select(IfnsOffice)
+            .where(IfnsOffice.region_code == region_code)
+            .where(IfnsOffice.is_active == True)  # noqa: E712
+            .where(IfnsOffice.is_default == False)  # noqa: E712
+            .order_by(IfnsOffice.code)
+        ).all()
+        for ifns in non_default:
+            if not ifns.address:
+                continue
+            ifns_addr_lower = ifns.address.lower()
+            # Извлекаем имя города (после "г." или ", " перед запятой)
+            # Простой матч: ищем общие "большие" слова >=4 букв
+            for word in ifns_addr_lower.replace(",", " ").split():
+                w = word.strip(".").strip()
+                if len(w) < 4:
+                    continue
+                # Скипаем общие предлоги/сокращения
+                if w in {"улица", "переулок", "проспект", "шоссе", "наб", "пер"}:
+                    continue
+                if w in addr_lower:
+                    log.info(
+                        "_pick_ifns Pack 31.1: matched %s by city marker %r in addr",
+                        ifns.short_name, w,
+                    )
+                    return ifns
+
+    # Fallback (старая логика): default-first, иначе первая по коду
     stmt = (
         select(IfnsOffice)
         .where(IfnsOffice.region_code == region_code)
@@ -332,7 +376,8 @@ def build_npd_certificate_context(
 
     # ---- 1. Регион + ИФНС + МФЦ ----
     region_code = _resolve_region_code(applicant)
-    ifns = _pick_ifns(session, region_code)
+    # Pack 31.1: передаём applicant для подбора по городу из home_address
+    ifns = _pick_ifns(session, region_code, applicant)
     mfc = _pick_mfc(session, region_code, applicant_id)
 
     # Fallback на Москву если в регионе пусто
