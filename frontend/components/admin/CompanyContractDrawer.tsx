@@ -31,8 +31,13 @@ function generateLetterNumber(): string {
   return `${num}/${yy}`;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+function letterDateIso(): string {
+  // Pack 26.0.2: дата письма = сегодня минус 3-10 дней (случайно).
+  // Менеджер может перебить через date input.
+  const daysBack = 3 + Math.floor(Math.random() * 8); // 3..10
+  const d = new Date();
+  d.setDate(d.getDate() - daysBack);
+  return d.toISOString().slice(0, 10);
 }
 
 export function CompanyContractDrawer({
@@ -52,7 +57,7 @@ export function CompanyContractDrawer({
     application.employer_letter_number || generateLetterNumber()
   );
   const [letterDate, setLetterDate] = useState(
-    application.employer_letter_date || todayIso()
+    application.employer_letter_date || letterDateIso()
   );
 
   const [recommendation, setRecommendation] = useState<any>(application.recommendation_snapshot);
