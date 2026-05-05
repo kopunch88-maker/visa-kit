@@ -275,14 +275,17 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
                 # имеет spacing="before=40 after=40" вместо обычного
                 # "before=54 line=244 lineRule=auto". Это создаёт визуально
                 # одинаковый воздух сверху и снизу серого блока ячейки.
+                # Pack 25.4: after=80 — Word "съедает" часть space-after
+                # последнего параграфа в табличной ячейке, поэтому компенсируем
+                # удвоением (40 → 80) для визуального равенства верх/низ.
                 spacing = ppr.find('w:spacing', NS)
                 if spacing is None:
                     spacing = etree.SubElement(ppr, f'{W_NS}spacing')
-                # Чистим все атрибуты spacing и ставим before=40 after=40
+                # Чистим все атрибуты spacing и ставим before=40 after=80
                 for attr in list(spacing.attrib.keys()):
                     del spacing.attrib[attr]
                 spacing.set(f'{W_NS}before', '40')
-                spacing.set(f'{W_NS}after', '40')
+                spacing.set(f'{W_NS}after', '80')
 
         parent_of_p.insert(insert_position, new_p)
         insert_position += 1
