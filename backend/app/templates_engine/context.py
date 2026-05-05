@@ -291,6 +291,91 @@ def _money_to_words_ru(amount) -> str:
     return str(n)
 
 
+def _number_to_words_ru(n) -> str:
+    """
+    Pack 26.0.1: произвольное целое n >= 0 -> русские числительные.
+    Для EUR-сумм (3194 -> "три тысячи сто девяносто четыре").
+
+    В отличие от _money_to_words_ru (которая работает только для круглых
+    рублёвых зарплат через словарь _SALARY_WORDS_RU), эта функция строит
+    числительные для любых чисел. Не учитывает копейки/центы.
+    """
+    if n is None:
+        return ""
+    n = int(n)
+    if n == 0:
+        return "ноль"
+    if n < 0:
+        return f"минус {_number_to_words_ru(-n)}"
+
+    _UNITS_M = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
+    _UNITS_F = ["", "одна", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
+    _TEENS = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать",
+              "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"]
+    _TENS = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят",
+             "шестьдесят", "семьдесят", "восемьдесят", "девяносто"]
+    _HUNDREDS = ["", "сто", "двести", "триста", "четыреста",
+                 "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот"]
+
+    def _hundreds_to_words(num: int, feminine: bool = False) -> str:
+        if num == 0:
+            return ""
+        out = []
+        h = num // 100
+        rest = num % 100
+        if h:
+            out.append(_HUNDREDS[h])
+        if 10 <= rest <= 19:
+            out.append(_TEENS[rest - 10])
+        else:
+            t = rest // 10
+            u = rest % 10
+            if t:
+                out.append(_TENS[t])
+            if u:
+                out.append((_UNITS_F if feminine else _UNITS_M)[u])
+        return " ".join(out)
+
+    def _plural_thousand(num: int) -> str:
+        n100 = num % 100
+        n10 = num % 10
+        if 11 <= n100 <= 14:
+            return "тысяч"
+        if n10 == 1:
+            return "тысяча"
+        if 2 <= n10 <= 4:
+            return "тысячи"
+        return "тысяч"
+
+    def _plural_million(num: int) -> str:
+        n100 = num % 100
+        n10 = num % 10
+        if 11 <= n100 <= 14:
+            return "миллионов"
+        if n10 == 1:
+            return "миллион"
+        if 2 <= n10 <= 4:
+            return "миллиона"
+        return "миллионов"
+
+    parts = []
+    millions = n // 1_000_000
+    rest_after_m = n % 1_000_000
+    thousands = rest_after_m // 1000
+    rest = rest_after_m % 1000
+
+    if millions:
+        parts.append(_hundreds_to_words(millions, feminine=False))
+        parts.append(_plural_million(millions))
+    if thousands:
+        parts.append(_hundreds_to_words(thousands, feminine=True))
+        parts.append(_plural_thousand(thousands))
+    if rest:
+        parts.append(_hundreds_to_words(rest, feminine=False))
+
+    return " ".join(p for p in parts if p)
+
+
 def _money_to_words_es(amount: int) -> str:
     if amount is None or amount == 0:
         return "cero"
@@ -661,7 +746,7 @@ def _build_eur_data(application: Application) -> dict:
         "amount": eur_amount,
         "amount_int": int(eur_amount),
         "amount_words_es": _money_to_words_es(int(eur_amount)),
-        "amount_words_ru": _money_to_words_ru(Decimal(str(int(eur_amount)))),
+        "amount_words_ru": _number_to_words_ru(int(eur_amount)),
     }
 
 
