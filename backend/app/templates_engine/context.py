@@ -724,6 +724,59 @@ def _generate_monthly_documents(application: Application) -> list[dict]:
 # EUR conversion
 # ============================================================================
 
+def _company_legal_line1(company) -> str:
+    """
+    Pack 26.1: первая строка юр. адреса компании.
+    Если задан ручной legal_address_line1 — сокращаем и используем его.
+    Иначе — сокращаем legal_address и берём первую половину сплита по запятой.
+    """
+    if company.legal_address_line1:
+        return abbreviate_address(company.legal_address_line1)
+    addr = abbreviate_address(company.legal_address or "")
+    if not addr:
+        return ""
+    line1, _ = _split_address_at_comma(addr)
+    return line1
+
+
+def _company_legal_line2(company) -> str:
+    """Pack 26.1: вторая строка юр. адреса компании."""
+    if company.legal_address_line2:
+        return abbreviate_address(company.legal_address_line2)
+    if company.legal_address_line1:
+        # line1 задан вручную, line2 нет — оставляем пустым (предполагается полностью в line1)
+        return ""
+    addr = abbreviate_address(company.legal_address or "")
+    if not addr:
+        return ""
+    _, line2 = _split_address_at_comma(addr)
+    return line2
+
+
+def _company_postal_line1(company) -> str:
+    """Pack 26.1: первая строка почт. адреса компании."""
+    if company.postal_address_line1:
+        return abbreviate_address(company.postal_address_line1)
+    addr = abbreviate_address(company.postal_address or company.legal_address or "")
+    if not addr:
+        return ""
+    line1, _ = _split_address_at_comma(addr)
+    return line1
+
+
+def _company_postal_line2(company) -> str:
+    """Pack 26.1: вторая строка почт. адреса компании."""
+    if company.postal_address_line2:
+        return abbreviate_address(company.postal_address_line2)
+    if company.postal_address_line1:
+        return ""
+    addr = abbreviate_address(company.postal_address or company.legal_address or "")
+    if not addr:
+        return ""
+    _, line2 = _split_address_at_comma(addr)
+    return line2
+
+
 def _build_eur_data(application: Application) -> dict:
     salary = application.salary_rub or Decimal("0")
 
@@ -969,11 +1022,11 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "tax_id_primary": company.tax_id_primary,
             "tax_id_secondary": company.tax_id_secondary or "",
             "legal_address": abbreviate_address(company.legal_address),
-            "legal_address_line1": abbreviate_address(company.legal_address_line1 or company.legal_address),
-            "legal_address_line2": abbreviate_address(company.legal_address_line2 or ""),
+            "legal_address_line1": _company_legal_line1(company),
+            "legal_address_line2": _company_legal_line2(company),
             "postal_address": abbreviate_address(company.postal_address or company.legal_address),
-            "postal_address_line1": abbreviate_address(company.postal_address_line1 or company.postal_address or ""),
-            "postal_address_line2": abbreviate_address(company.postal_address_line2 or ""),
+            "postal_address_line1": _company_postal_line1(company),
+            "postal_address_line2": _company_postal_line2(company),
             "director_full_name_ru": company.director_full_name_ru,
             "director_full_name_genitive_ru": company.director_full_name_genitive_ru,
             "director_short_ru": company.director_short_ru,
