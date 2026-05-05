@@ -200,6 +200,9 @@ class ApplicationPatch(BaseModel):
     internal_notes: Optional[str] = None
     # Pack 9: NRC квитанции пошлины (для PDF-форм MI-T)
     tasa_nrc: Optional[str] = None
+    # Pack 26.0: реквизиты письма от компании (Исх. № и дата)
+    employer_letter_number: Optional[str] = None
+    employer_letter_date: Optional[date] = None
 
 
 @router.patch("/{app_id}")

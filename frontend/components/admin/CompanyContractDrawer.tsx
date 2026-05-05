@@ -22,6 +22,19 @@ interface Props {
   onSaved: () => void;
 }
 
+// Pack 26.0: автогенерация номера исходящего письма.
+// Формат: {3-значное число}/{2 цифры года}, напр. "544/26".
+// Менеджер может перебить руками.
+function generateLetterNumber(): string {
+  const num = Math.floor(100 + Math.random() * 900); // 100-999
+  const yy = String(new Date().getFullYear()).slice(-2);
+  return `${num}/${yy}`;
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function CompanyContractDrawer({
   application, applicant, companies, positions, onClose, onSaved,
 }: Props) {
@@ -33,6 +46,14 @@ export function CompanyContractDrawer({
   const [contractCity, setContractCity] = useState(application.contract_sign_city || "");
   const [salary, setSalary] = useState<number | "">(application.salary_rub || "");
   const [paymentsMonths, setPaymentsMonths] = useState(application.payments_period_months || 3);
+
+  // Pack 26.0 — поля для письма от компании (Исх. №, дата)
+  const [letterNumber, setLetterNumber] = useState(
+    application.employer_letter_number || generateLetterNumber()
+  );
+  const [letterDate, setLetterDate] = useState(
+    application.employer_letter_date || todayIso()
+  );
 
   const [recommendation, setRecommendation] = useState<any>(application.recommendation_snapshot);
   const [loadingRec, setLoadingRec] = useState(false);
@@ -154,7 +175,10 @@ export function CompanyContractDrawer({
         contract_end_date: contractEndDate || undefined,
         salary_rub: salary as number,
         payments_period_months: paymentsMonths,
-      });
+        // Pack 26.0 — поля письма
+        employer_letter_number: letterNumber || undefined,
+        employer_letter_date: letterDate || undefined,
+      } as any);
       onSaved();
     } catch (e) { setSaveError((e as Error).message); }
     finally { setSaving(false); }
@@ -226,6 +250,35 @@ export function CompanyContractDrawer({
               <NumberField label="Зарплата ₽/мес" required value={salary} onChange={setSalary} placeholder="300000" />
               <NumberField label="Период оплат (мес)" value={paymentsMonths}
                 onChange={(v) => setPaymentsMonths(Number(v) || 3)} placeholder="3" />
+            </div>
+          </div>
+
+          {/* Pack 26.0 — реквизиты письма от компании */}
+          <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-1">
+              Письмо от компании
+            </h4>
+            <p className="text-[11px] text-tertiary mb-3">
+              Исходящий номер и дата письма. Подставляются в шапку «08_Письмо.docx». Авто-сгенерированы — можно перебить.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-secondary mb-1">Исх. №</label>
+                <div className="flex gap-1.5">
+                  <input type="text" value={letterNumber}
+                    onChange={(e) => setLetterNumber(e.target.value)}
+                    placeholder="544/26"
+                    className="flex-1 px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+                  <button type="button" onClick={() => setLetterNumber(generateLetterNumber())}
+                    className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary transition-colors flex items-center"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                    title="Сгенерировать новый номер">
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <DateField label="Дата письма" value={letterDate} onChange={setLetterDate} />
             </div>
           </div>
 

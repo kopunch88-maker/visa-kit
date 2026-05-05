@@ -661,6 +661,7 @@ def _build_eur_data(application: Application) -> dict:
         "amount": eur_amount,
         "amount_int": int(eur_amount),
         "amount_words_es": _money_to_words_es(int(eur_amount)),
+        "amount_words_ru": _money_to_words_ru(Decimal(str(int(eur_amount)))),
     }
 
 
@@ -923,6 +924,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "amount": Decimal("0"),
             "amount_int": 0,
             "amount_words_es": "cero",
+            "amount_words_ru": "ноль",
         },
 
         "letter": {
