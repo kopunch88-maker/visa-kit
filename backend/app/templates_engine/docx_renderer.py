@@ -385,16 +385,20 @@ def _add_bottom_border_to_row(tr_element):
         bottom.set(f'{W_NS}color', '7E7E7E')
 
 
-def _add_vertical_padding_to_cells(tr_element, top_dxa: int = 80, bottom_dxa: int = 80):
+def _add_vertical_padding_to_cells(tr_element, top_dxa: int = 80, bottom_dxa: int = 120):
     """
     Pack 25.1: добавляет вертикальный padding ячейкам строки через <w:tcMar>.
+    Pack 25.2: top=80, bottom=120 — асимметрия для визуального равенства.
 
-    В эталонной выписке Алиева у строк поступлений (с серой подсветкой) есть
-    видимый воздух между текстом и нижней границей серого блока. У нас этого
-    воздуха не было — текст «без НДС.» прижимался к низу серого блока.
+    В Word'e <w:spacing w:after="40"/> ПОСЛЕДНЕГО параграфа в табличной ячейке
+    игнорируется (известная особенность Word). Поэтому верхний воздух получает
+    "бонус" от space-before первого параграфа (40 dxa), а нижний — нет.
+    Компенсируем bottom += 40 = 120, чтобы визуальный воздух был одинаков.
+
+    Эффективный верхний воздух: tcMar top (80) + spacing before (40) = 120 dxa
+    Эффективный нижний воздух: tcMar bottom (120) + 0 (after игнорится) = 120 dxa
 
     Применяется ТОЛЬКО к строкам поступлений (после _apply_gray_shading_to_row).
-    80 dxa = ~5.6pt = ~2mm padding сверху и снизу.
     """
     cells = tr_element.findall('.//w:tc', NS)
     for cell in cells:
