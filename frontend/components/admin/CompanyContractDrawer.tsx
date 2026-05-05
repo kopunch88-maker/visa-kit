@@ -40,6 +40,33 @@ function letterDateIso(): string {
   return d.toISOString().slice(0, 10);
 }
 
+
+// Pack 28.0: рекомендованная дата окончания договора.
+// UGE требует чтобы договор покрывал 3-летний срок ВНЖ.
+// Считаем от max(submission_date, today) + 3 года + случайно 3..5 месяцев запаса.
+function recommendContractEndDate(submissionDate: string): string {
+  const sub = submissionDate ? new Date(submissionDate) : new Date();
+  const today = new Date();
+  const base = sub > today ? sub : today;
+
+  const d = new Date(base);
+  d.setFullYear(d.getFullYear() + 3);
+  // Случайно 3-5 месяцев сверху (чтобы все договоры не были в одну дату)
+  const extraMonths = 3 + Math.floor(Math.random() * 3); // 3, 4, или 5
+  d.setMonth(d.getMonth() + extraMonths);
+
+  return d.toISOString().slice(0, 10);
+}
+
+// Минимально допустимая дата окончания = submission_date + 3 года ровно (без запаса).
+// Используется для soft warning если менеджер поставил дату меньше.
+function minRequiredContractEndDate(submissionDate: string): string {
+  if (!submissionDate) return "";
+  const sub = new Date(submissionDate);
+  sub.setFullYear(sub.getFullYear() + 3);
+  return sub.toISOString().slice(0, 10);
+}
+
 export function CompanyContractDrawer({
   application, applicant, companies, positions, onClose, onSaved,
 }: Props) {
@@ -47,7 +74,21 @@ export function CompanyContractDrawer({
   const [positionId, setPositionId] = useState<number | "">(application.position_id || "");
   const [contractNumber, setContractNumber] = useState(application.contract_number || "");
   const [contractDate, setContractDate] = useState(application.contract_sign_date || "");
-  const [contractEndDate, setContractEndDate] = useState(application.contract_end_date || "");
+  const [contractEndDate, setContractEndDate] = useState(() => {
+    // Pack 28.0: автозаполнение даты окончания договора.
+    // Если поле пустое — рекомендуем submission+3y+3..5мес.
+    // Если поле задано но меньше submission+3y — тоже перезаписываем (мягкая коррекция).
+    const existing = application.contract_end_date || "";
+    const submission = application.submission_date || "";
+    const minRequired = minRequiredContractEndDate(submission);
+    if (!existing) {
+      return recommendContractEndDate(submission);
+    }
+    if (minRequired && existing < minRequired) {
+      return recommendContractEndDate(submission);
+    }
+    return existing;
+  });
   const [contractCity, setContractCity] = useState(application.contract_sign_city || "");
   const [salary, setSalary] = useState<number | "">(application.salary_rub || "");
   const [paymentsMonths, setPaymentsMonths] = useState(application.payments_period_months || 3);
@@ -254,7 +295,32 @@ export function CompanyContractDrawer({
               <DateField label="Дата подписания" required value={contractDate} onChange={setContractDate} />
               <TextField label="Город подписания" required value={contractCity}
                 onChange={setContractCity} placeholder="Москва" />
-              <DateField label="Дата окончания" value={contractEndDate} onChange={setContractEndDate} />
+              <div>
+                <DateField label="Дата окончания" value={contractEndDate} onChange={setContractEndDate} />
+                {(() => {
+                  // Pack 28.0: soft warning если дата окончания < submission+3 года.
+                  // ВНЖ выдаётся на 3 года, договор должен покрывать весь срок.
+                  const minRequired = minRequiredContractEndDate(application.submission_date || "");
+                  if (!minRequired || !contractEndDate) return null;
+                  if (contractEndDate >= minRequired) return null;
+                  const minRequiredFormatted = new Date(minRequired).toLocaleDateString("ru");
+                  return (
+                    <div
+                      className="mt-1 p-2 rounded text-xs flex items-start gap-1.5"
+                      style={{
+                        background: "var(--color-bg-warning)",
+                        color: "var(--color-text-warning)",
+                      }}
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                      <span>
+                        Договор покрывает менее 3 лет от даты подачи. Рекомендуется ≥ {minRequiredFormatted} —
+                        ВНЖ выдаётся на 3 года, UGE может зацепиться.
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
               <NumberField label="Зарплата ₽/мес" required value={salary} onChange={setSalary} placeholder="300000" />
               <NumberField label="Период оплат (мес)" value={paymentsMonths}
                 onChange={(v) => setPaymentsMonths(Number(v) || 3)} placeholder="3" />
