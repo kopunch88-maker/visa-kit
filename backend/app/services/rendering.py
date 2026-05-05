@@ -2,13 +2,19 @@
 Rendering service — собирает полный пакет документов для заявки.
 
 Pack 9: добавлены 4 испанских PDF-формы в подпапку forms_es/.
+Pack 23.5: добавлены 3 DOCX в корень ZIP — справка НПД (МФЦ), справка НПД (ЛКН),
+           апостиль. До этого они были доступны только через одиночное скачивание
+           карточки в DocumentsGrid, но в общий ZIP-архив не попадали.
 
 Структура ZIP:
-    /                          ← корень: 10 русских DOCX
+    /                          ← корень: 13 русских DOCX
     01_Договор.docx
     02_Акт_1.docx
     ...
     10_Выписка_по_счету.docx
+    15_Справка_НПД.docx                ← Pack 23.5
+    15b_Справка_НПД_ЛКН.docx           ← Pack 23.5
+    16_Апостиль.docx                   ← Pack 23.5
     /forms_es/                 ← подпапка: 4 испанских PDF
         11_MI-T.pdf
         12_Designacion_representante.pdf
@@ -27,6 +33,10 @@ from app.models import Application
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv, render_bank_statement,
+    # Pack 23.5: справки НПД и апостиль (раньше были только через download-file)
+    render_npd_certificate,
+    render_npd_certificate_lkn,
+    render_apostille,
 )
 from app.pdf_forms_engine import build_pdf_forms
 
@@ -79,6 +89,21 @@ def build_full_package(
             ("10_Выписка_по_счету.docx", "bank_statement",
              render_bank_statement, (application, session))
         )
+
+    # Pack 23.5: справки НПД и апостиль.
+    # Кладём ПОСЛЕ выписки и ДО pdf-форм, чтобы порядок в ZIP совпадал
+    # с нумерацией в DocumentsGrid (15, 15b, 16).
+    # _try_render проглатывает FileNotFoundError и любые ошибки рендера —
+    # если у заявки нет данных для апостиля или шаблон отсутствует,
+    # карточка просто пропускается, заявка не падает.
+    files_to_render.extend([
+        ("15_Справка_НПД.docx", "npd_certificate",
+         render_npd_certificate, (application, session)),
+        ("15b_Справка_НПД_ЛКН.docx", "npd_certificate_lkn",
+         render_npd_certificate_lkn, (application, session)),
+        ("16_Апостиль.docx", "apostille",
+         render_apostille, (application, session)),
+    ])
 
     # Корректируем под payments_period_months
     months_count = application.payments_period_months or 3
