@@ -146,6 +146,8 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
                 _apply_gray_shading_to_row(new_tr)
                 # Pack 25.0: жирная сумма у поступлений (как в эталонной выписке Алиева)
                 _apply_bold_to_amount_cell(new_tr)
+                # Pack 25.1: воздух сверху/снизу в ячейках поступлений
+                _add_vertical_padding_to_cells(new_tr)
 
         # Pack 16.5b: <w:cantSplit/> — запрет разрыва строки между страницами.
         _set_cant_split(new_tr)
@@ -161,6 +163,10 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     # не помещается с подписью на 1-й странице — обе уйдут на 2-ю вместе.
     if last_row is not None:
         _set_keep_next_on_row(last_row)
+        # Pack 25.1: возвращаем нижнюю границу таблицы — Pack 25.0 убрал
+        # <w:bottom> со всех строк (чтобы не было двойной линии между ними).
+        # Но последняя строка должна закрывать таблицу снизу, как в Алиеве.
+        _add_bottom_border_to_row(last_row)
     _set_keep_next_on_paragraph_between_tables(doc)
 
     result_buffer = io.BytesIO()
@@ -346,6 +352,69 @@ def _apply_bold_to_amount_cell(tr_element):
         if rPr.find('w:b', NS) is None:
             b = etree.Element(f'{W_NS}b')
             rPr.insert(0, b)
+
+
+def _add_bottom_border_to_row(tr_element):
+    """
+    Pack 25.1: добавляет <w:bottom> в <w:tcBorders> каждой ячейки строки.
+
+    Pack 25.0 убрал <w:bottom> из шаблонной маркер-строки — между строками
+    операций больше нет двойной линии (как в Алиеве). Но это удалило линию
+    и под последней строкой таблицы — таблица не «закрывается» снизу.
+
+    Эту функцию вызываем ТОЛЬКО для последней строки операций — у Алиева
+    таблица операций имеет нижнюю границу под последней операцией.
+    """
+    cells = tr_element.findall('.//w:tc', NS)
+    for cell in cells:
+        tcPr = cell.find('w:tcPr', NS)
+        if tcPr is None:
+            continue
+        tc_borders = tcPr.find('w:tcBorders', NS)
+        if tc_borders is None:
+            tc_borders = etree.SubElement(tcPr, f'{W_NS}tcBorders')
+
+        # Если <w:bottom> уже есть — пропускаем
+        if tc_borders.find('w:bottom', NS) is not None:
+            continue
+
+        bottom = etree.SubElement(tc_borders, f'{W_NS}bottom')
+        bottom.set(f'{W_NS}val', 'single')
+        bottom.set(f'{W_NS}sz', '4')
+        bottom.set(f'{W_NS}space', '0')
+        bottom.set(f'{W_NS}color', '7E7E7E')
+
+
+def _add_vertical_padding_to_cells(tr_element, top_dxa: int = 80, bottom_dxa: int = 80):
+    """
+    Pack 25.1: добавляет вертикальный padding ячейкам строки через <w:tcMar>.
+
+    В эталонной выписке Алиева у строк поступлений (с серой подсветкой) есть
+    видимый воздух между текстом и нижней границей серого блока. У нас этого
+    воздуха не было — текст «без НДС.» прижимался к низу серого блока.
+
+    Применяется ТОЛЬКО к строкам поступлений (после _apply_gray_shading_to_row).
+    80 dxa = ~5.6pt = ~2mm padding сверху и снизу.
+    """
+    cells = tr_element.findall('.//w:tc', NS)
+    for cell in cells:
+        tcPr = cell.find('w:tcPr', NS)
+        if tcPr is None:
+            tcPr = etree.SubElement(cell, f'{W_NS}tcPr')
+            cell.remove(tcPr)
+            cell.insert(0, tcPr)
+
+        # Удаляем старый tcMar если есть
+        old_mar = tcPr.find('w:tcMar', NS)
+        if old_mar is not None:
+            tcPr.remove(old_mar)
+
+        # Создаём новый tcMar с верхним и нижним padding
+        tc_mar = etree.SubElement(tcPr, f'{W_NS}tcMar')
+        for side, value in [('top', top_dxa), ('bottom', bottom_dxa)]:
+            elem = etree.SubElement(tc_mar, f'{W_NS}{side}')
+            elem.set(f'{W_NS}w', str(value))
+            elem.set(f'{W_NS}type', 'dxa')
 
 
 def _set_cant_split(tr_element):
