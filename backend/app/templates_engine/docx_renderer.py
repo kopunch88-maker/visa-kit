@@ -144,6 +144,8 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
                 amount_val = 0
             if amount_val > 0:
                 _apply_gray_shading_to_row(new_tr)
+                # Pack 25.0: жирная сумма у поступлений (как в эталонной выписке Алиева)
+                _apply_bold_to_amount_cell(new_tr)
 
         # Pack 16.5b: <w:cantSplit/> — запрет разрыва строки между страницами.
         _set_cant_split(new_tr)
@@ -245,7 +247,7 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
         # а не по новому отступу firstLine, поправляем ind:
         # left += firstLine, firstLine = 0.
         # В оригинале Алиева у параграфа «Назначение платежа» именно такая
-        # структура: left=388, без firstLine (199 + 195 ≈ 388 + округление).
+        # структура: left=388, без firstLine (199 + 195 ? 388 + округление).
         if line.startswith("Назначение платежа"):
             ppr = new_p.find('w:pPr', NS)
             if ppr is not None:
@@ -317,6 +319,33 @@ def _apply_gray_shading_to_row(tr_element):
         shd.set(f'{W_NS}val', 'clear')
         shd.set(f'{W_NS}color', 'auto')
         shd.set(f'{W_NS}fill', 'E8E8E8')
+
+
+def _apply_bold_to_amount_cell(tr_element):
+    """
+    Pack 25.0: делает сумму в 4-й (последней) ячейке строки жирной.
+
+    В эталонной выписке Алиева суммы поступлений (300 000,00 RUR) выделены
+    жирным шрифтом — это визуально подчёркивает поступления для проверяющего.
+    Применяется ТОЛЬКО к строкам поступлений (вызов после проверки amount_val > 0).
+
+    Сумма находится в последней ячейке строки таблицы (где маркер __TX_AMOUNT__).
+    Делаем жирными все runs в этой ячейке.
+    """
+    cells = tr_element.findall('.//w:tc', NS)
+    if not cells:
+        return
+    amount_cell = cells[-1]  # последняя ячейка — сумма
+
+    for run in amount_cell.findall('.//w:r', NS):
+        rPr = run.find('w:rPr', NS)
+        if rPr is None:
+            rPr = etree.Element(f'{W_NS}rPr')
+            run.insert(0, rPr)
+        # <w:b/> делает run жирным; должен идти в начале rPr
+        if rPr.find('w:b', NS) is None:
+            b = etree.Element(f'{W_NS}b')
+            rPr.insert(0, b)
 
 
 def _set_cant_split(tr_element):
