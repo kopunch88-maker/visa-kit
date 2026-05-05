@@ -91,7 +91,9 @@ export function CompanyContractDrawer({
     return () => document.removeEventListener("keydown", handleEsc);
   }, [onClose]);
 
-  const positionsForCompany = companyId ? positions.filter((p) => p.company_id === companyId) : positions;
+  // Pack 27.1: после отвязки Position от Company (Pack 20.0) фильтр по company_id невалиден.
+  // Position больше не имеет поля company_id — показываем все активные должности.
+  const positionsForCompany = positions;
 
   function handlePositionChange(newPositionId: number | "") {
     setPositionId(newPositionId);
@@ -111,8 +113,9 @@ export function CompanyContractDrawer({
     finally { setLoadingRec(false); }
   }
 
-  function applyRecommendation(positionIdRec: number, companyIdRec: number) {
-    setCompanyId(companyIdRec);
+  function applyRecommendation(positionIdRec: number) {
+    // Pack 27.1: больше не подменяем company (Position не привязан к Company начиная с Pack 20.0).
+    // Компанию менеджер выбирает отдельно — рекомендация только про должность.
     handlePositionChange(positionIdRec);
   }
 
@@ -358,7 +361,9 @@ function RecommendationDisplay({ recommendation, companies, positions, onSelect 
     <div className="space-y-1.5 mt-2">
       {items.slice(0, 3).map((item: any, idx: number) => {
         const position = positions.find((p: PositionResponse) => p.id === item.position_id);
-        const company = companies.find((c: CompanyResponse) => c.id === position?.company_id);
+        // Pack 27.1: position.company_id больше не существует (Pack 20.0).
+        // Компанию для строки-рекомендации не показываем — она выбирается отдельно сверху.
+        const company = null as CompanyResponse | null;
         return (
           <div key={idx} className="bg-primary rounded-md p-2 border flex items-center justify-between gap-2"
             style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
@@ -371,8 +376,8 @@ function RecommendationDisplay({ recommendation, companies, positions, onSelect 
                 {item.score !== undefined && ` · ${Math.round(item.score * 100)}%`}
               </div>
             </div>
-            {position && company && (
-              <button onClick={() => onSelect(position.id, company.id)}
+            {position && (
+              <button onClick={() => onSelect(position.id)}
                 className="text-[10px] px-2 py-1 rounded text-white whitespace-nowrap"
                 style={{ background: "var(--color-accent)" }}>
                 Выбрать
