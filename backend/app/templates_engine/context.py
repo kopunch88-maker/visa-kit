@@ -728,6 +728,10 @@ def _generate_monthly_documents(application: Application) -> list[dict]:
     collected.sort(key=lambda x: x["period_start"])
     for idx, item in enumerate(collected, start=1):
         item["sequence_number"] = idx
+        # Pack 25.6 v2: display_number = "MM/YY" для шаблонов (АКТ № 04/26)
+        # sequence_number оставляем idx для lookup в docx_renderer
+        _month_str = f"{item['period_start'].month:02d}"
+        item["display_number"] = f"{_month_str}/{item['year_suffix']}"
 
     return collected
 
