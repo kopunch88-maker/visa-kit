@@ -925,10 +925,17 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
     npd_rate = application.bank_npd_rate or DEFAULT_NPD_RATE
     monthly_fee = application.bank_monthly_fee or DEFAULT_BANK_FEE_PER_MONTH
 
-    # Pack 25.8: applicant нужен для СБП-переводов (имя получателя + телефон РФ)
+    # Pack 25.9.1: applicant нужен для СБП-переводов (имя получателя + телефон РФ).
+    # Реальные поля: first_name_native + last_name_native (full_name_ru НЕ существует).
     _applicant = getattr(application, "applicant", None)
-    _applicant_full_name_ru = getattr(_applicant, "full_name_ru", None) if _applicant else None
-    _applicant_phone = getattr(_applicant, "phone", None) if _applicant else None
+    _applicant_full_name_ru = None
+    _applicant_phone = None
+    if _applicant is not None:
+        _first = getattr(_applicant, "first_name_native", None) or ""
+        _last = getattr(_applicant, "last_name_native", None) or ""
+        _full = f"{_first} {_last}".strip()
+        _applicant_full_name_ru = _full or None
+        _applicant_phone = getattr(_applicant, "phone", None)
 
     result = generate_default_transactions(
         submission_date=base_date,
