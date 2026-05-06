@@ -944,12 +944,16 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
         seed=application.id or 0,
         applicant_full_name_ru=_applicant_full_name_ru,
         applicant_phone=_applicant_phone,
+        # Pack 25.9: ручной override даты формирования (если задан в админке)
+        statement_date_override=getattr(application, "bank_statement_date", None),
     )
 
-    if application.bank_period_start:
-        result["period_start"] = application.bank_period_start
-    if application.bank_period_end:
-        result["period_end"] = application.bank_period_end
+    # Pack 25.9: legacy bank_period_start/end больше не override-ят период.
+    # Период теперь определяется через application.bank_statement_date (см. вызов выше).
+    # if application.bank_period_start:
+    #     result["period_start"] = application.bank_period_start
+    # if application.bank_period_end:
+    #     result["period_end"] = application.bank_period_end
     if application.bank_opening_balance is not None:
         result["opening_balance"] = application.bank_opening_balance
         result["closing_balance"] = (

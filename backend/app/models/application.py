@@ -90,6 +90,11 @@ class Application(TimestampMixin, table=True):
     # === Параметры расчётов банковской выписки ===
     bank_npd_rate: Optional[Decimal] = Field(default=None, max_digits=5, decimal_places=4)
     bank_monthly_fee: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
+    # Pack 25.9: ручной override даты формирования банковской выписки.
+    # Если NULL — генератор берёт today - random(7..10).
+    # Если задано — генератор использует эту дату как statement_date,
+    # период считается как [statement_date - 3мес, statement_date].
+    bank_statement_date: Optional[date] = None
     bank_period_start: Optional[date] = None
     bank_period_end: Optional[date] = None
     bank_opening_balance: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)

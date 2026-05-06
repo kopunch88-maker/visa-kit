@@ -1,9 +1,11 @@
 """
 Генератор транзакций для банковской выписки.
 
-Pack 25.8 (06.05.2026):
+Pack 25.8 / 25.9 (06.05.2026):
 - Дата формирования = today() - random(7..10) дней (раньше считалась как period_end+1)
-- Период = ровно 3 месяца до statement_date (period_end = statement_date - 1 день)
+- Pack 25.9: период = [statement_date - 3 мес, statement_date]
+  (period_end теперь равен дате формирования, не -1 день)
+- Pack 25.9: ручной override через application.bank_statement_date (опционально)
 - Hard-фильтр: ни одна транзакция не выходит за [period_start, period_end]
 - Копейки во всех суммах кроме поступлений по договору (там целые рубли)
 - Новый тип: СБП-переводы себе (телефон РФ, генерится если applicant.phone не +7)
@@ -257,7 +259,9 @@ def generate_default_transactions(
             days=random.randint(STATEMENT_AGE_DAYS_MIN, STATEMENT_AGE_DAYS_MAX)
         )
 
-    period_end = statement_date - timedelta(days=1)
+    # Pack 25.9: period_end = statement_date (включая день формирования).
+    # Реальные банки: «выписка с 27.01 по 27.04, дата формирования 27.04».
+    period_end = statement_date
     period_start = (statement_date - relativedelta(months=period_months))
 
     # Налог и сумма перевода KWIKPAY (с копейками)
