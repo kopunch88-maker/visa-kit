@@ -844,13 +844,15 @@ def _enrich_bank_with_statement_fields(
     if application.contract_sign_date:
         account_open_date = application.contract_sign_date - timedelta(days=183)
 
-    # Дата формирования выписки: period_end + 1 день, иначе submission_date
-    statement_date = None
-    period_end = bank_data.get("period_end")
-    if period_end:
-        statement_date = period_end + timedelta(days=1)
-    elif application.submission_date:
-        statement_date = application.submission_date
+    # Pack 25.8: дата формирования берётся из генератора (today - random(7..10)).
+    # Fallback на старую логику period_end+1, в крайнем случае - submission_date.
+    statement_date = bank_data.get("statement_date")
+    if not statement_date:
+        period_end = bank_data.get("period_end")
+        if period_end:
+            statement_date = period_end + timedelta(days=1)
+        elif application.submission_date:
+            statement_date = application.submission_date
 
     bank_data["account_open_date"] = account_open_date
     bank_data["account_open_date_formatted"] = fmt_date_ru(account_open_date) if account_open_date else ""
@@ -923,6 +925,11 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
     npd_rate = application.bank_npd_rate or DEFAULT_NPD_RATE
     monthly_fee = application.bank_monthly_fee or DEFAULT_BANK_FEE_PER_MONTH
 
+    # Pack 25.8: applicant нужен для СБП-переводов (имя получателя + телефон РФ)
+    _applicant = getattr(application, "applicant", None)
+    _applicant_full_name_ru = getattr(_applicant, "full_name_ru", None) if _applicant else None
+    _applicant_phone = getattr(_applicant, "phone", None) if _applicant else None
+
     result = generate_default_transactions(
         submission_date=base_date,
         salary_rub=application.salary_rub,
@@ -935,6 +942,8 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
         npd_rate=npd_rate,
         bank_fee=monthly_fee,
         seed=application.id or 0,
+        applicant_full_name_ru=_applicant_full_name_ru,
+        applicant_phone=_applicant_phone,
     )
 
     if application.bank_period_start:
