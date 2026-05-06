@@ -117,6 +117,7 @@ def _log_event(
 def list_applications(
     status: Optional[ApplicationStatus] = None,
     archived: bool = Query(False, description="Pack 10: показать архивные (по умолчанию false — только активные)"),
+    trash: bool = Query(False, description="Pack 27.0: показать удалённые (корзина) с lazy cleanup старше 7 дней"),
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> List[dict]:
