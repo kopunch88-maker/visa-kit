@@ -14,7 +14,7 @@ Pack 20.0 (04.05.2026):
 
 import io
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -120,7 +120,27 @@ def list_applications(
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> List[dict]:
-    query = select(Application).where(Application.is_archived == archived)
+    # Pack 27.0 — Корзина. Если trash=True, делаем lazy cleanup и возвращаем только удалённые.
+    if trash:
+        # Lazy cleanup: удаляем permanently записи в корзине старше 7 дней
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        old_trashed = session.exec(
+            select(Application).where(
+                Application.deleted_at.is_not(None),
+                Application.deleted_at < cutoff,
+            )
+        ).all()
+        for old_app in old_trashed:
+            _permanent_delete_application(session, old_app)
+        if old_trashed:
+            session.commit()
+
+        query = select(Application).where(Application.deleted_at.is_not(None))
+    else:
+        query = select(Application).where(
+            Application.is_archived == archived,
+            Application.deleted_at.is_(None),
+        )
     query = query.order_by(Application.created_at.desc())
     if status:
         query = query.where(Application.status == status)

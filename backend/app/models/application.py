@@ -104,6 +104,8 @@ class Application(TimestampMixin, table=True):
     # === Pack 10: архивирование ===
     is_archived: bool = Field(default=False, index=True)
     archived_at: Optional[datetime] = Field(default=None)
+    # Pack 27.0 — soft-delete с автоудалением через 7 дней
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
 
     applicant: Optional["Applicant"] = Relationship(back_populates="applications")
     family_members: List["FamilyMember"] = Relationship(back_populates="application")
