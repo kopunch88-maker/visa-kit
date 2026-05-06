@@ -116,6 +116,15 @@ function AdminPageContent() {
             Архив
           </button>
           <button
+            onClick={() => router.push("/admin/trash")}
+            className="px-3 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center gap-1.5"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+            title="Корзина завершённых заявок"
+          >
+            <Trash2 className="w-4 h-4" />
+            Корзина
+          </button>
+          <button
             onClick={() => router.push("/admin/settings")}
             className="px-3 py-2 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center gap-1.5"
             style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
