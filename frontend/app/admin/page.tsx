@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Search, Loader2, Settings, Archive, Package } from "lucide-react";
+import { Plus, Search, Loader2, Settings, Archive, Package, Trash2 } from "lucide-react";
 import {
   listApplications,
   ApplicationResponse,

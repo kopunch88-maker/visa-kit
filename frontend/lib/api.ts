@@ -803,10 +803,12 @@ export async function importPackageCancel(sessionId: string): Promise<void> {
 export async function listApplications(
   status?: string,
   archived: boolean = false,
+  trash: boolean = false,
 ): Promise<ApplicationResponse[]> {
   const url = new URL(`${API_BASE_URL}/api/admin/applications`);
   if (status) url.searchParams.set("status", status);
   if (archived) url.searchParams.set("archived", "true");
+  if (trash) url.searchParams.set("trash", "true");
   const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     if (res.status === 401) throw new Error("Требуется вход");
@@ -2066,5 +2068,48 @@ export async function extractCompanyFromDocument(
     } catch {}
     throw new Error(msg);
   }
+  return res.json();
+}
+
+// Pack 27.0 — Корзина (soft-delete с автоудалением через 7 дней)
+
+/**
+ * Soft-delete: помещает заявку в корзину. Обратимо в течение 7 дней через restoreApplication.
+ * Доступно из любого статуса. Если заявка в архиве — выводит из архива и удаляет.
+ */
+export async function softDeleteApplication(appId: number): Promise<{ id: number; deleted_at: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Не удалось удалить: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Восстановить заявку из корзины. Очищает deleted_at.
+ */
+export async function restoreApplication(appId: number): Promise<ApplicationResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/restore`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Не удалось восстановить: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Удалить заявку НАВСЕГДА. Удаляет:
+ * - файлы R2 (applicant_document, generated_document, uploaded_file)
+ * - все связанные записи (family_member, timeline_event, translation, и т.д.)
+ * - саму application
+ * applicant НЕ удаляется (может быть привязан к другой заявке).
+ */
+export async function permanentDeleteApplication(appId: number): Promise<{ deleted: boolean; reference: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/permanent`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Не удалось удалить навсегда: ${res.status} ${await res.text()}`);
   return res.json();
 }
