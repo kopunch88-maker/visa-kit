@@ -6,6 +6,7 @@ import {
   X, Loader2, Sparkles, AlertCircle, Save, User, Wand2, Landmark,
   CheckCircle2, XCircle, MinusCircle, // Pack 18.5 — статус проверки ИНН через ФНС
   Trash2, Plus, // Pack 19.0.3 — управление записями education
+  FileText, RefreshCw, // Pack 25.10 — банковская выписка
 } from "lucide-react";
 import {
   ApplicantResponse,
@@ -17,11 +18,18 @@ import {
   regenerateAddress, // Pack 18.8: перегенерация адреса
   regenerateEducation, // Pack 19.0: автогенерация образования
   regenerateWorkHistory, // Pack 19.1: автогенерация work_history
+  // Pack 25.10 — банковская выписка
+  ApplicationResponse,
+  patchApplication,
+  regenerateBankTransactions,
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
 
 interface Props {
   applicant: ApplicantResponse;
+  // Pack 25.10 — опционально: если передан, показывается секция «Банковская выписка»
+  application?: ApplicationResponse;
+  onApplicationSaved?: () => void;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -78,7 +86,7 @@ function toTitleCase(text: string): string {
     .join("");
 }
 
-export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
+export function ApplicantDrawer({ applicant, application, onApplicationSaved, onClose, onSaved }: Props) {
   const [last_name_native, setLastNameNative] = useState(applicant.last_name_native || "");
   const [first_name_native, setFirstNameNative] = useState(applicant.first_name_native || "");
   const [middle_name_native, setMiddleNameNative] = useState(applicant.middle_name_native || "");
@@ -119,6 +127,13 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
 
   // Pack 18.8: перегенерация адреса
   const [addressRegenerating, setAddressRegenerating] = useState(false);
+
+  // Pack 25.10 — банковская выписка
+  const [bankStatementDate, setBankStatementDate] = useState<string>(
+    (application as any)?.bank_statement_date || ""
+  );
+  const [bankRegenerating, setBankRegenerating] = useState(false);
+  const hasOverride = !!(application as any)?.bank_transactions_override;
 
   // Pack 18.9: подписант апостиля (опционально, если пусто — backend подставит дефолт Байрамова)
   const [apostille_signer_short, setApostilleSignerShort] = useState(
@@ -291,6 +306,51 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
       setError(`Не удалось подобрать опыт работы: ${(e as Error).message}`);
     } finally {
       setWorkHistoryRegenerating(false);
+    }
+  }
+
+  // Pack 25.10 — кнопка ✨ Auto: today - 8 дней (середина диапазона 7..10)
+  function handleAutoStatementDate() {
+    const d = new Date();
+    d.setDate(d.getDate() - 8);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    setBankStatementDate(`${yyyy}-${mm}-${dd}`);
+  }
+
+  // Pack 25.10 — перегенерировать банковскую выписку.
+  // 1. Если есть существующий override — confirm.
+  // 2. PATCH application с новой bank_statement_date (или null чтобы сбросить).
+  // 3. POST bank-transactions/generate.
+  async function handleRegenerateBankStatement() {
+    if (!application) return;
+    if (hasOverride) {
+      const ok = window.confirm(
+        "У этой заявки уже есть сохранённая выписка. " +
+        "Все ручные правки транзакций будут потеряны. Продолжить?"
+      );
+      if (!ok) return;
+    }
+    setBankRegenerating(true);
+    setError(null);
+    try {
+      // Сохраняем дату формирования (или null если поле пустое)
+      const currentDate = (application as any).bank_statement_date || null;
+      const newDate = bankStatementDate || null;
+      if (currentDate !== newDate) {
+        await patchApplication(application.id, {
+          bank_statement_date: newDate,
+        } as any);
+      }
+      // Перегенерируем транзакции
+      await regenerateBankTransactions(application.id);
+      // Сообщаем родителю что application изменился
+      if (onApplicationSaved) onApplicationSaved();
+    } catch (e) {
+      setError(`Не удалось перегенерировать выписку: ${(e as Error).message}`);
+    } finally {
+      setBankRegenerating(false);
     }
   }
 
@@ -688,6 +748,74 @@ export function ApplicantDrawer({ applicant, onClose, onSaved }: Props) {
               </p>
             </div>
           </Section>
+
+          {/* Pack 25.10 — Банковская выписка (показывается только если передан application) */}
+          {application && (
+            <Section
+              title="Банковская выписка"
+              icon={<FileText className="w-3.5 h-3.5" />}
+            >
+              <p className="text-xs text-tertiary mb-3">
+                Дата формирования выписки. По умолчанию (если поле пустое) генератор
+                ставит дату <strong>сегодня минус 7-10 дней</strong> — реалистично для подачи
+                на визу. При желании можно задать конкретную дату.
+              </p>
+
+              <Field
+                label="Дата формирования"
+                value={bankStatementDate}
+                onChange={setBankStatementDate}
+                type="date"
+                actionButton={
+                  <button
+                    type="button"
+                    onClick={handleAutoStatementDate}
+                    className="text-xs px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1 whitespace-nowrap"
+                    style={{ background: "var(--color-accent)" }}
+                    title="Подставить сегодня минус 8 дней"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Auto
+                  </button>
+                }
+              />
+              <p className="text-[11px] text-tertiary mt-1">
+                Период выписки = 3 месяца до этой даты, включая её.
+                Например: 27.04.2026 → выписка 27.01.2026 — 27.04.2026.
+              </p>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleRegenerateBankStatement}
+                  disabled={bankRegenerating}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
+                  style={{
+                    background: "var(--color-bg-secondary)",
+                    border: "1px solid var(--color-border-tertiary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                >
+                  {bankRegenerating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Перегенерируем...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      {hasOverride ? "Перегенерировать выписку" : "Сгенерировать выписку"}
+                    </>
+                  )}
+                </button>
+                <p className="text-[11px] text-tertiary mt-2">
+                  {hasOverride
+                    ? "⚠ Существующие транзакции будут перезаписаны"
+                    : "Создаст черновик транзакций по текущим настройкам"}
+                </p>
+              </div>
+            </Section>
+          )}
 
           {/* Pack 18.9 — подписант апостиля (опционально, по умолчанию Байрамов Н.А.) */}
           <Section title="Апостиль">

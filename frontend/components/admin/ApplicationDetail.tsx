@@ -358,6 +358,8 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       {showApplicantDrawer && applicant && (
         <ApplicantDrawer
           applicant={applicant}
+          application={application}
+          onApplicationSaved={loadAll}
           onClose={() => setShowApplicantDrawer(false)}
           onSaved={() => {
             setShowApplicantDrawer(false);

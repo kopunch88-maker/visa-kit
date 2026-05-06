@@ -1956,3 +1956,60 @@ export async function regenerateWorkHistory(
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   return res.json();
 }
+
+
+// Pack 25.10 — Bank statement transactions
+export interface BankTransactionItem {
+  transaction_date: string;
+  code: string;
+  description: string;
+  amount: string;
+  currency: string;
+}
+
+export interface BankStatementResponse {
+  application_id: number;
+  period_start: string;
+  period_end: string;
+  opening_balance: string;
+  total_income: string;
+  total_expense: string;
+  transaction_count: number;
+  transactions: BankTransactionItem[];
+}
+
+/**
+ * Перегенерирует банковские транзакции для заявки.
+ * Использует application.bank_statement_date если он задан,
+ * иначе — today - random(7..10).
+ * ВАЖНО: перезаписывает существующий bank_transactions_override.
+ */
+export async function regenerateBankTransactions(
+  appId: number
+): Promise<BankStatementResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${appId}/bank-transactions/generate`,
+    {
+      method: "POST",
+      headers: jsonHeaders(),
+    }
+  );
+  if (!res.ok) throw new Error(`Failed to regenerate bank transactions: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Получить текущие банковские транзакции заявки (если override установлен).
+ * Возвращает null если override пустой.
+ */
+export async function getBankTransactions(
+  appId: number
+): Promise<BankStatementResponse | null> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${appId}/bank-transactions`,
+    { headers: authHeaders() }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch bank transactions: ${res.status}`);
+  return res.json();
+}
