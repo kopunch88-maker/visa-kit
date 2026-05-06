@@ -270,7 +270,14 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             {/* Pack 27.0 - удаление в корзину */}
             <DeleteButton
               application={application}
-              onDeleted={() => { if (onUpdated) onUpdated(); }}
+              onDeleted={() => {
+                // Pack 27.0 — после удаления сначала снять выбор (URL без id),
+                // потом обновить список. useEffect в page.tsx выберет первую активную.
+                if (typeof window !== "undefined") {
+                  window.history.replaceState(null, "", "/admin");
+                }
+                if (onUpdated) onUpdated();
+              }}
             />
           </div>
         </div>
