@@ -25,6 +25,21 @@ type Action =
       fields: ExtractedCompanyFields["fields"];
     };
 
+/**
+ * Pack 26.0.1 — переименование полей backend-ответа в имена CompanyResponse.
+ * Backend возвращает inn/kpp (как в реквизитах), но в схеме они tax_id_primary/secondary.
+ */
+function mapFieldsToCompany(
+  raw: ExtractedCompanyFields["fields"]
+): Record<string, string | null | undefined> {
+  const { inn, kpp, ...rest } = raw;
+  return {
+    ...rest,
+    tax_id_primary: inn,
+    tax_id_secondary: kpp,
+  };
+}
+
 interface Props {
   onClose: () => void;
   onSelect: (action: Action) => void;
@@ -50,7 +65,7 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
       if (result.existing_company_id !== null) {
         setConflict(result);
       } else {
-        onSelect({ type: "create_new", fields: result.fields });
+        onSelect({ type: "create_new", fields: mapFieldsToCompany(result.fields) as any });
       }
     } catch (e) {
       setError((e as Error).message);
@@ -104,7 +119,7 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
                   onSelect({
                     type: "update_existing",
                     companyId: conflict.existing_company_id!,
-                    fields: conflict.fields,
+                    fields: mapFieldsToCompany(conflict.fields) as any,
                   })
                 }
                 className="w-full px-4 py-2 rounded-md text-sm font-medium text-white"
@@ -115,7 +130,7 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
               <button
                 type="button"
                 onClick={() =>
-                  onSelect({ type: "create_new", fields: conflict.fields })
+                  onSelect({ type: "create_new", fields: mapFieldsToCompany(conflict.fields) as any })
                 }
                 className="w-full px-4 py-2 rounded-md text-sm font-medium border text-primary hover:bg-secondary"
                 style={{
