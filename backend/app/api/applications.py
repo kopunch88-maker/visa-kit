@@ -614,3 +614,134 @@ def unarchive_application(
     session.commit()
     session.refresh(app)
     return _enrich(app, session)
+
+
+# ============================================================================
+# Pack 27.0 - орзина (soft-delete с автоудалением через 7 дней)
+# ============================================================================
+
+
+def _permanent_delete_application(session: Session, app: Application) -> None:
+    """Pack 27.0 - Permanent delete: R2 файлы + 7 связанных таблиц + сама application."""
+    from app.services.storage import get_storage
+    from sqlalchemy import text as sql_text
+    storage = get_storage()
+    keys_to_delete = []
+
+    rows = session.connection().execute(
+        sql_text("SELECT storage_key, original_storage_key FROM applicant_document WHERE application_id = :aid"),
+        {"aid": app.id}
+    ).fetchall()
+    for sk, osk in rows:
+        if sk: keys_to_delete.append(sk)
+        if osk: keys_to_delete.append(osk)
+
+    rows = session.connection().execute(
+        sql_text("SELECT s3_key FROM generated_document WHERE application_id = :aid"),
+        {"aid": app.id}
+    ).fetchall()
+    for (sk,) in rows:
+        if sk: keys_to_delete.append(sk)
+
+    rows = session.connection().execute(
+        sql_text("SELECT s3_key FROM uploaded_file WHERE application_id = :aid"),
+        {"aid": app.id}
+    ).fetchall()
+    for (sk,) in rows:
+        if sk: keys_to_delete.append(sk)
+
+    import logging
+    log = logging.getLogger(__name__)
+    deleted_count = 0
+    for key in keys_to_delete:
+        try:
+            if hasattr(storage, "delete"):
+                storage.delete(key)
+            elif hasattr(storage, "delete_object"):
+                storage.delete_object(key)
+            elif hasattr(storage, "client") and hasattr(storage, "bucket_name"):
+                storage.client.delete_object(Bucket=storage.bucket_name, Key=key)
+            deleted_count += 1
+        except Exception as e:
+            log.warning(f"Pack 27.0: failed to delete R2 key {key}: {e}")
+
+    log.info(f"Pack 27.0: permanent delete app {app.id}, R2 deleted {deleted_count}/{len(keys_to_delete)}")
+
+    for tbl in ("applicant_document", "generated_document", "uploaded_file",
+                "family_member", "previous_residence", "timeline_event", "translation"):
+        session.connection().execute(
+            sql_text(f"DELETE FROM {tbl} WHERE application_id = :aid"),
+            {"aid": app.id}
+        )
+
+    session.delete(app)
+
+
+@router.delete("/{app_id}", status_code=200)
+def soft_delete_application(
+    app_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Pack 27.0 - Soft-delete (в корзину). з любого статуса. сли в архиве - выводит и удаляет."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    if app.deleted_at is not None:
+        raise HTTPException(409, "Application is already in trash")
+
+    was_archived = app.is_archived
+    if was_archived:
+        app.is_archived = False
+        app.archived_at = None
+    app.deleted_at = datetime.utcnow()
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id, "application_deleted",
+        f"аявка перемещена в корзину (статус: {app.status}{'; была в архиве' if was_archived else ''})",
+        {"status_at_delete": str(app.status), "was_archived": was_archived},
+    )
+    session.commit()
+    session.refresh(app)
+    return {"id": app.id, "deleted_at": app.deleted_at.isoformat()}
+
+
+@router.post("/{app_id}/restore", status_code=200)
+def restore_application(
+    app_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Pack 27.0 - осстановить заявку из корзины."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    if app.deleted_at is None:
+        raise HTTPException(409, "Application is not in trash")
+    app.deleted_at = None
+    session.add(app)
+    _log_event(session, app.id, "manager", user_id, "application_restored",
+               "аявка восстановлена из корзины")
+    session.commit()
+    session.refresh(app)
+    return _enrich(app, session)
+
+
+@router.delete("/{app_id}/permanent", status_code=200)
+def permanent_delete_application_endpoint(
+    app_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Pack 27.0 - Permanent delete: R2 + связанные таблицы + application.  Т."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    ref = app.reference
+    _log_event(session, app.id, "manager", user_id, "application_permanently_deleted",
+               f"аявка удалена навсегда (reference: {ref})",
+               {"reference": ref, "status": str(app.status)})
+    _permanent_delete_application(session, app)
+    session.commit()
+    return {"deleted": True, "reference": ref}
+
