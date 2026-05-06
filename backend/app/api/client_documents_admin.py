@@ -279,12 +279,11 @@ def _auto_apply_ocr_to_applicant(application_id: int):
                     if _is_empty(current_latin):
                         update_data[latin_field] = transliterate_name(new_native)
 
-        # Education
+        # Education — Pack 25.12: DIPLOMA_MAIN всегда замещает education
+        # (реальный документ важнее легенды Pack 19.0)
         edu_record = _build_education_from_diploma(session, application_id)
         if edu_record:
-            existing_edu = (existing.education if existing else []) or []
-            if not existing_edu:
-                update_data["education"] = [edu_record]
+            update_data["education"] = [edu_record]
 
         if not update_data:
             log.info(f"Auto-apply: nothing to update for app {application_id}")
