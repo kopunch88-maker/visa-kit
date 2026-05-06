@@ -270,7 +270,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             {/* Pack 27.0 - удаление в корзину */}
             <DeleteButton
               application={application}
-              onDeleted={() => router.push("/admin")}
+              onDeleted={() => { if (onUpdated) onUpdated(); }}
             />
           </div>
         </div>
