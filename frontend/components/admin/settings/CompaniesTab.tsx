@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Loader2, Edit2, Power } from "lucide-react";
+import { Plus, Loader2, Edit2, Power, FileUp } from "lucide-react";
 import {
   CompanyResponse,
   listCompanies,
   deleteCompany,
 } from "@/lib/api";
 import { CompanyDrawer } from "./CompanyDrawer";
+// Pack 26.0 — диалог импорта реквизитов из DOCX
+import { CompanyImportDialog } from "./CompanyImportDialog";
 
 export function CompaniesTab() {
   const [companies, setCompanies] = useState<CompanyResponse[]>([]);
@@ -15,6 +17,9 @@ export function CompaniesTab() {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | "new" | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  // Pack 26.0 — состояние для импорта реквизитов из DOCX
+  const [importOpen, setImportOpen] = useState(false);
+  const [importedFields, setImportedFields] = useState<Partial<CompanyResponse> | null>(null);
 
   async function load() {
     setError(null);
@@ -56,12 +61,21 @@ export function CompaniesTab() {
             Показать неактивные
           </label>
         </div>
-        <button onClick={() => setEditingId("new")}
-          className="px-3 py-1.5 rounded-md text-sm font-medium text-white flex items-center gap-1.5"
-          style={{ background: "var(--color-accent)" }}>
-          <Plus className="w-4 h-4" />
-          Добавить компанию
-        </button>
+                <div className="flex items-center gap-2">
+          <button onClick={() => setImportOpen(true)}
+            className="px-3 py-1.5 rounded-md text-sm font-medium border flex items-center gap-1.5 hover:bg-secondary"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+            title="Загрузить DOCX с реквизитами — система сама заполнит поля">
+            <FileUp className="w-4 h-4" />
+            Загрузить реквизиты
+          </button>
+          <button onClick={() => { setImportedFields(null); setEditingId("new"); }}
+            className="px-3 py-1.5 rounded-md text-sm font-medium text-white flex items-center gap-1.5"
+            style={{ background: "var(--color-accent)" }}>
+            <Plus className="w-4 h-4" />
+            Добавить компанию
+          </button>
+        </div>
       </div>
 
       {error && <div className="bg-danger text-danger text-sm p-3 rounded-md mb-3">{error}</div>}
@@ -124,8 +138,27 @@ export function CompaniesTab() {
       {editingId !== null && (
         <CompanyDrawer
           companyId={editingId === "new" ? null : editingId}
-          onClose={() => setEditingId(null)}
-          onSaved={() => { setEditingId(null); load(); }}
+          initialFields={importedFields ?? undefined}
+          onClose={() => { setEditingId(null); setImportedFields(null); }}
+          onSaved={() => { setEditingId(null); setImportedFields(null); load(); }}
+        />
+      )}
+
+      {/* Pack 26.0 — диалог загрузки DOCX с реквизитами */}
+      {importOpen && (
+        <CompanyImportDialog
+          onClose={() => setImportOpen(false)}
+          onSelect={(action) => {
+            setImportOpen(false);
+            // applyAction: open drawer with prefilled fields
+            // create_new → new drawer; update_existing → edit drawer for that company
+            setImportedFields(action.fields as Partial<CompanyResponse>);
+            if (action.type === "create_new") {
+              setEditingId("new");
+            } else {
+              setEditingId(action.companyId);
+            }
+          }}
         />
       )}
     </div>

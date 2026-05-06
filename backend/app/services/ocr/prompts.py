@@ -512,3 +512,96 @@ PROMPT_BY_DOC_TYPE = {
     "criminal_record": CRIMINAL_RECORD_PROMPT,
     "egryl_extract": EGRYL_EXTRACT_PROMPT,
 }
+
+
+# ============================================================================
+# Pack 26.0 — извлечение реквизитов компании из текста (DOCX/plaintext)
+# Расширенный EGRYL-промпт: + склонения директора в одном вызове + uставный капитал
+# ============================================================================
+
+COMPANY_REQUISITES_PROMPT = """You are an expert assistant that extracts Russian company registration data (реквизиты компании) from documents.
+
+The input is plain text from a Russian-language DOCX file containing company requisites.
+Examples of source documents:
+- Карточка реквизитов организации (company business card)
+- Выписка из ЕГРЮЛ (official registry extract)
+- Текст письма с реквизитами
+
+Extract the following fields and return STRICTLY a JSON object. No markdown, no preamble.
+
+NAMES:
+- full_name_ru: Full company name in Russian, in canonical form. ALWAYS use the long form
+  with quotes around the brand name. Example: 'Общество с ограниченной ответственностью "АГАЛАРОВ-ДЕВЕЛОПМЕНТ"'.
+  If input has just 'ООО "X"' — expand to 'Общество с ограниченной ответственностью "X"'.
+- full_name_es: Spanish transliteration of the full name. Format:
+  'Sociedad de Responsabilidad Limitada "BRANDNAME"' where BRANDNAME is the
+  brand part TRANSLITERATED to Latin (not translated). Example for АГАЛАРОВ-ДЕВЕЛОПМЕНТ →
+  'Sociedad de Responsabilidad Limitada "Agalarov-Development"'.
+- short_name: Short display name in format 'ООО "BRANDNAME"' in Cyrillic, ALL CAPS for the brand.
+  Example: 'ООО "АГАЛАРОВ-ДЕВЕЛОПМЕНТ"'. NOT just the brand without prefix.
+
+REGISTRATION:
+- ogrn: ОГРН — 13 digits as string (legal entity).
+- inn: ИНН — 10 digits for legal entity, as string.
+- kpp: КПП — 9 digits as string. Found near ИНН ('ИНН/КПП 1234567890/123456789').
+
+ADDRESSES:
+- legal_address: Юридический адрес as a single line. Preserve abbreviations (г., д., помещ., etc.)
+  but if you see 'город Москва' — keep it as 'г. Москва' (apply Минфин 171н abbreviations).
+- postal_address: Почтовый адрес if explicitly listed and DIFFERENT from legal. null otherwise.
+
+DIRECTOR — generate ALL forms in this single call:
+- director_full_name_ru: ФИО in NOMINATIVE case (именительный) as it appears or normalized:
+  "Василевская Анна Вадимовна". If document shows different case — convert to nominative.
+- director_full_name_genitive_ru: SAME ФИО in GENITIVE case (родительный — кого?):
+  "Василевской Анны Вадимовны". Required for contracts ("в лице ... Василевской Анны Вадимовны").
+- director_short_ru: Short signature form "Surname И.О.": "Василевская А.В.".
+  Surname stays full, first name and patronymic are reduced to initials with dots.
+- director_full_name_latin: Latin transliteration of the full name (GOST 7.79 / passport-style):
+  "VASILEVSKAYA ANNA VADIMOVNA". All caps. null if you cannot reliably transliterate.
+- director_position_ru: Position in GENITIVE case (родительный) for contract templates:
+  "Генерального директора" (NOT "Генеральный директор"). If source has nominative — convert.
+  Common mappings: "Генеральный директор" → "Генерального директора",
+  "Директор" → "Директора", "Президент" → "Президента".
+
+BANK:
+- bank_name: Bank name exactly as written. Example: 'Банк ВТБ (ПАО)', 'КБ "Крокус-Банк" (ООО)'.
+- bank_account: Расчётный счёт (Р/с) — 20 digits string.
+- bank_bic: БИК — 9 digits string.
+- bank_correspondent_account: Корр. счёт (КС, к/с) — 20 digits string starting with 30101.
+
+ADDITIONAL:
+- charter_capital: Уставный капитал as string with currency suffix if present, e.g. "410 000 000 руб."
+  null if not in document.
+
+Rules:
+- If a field is not visible or unclear → return null
+- Russian names ALWAYS in Cyrillic
+- DO NOT translate names — only transliterate when explicitly required (full_name_es, director_full_name_latin)
+- For genitive case: apply Russian grammar rules correctly
+  (мужские: Иванов → Иванова, женские: Иванова → Ивановой, отчества: Петрович → Петровича, Петровна → Петровны)
+- For numeric IDs: return as STRINGS (preserve leading zeros if any)
+
+Output schema:
+{
+  "full_name_ru": "Общество с ограниченной ответственностью \"АГАЛАРОВ-ДЕВЕЛОПМЕНТ\"" or null,
+  "full_name_es": "Sociedad de Responsabilidad Limitada \"Agalarov-Development\"" or null,
+  "short_name": "ООО \"АГАЛАРОВ-ДЕВЕЛОПМЕНТ\"" or null,
+  "ogrn": "1037739071556" or null,
+  "inn": "7707038266" or null,
+  "kpp": "773001001" or null,
+  "legal_address": "121248, г. Москва, Кутузовский пр-кт, д. 3, помещ. 1/1" or null,
+  "postal_address": null,
+  "director_full_name_ru": "Василевская Анна Вадимовна" or null,
+  "director_full_name_genitive_ru": "Василевской Анны Вадимовны" or null,
+  "director_short_ru": "Василевская А.В." or null,
+  "director_full_name_latin": "VASILEVSKAYA ANNA VADIMOVNA" or null,
+  "director_position_ru": "Генерального директора" or null,
+  "bank_name": "КБ \"Крокус-Банк\" (ООО)" or null,
+  "bank_account": "40702810989714733332" or null,
+  "bank_bic": "044525881" or null,
+  "bank_correspondent_account": "30101810445250000881" or null,
+  "charter_capital": "410 000 000 руб." or null
+}
+
+Return ONLY the JSON object."""

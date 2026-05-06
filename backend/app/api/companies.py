@@ -17,13 +17,18 @@ Endpoints:
 from datetime import date, timedelta
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from app.db.session import get_session
 from app.models import Company, CompanyCreate, CompanyUpdate, CompanyRead, Application
 from app.services.transliteration import transliterate_name
+# Pack 26.0 — импорт реквизитов из DOCX
+from app.services.company_extractor import (
+    extract_company_from_docx,
+    CompanyExtractError,
+)
 from .dependencies import require_manager  # JWT + role check
 
 router = APIRouter(prefix="/admin/companies", tags=["companies"])
@@ -177,3 +182,81 @@ def translit_suggest(
     """
     suggestion = transliterate_name(payload.text)
     return TranslitSuggestResponse(text=payload.text, suggestion=suggestion)
+
+
+# ============================================================================
+# Pack 26.0 — извлечение реквизитов компании из DOCX-файла
+# ============================================================================
+
+class ExtractedCompanyFields(BaseModel):
+    """Pack 26.0 response: распознанные поля + проверка на дубликат по ИНН."""
+    fields: dict
+    existing_company_id: int | None = None
+    existing_company_name: str | None = None
+
+
+@router.post("/extract-from-document", response_model=ExtractedCompanyFields)
+async def extract_company_from_document(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> ExtractedCompanyFields:
+    """
+    Pack 26.0 — Принимает DOCX-файл с реквизитами, возвращает структурированные поля.
+
+    Workflow:
+    1. Менеджер кидает DOCX в UI
+    2. Backend читает текст из DOCX и отправляет LLM
+    3. LLM возвращает поля + склонения директора
+    4. Backend ищет компанию с таким ИНН в БД
+    5. Возвращает поля + existing_company_id (если найдена)
+
+    UI после этого:
+    - Если existing_company_id null → открывает CompanyDrawer (создание) с prefilled полями
+    - Если есть → диалог «Обновить / Создать новую / Отмена»
+
+    Поддерживается ТОЛЬКО .docx. PDF/JPG в следующих пакетах.
+    """
+    filename = file.filename or "unknown"
+    if not filename.lower().endswith(".docx"):
+        raise HTTPException(
+            400,
+            f"Поддерживается только .docx. Получено: {filename}",
+        )
+
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:  # 5 MB лимит
+        raise HTTPException(400, "Файл слишком большой (>5 МБ)")
+    if len(contents) < 100:
+        raise HTTPException(400, "Файл слишком маленький (<100 байт), битый?")
+
+    try:
+        fields = await extract_company_from_docx(contents)
+    except CompanyExtractError as e:
+        raise HTTPException(422, f"Не удалось распознать реквизиты: {e}")
+    except Exception as e:
+        # Любая другая ошибка — лог + 500
+        import logging
+        logging.getLogger(__name__).error(
+            f"Pack 26.0: unexpected error: {e}", exc_info=True
+        )
+        raise HTTPException(500, f"Ошибка обработки: {e}")
+
+    # Поиск дубликата по ИНН
+    existing_company_id = None
+    existing_company_name = None
+    inn = fields.get("inn")
+    if inn:
+        existing = session.exec(
+            select(Company).where(Company.tax_id_primary == inn)
+        ).first()
+        if existing:
+            existing_company_id = existing.id
+            existing_company_name = existing.short_name
+
+    return ExtractedCompanyFields(
+        fields=fields,
+        existing_company_id=existing_company_id,
+        existing_company_name=existing_company_name,
+    )
+

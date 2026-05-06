@@ -2013,3 +2013,58 @@ export async function getBankTransactions(
   if (!res.ok) throw new Error(`Failed to fetch bank transactions: ${res.status}`);
   return res.json();
 }
+
+// Pack 26.0 — извлечение реквизитов компании из DOCX
+export interface ExtractedCompanyFields {
+  fields: {
+    full_name_ru?: string | null;
+    full_name_es?: string | null;
+    short_name?: string | null;
+    ogrn?: string | null;
+    inn?: string | null;
+    kpp?: string | null;
+    legal_address?: string | null;
+    postal_address?: string | null;
+    director_full_name_ru?: string | null;
+    director_full_name_genitive_ru?: string | null;
+    director_short_ru?: string | null;
+    director_full_name_latin?: string | null;
+    director_position_ru?: string | null;
+    bank_name?: string | null;
+    bank_account?: string | null;
+    bank_bic?: string | null;
+    bank_correspondent_account?: string | null;
+    charter_capital?: string | null;
+  };
+  existing_company_id: number | null;
+  existing_company_name: string | null;
+}
+
+/**
+ * Загружает DOCX с реквизитами компании на бэкенд, возвращает извлечённые поля
+ * + existing_company_id если компания с таким ИНН уже есть в БД.
+ */
+export async function extractCompanyFromDocument(
+  file: File
+): Promise<ExtractedCompanyFields> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/companies/extract-from-document`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: formData,
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Не удалось извлечь реквизиты (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}

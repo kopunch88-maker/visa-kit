@@ -13,7 +13,9 @@ import {
 } from "@/lib/api";
 
 interface Props {
-  companyId: number | null; // null = создание новой
+  companyId: number | null;
+  // Pack 26.0 — опционально: prefilled поля при импорте из DOCX
+  initialFields?: Partial<CompanyResponse>;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -24,7 +26,7 @@ const COUNTRY_OPTIONS = [
   { value: "BLR", label: "Беларусь" },
 ];
 
-export function CompanyDrawer({ companyId, onClose, onSaved }: Props) {
+export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Props) {
   const isNew = companyId === null;
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -55,6 +57,15 @@ export function CompanyDrawer({ companyId, onClose, onSaved }: Props) {
     bank_correspondent_account: "",
     notes: "",
   });
+
+  // Pack 26.0 — если переданы initialFields (импорт из DOCX) — применяем их к форме.
+  // Делаем при первом рендере и при смене initialFields. Для existing-режима поверх
+  // уже подгруженных через getCompany данных тоже применятся (LLM-распознавание имеет
+  // приоритет, менеджер видит и правит).
+  useEffect(() => {
+    if (!initialFields) return;
+    setForm((prev) => ({ ...prev, ...initialFields }));
+  }, [initialFields]);
 
   useEffect(() => {
     function handleEsc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
