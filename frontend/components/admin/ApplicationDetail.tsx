@@ -29,6 +29,8 @@ import { SubmissionDrawer } from "./SubmissionDrawer";
 import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
+// Pack 27.0 — кнопка удаления в корзину
+import { DeleteButton } from "./DeleteButton";
 import { AdminClientDocuments } from "./AdminClientDocuments";
 import { TranslationPanel } from "./TranslationPanel";
 
@@ -265,6 +267,11 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             </button>
 
             <ArchiveButton application={application} onChanged={handleArchiveChanged} />
+            {/* Pack 27.0 - удаление в корзину */}
+            <DeleteButton
+              application={application}
+              onDeleted={() => router.push("/admin")}
+            />
           </div>
         </div>
       </div>
