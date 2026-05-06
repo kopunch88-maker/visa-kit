@@ -259,9 +259,9 @@ def generate_default_transactions(
             days=random.randint(STATEMENT_AGE_DAYS_MIN, STATEMENT_AGE_DAYS_MAX)
         )
 
-    # Pack 25.9: period_end = statement_date (включая день формирования).
-    # Реальные банки: «выписка с 27.01 по 27.04, дата формирования 27.04».
-    period_end = statement_date
+    # Pack 25.11: period_end = statement_date - 1 день (как реально делают банки).
+    # Пример: дата формирования 06.05 → период 06.02..05.05 (3 мес минус 1 день).
+    period_end = statement_date - timedelta(days=1)
     period_start = (statement_date - relativedelta(months=period_months))
 
     # Налог и сумма перевода KWIKPAY (с копейками)
