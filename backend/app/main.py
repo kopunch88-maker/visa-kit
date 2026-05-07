@@ -22,6 +22,7 @@ from app.db.migrations import (
     apply_pack17_2_4_1_migration,
     apply_pack28_0_migration,
     apply_pack28_2_migration,
+    apply_pack28_5_migration,
 )
 
 
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
     apply_pack17_2_4_1_migration()  # BigInteger fix + reset stuck imports (Pack 17.2.4.1)
     apply_pack28_0_migration()  # npd_candidate indexes (Pack 28.0)
     apply_pack28_2_migration()  # npd_refill_task table + indexes (Pack 28.2)
+    apply_pack28_5_migration()  # Pack 28.5 result_registration_date column
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,7 @@ from app.api import (  # noqa: E402
     inn_debug_pipeline,
     registry_admin,  # Pack 17.2.4
     npd_pool_admin,  # Pack 28.2
+    inn_date_refine,  # Pack 28.5
     
 )
 from app.api import ifns_mfc
@@ -111,6 +114,7 @@ app.include_router(inn_generation.router, prefix="/api")
 app.include_router(inn_debug_pipeline.router, prefix="/api")
 app.include_router(registry_admin.router, prefix="/api")  # Pack 17.2.4
 app.include_router(npd_pool_admin.router, prefix="/api")  # Pack 28.2
+app.include_router(inn_date_refine.router, prefix="/api")  # Pack 28.5
 
 
 @app.get("/", tags=["meta"])

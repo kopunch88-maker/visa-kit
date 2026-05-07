@@ -554,7 +554,10 @@ async def inn_accept(
     if payload.inn_source:
         applicant.inn_source = payload.inn_source
     elif not applicant.inn_source:
-        applicant.inn_source = "npd_pool"  # Pack 28 Часть 2 default
+        applicant.inn_source = (
+            "npd_pool_real" if cand and cand.registration_date
+            else "npd_pool_synthetic"
+        )  # Pack 28.5: разделяем реальную/синтетическую дату
 
     cand.status = "used"
     cand.used_by_applicant_id = applicant.id

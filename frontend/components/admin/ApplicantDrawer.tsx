@@ -24,6 +24,7 @@ import {
   regenerateBankTransactions,
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
+import { RefineInnDateModal } from "./RefineInnDateModal";
 
 interface Props {
   applicant: ApplicantResponse;
@@ -111,6 +112,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [inn, setInn] = useState(applicant.inn || "");
   // Pack 17.3 — модал генерации ИНН + дата регистрации НПД
   const [innModalOpen, setInnModalOpen] = useState(false);
+  // Pack 28.5: модал уточнения реальной даты регистрации НПД
+  const [refineModalOpen, setRefineModalOpen] = useState(false);
   const [inn_registration_date, setInnRegistrationDate] = useState(
     applicant.inn_registration_date || ""
   );
@@ -675,6 +678,48 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 onChange={setInnRegistrationDate}
                 type="date"
               />
+            )}
+            {/* Pack 28.5: бэйдж реальная/ориентировочная + кнопка уточнения */}
+            {applicant.inn && applicant.inn_source && (
+              <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
+                {applicant.inn_source === "npd_pool_real" ? (
+                  <span
+                    className="px-2 py-0.5 rounded inline-flex items-center gap-1"
+                    style={{
+                      background: "var(--color-bg-success)",
+                      color: "var(--color-text-success)",
+                      border: "0.5px solid var(--color-border-success)",
+                    }}
+                  >
+                    ✓ Реальная дата (из ФНС)
+                  </span>
+                ) : applicant.inn_source === "npd_pool_synthetic" ? (
+                  <>
+                    <span
+                      className="px-2 py-0.5 rounded inline-flex items-center gap-1"
+                      style={{
+                        background: "var(--color-bg-warning)",
+                        color: "var(--color-text-warning)",
+                        border: "0.5px solid var(--color-border-warning)",
+                      }}
+                    >
+                      ⚠ Ориентировочная дата
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setRefineModalOpen(true)}
+                      className="px-2 py-0.5 rounded text-xs hover:bg-secondary transition-colors"
+                      style={{
+                        border: "0.5px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                      title="Запустит бинпоиск через ФНС API (~7 минут)"
+                    >
+                      Уточнить точную дату
+                    </button>
+                  </>
+                ) : null}
+              </div>
             )}
           </Section>
 
@@ -1344,6 +1389,20 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         }}
       />
     )}
+
+      {/* Pack 28.5: модал уточнения даты регистрации НПД */}
+      {refineModalOpen && applicant.inn && (
+        <RefineInnDateModal
+          applicantId={applicant.id}
+          applicantName={[applicant.last_name_native, applicant.first_name_native].filter(Boolean).join(" ") || applicant.last_name_latin || `Applicant ${applicant.id}`}
+          inn={applicant.inn}
+          onClose={() => setRefineModalOpen(false)}
+          onSuccess={(newDate) => {
+            setInnRegistrationDate(newDate);
+            setRefineModalOpen(false);
+          }}
+        />
+      )}
     </>
   );
 }

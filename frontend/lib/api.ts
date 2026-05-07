@@ -2210,3 +2210,59 @@ export async function refillPoolGlobal(payload?: {
   return res.json();
 }
 
+
+// ============================================================================
+// Pack 28.5 — Уточнение реальной даты регистрации НПД через бинпоиск
+// ============================================================================
+
+export type RefineInnDateTask = {
+  id: number;
+  kind: string;
+  status: string; // 'pending' | 'running' | 'done' | 'failed'
+
+  progress_text: string | null;
+  progress_current: number;
+  progress_total: number;
+
+  result_inn: string | null;
+  result_registration_date: string | null; // ISO дата при status='done'
+
+  error: string | null;
+
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+/**
+ * Pack 28.5: запустить бинпоиск даты регистрации НПД для applicant'а.
+ * Возвращает task — поллить через getRefineTask каждые 5-10 сек до status='done'.
+ */
+export async function startRefineInnDate(
+  applicantId: number,
+): Promise<RefineInnDateTask> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/refine-inn-date`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Pack 28.5: получить статус refine-задачи (для поллинга).
+ */
+export async function getRefineTask(taskId: number): Promise<RefineInnDateTask> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/refine-tasks/${taskId}`,
+    {
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+

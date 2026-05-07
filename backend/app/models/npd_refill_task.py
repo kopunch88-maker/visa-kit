@@ -20,7 +20,7 @@ inn-suggest (фронтовый поллер) забирает один verified
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -62,6 +62,10 @@ class NpdRefillTask(SQLModel, table=True):
     # (фронт может его сразу взять), для global — None.
     result_inn: Optional[str] = Field(default=None, max_length=12)
     result_region_code: Optional[str] = Field(default=None, max_length=2)
+
+    # Pack 28.5: для kind='refine_date' — найденная дата регистрации НПД.
+    # NULL для других kind (refill_pool / global / lazy_region).
+    result_registration_date: Optional[date] = Field(default=None)
 
     # Сводная статистика после окончания (для UI и логов)
     verified_added: int = Field(default=0)

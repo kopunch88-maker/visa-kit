@@ -617,3 +617,52 @@ def apply_pack28_2_migration():
         except Exception as e:
             log.warning(f"[migration:pack28_2] Index creation failed: {e}")
 
+
+def apply_pack28_5_migration():
+    """
+    Pack 28.5 (08.05.2026): добавление поля result_registration_date
+    в таблицу npd_refill_task для бинпоиска даты регистрации НПД.
+
+    Также пометка существующих applicants с inn_source='npd_pool' как
+    'npd_pool_synthetic' (они получили синтетическую дату по Pack 18.3.4).
+    """
+    with engine.begin() as conn:
+        # === Добавление колонки result_registration_date в npd_refill_task
+        if not _table_exists(conn, "npd_refill_task"):
+            log.info(
+                "[migration:pack28_5] Table npd_refill_task not found — "
+                "skip column add (Pack 28.2 migration не применился?)"
+            )
+        elif not _column_exists(conn, "npd_refill_task", "result_registration_date"):
+            try:
+                conn.execute(text(
+                    "ALTER TABLE npd_refill_task "
+                    "ADD COLUMN result_registration_date DATE"
+                ))
+                log.info(
+                    "[migration:pack28_5] Added npd_refill_task.result_registration_date"
+                )
+            except Exception as e:
+                log.warning(f"[migration:pack28_5] Add column failed: {e}")
+        else:
+            log.info(
+                "[migration:pack28_5] result_registration_date already exists"
+            )
+
+        # === Backfill: применять только если есть applicant с inn_source='npd_pool'
+        # (Pack 28.2 default). Меняем на 'npd_pool_synthetic' потому что у них
+        # точно синтетическая дата (бинпоиск на момент Pack 28.2 не делался).
+        try:
+            result = conn.execute(text(
+                "UPDATE applicant SET inn_source = 'npd_pool_synthetic' "
+                "WHERE inn_source = 'npd_pool'"
+            ))
+            count = result.rowcount if hasattr(result, 'rowcount') else 0
+            if count > 0:
+                log.info(
+                    f"[migration:pack28_5] Backfilled {count} applicants: "
+                    f"npd_pool → npd_pool_synthetic"
+                )
+        except Exception as e:
+            log.warning(f"[migration:pack28_5] Backfill failed: {e}")
+

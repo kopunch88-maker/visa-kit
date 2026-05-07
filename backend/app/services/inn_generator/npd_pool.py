@@ -81,6 +81,11 @@ KEY_REGIONS: tuple[str, ...] = (
     "50",  # Московская область
 )
 
+# Pack 28.5: лимит refine-задач за один cron (защита от бесконечного бинпоиска).
+# 20 × ~7 мин = ~2.5 часа max на этап refine_pending_dates.
+# Остальные verified без даты доуточнятся в следующий cron.
+REFINE_DATE_PER_CRON_LIMIT = 20
+
 
 # ===========================================================================
 # Утилиты
@@ -609,6 +614,77 @@ async def revalidate_verified_candidates(
 # ===========================================================================
 
 
+async def _refine_pending_dates(
+    session,
+    task,
+    *,
+    limit: int = REFINE_DATE_PER_CRON_LIMIT,
+) -> int:
+    """
+    Pack 28.5: для до `limit` verified-кандидатов без registration_date
+    запускает бинпоиск и сохраняет реальную дату.
+
+    Используется в run_global_refill после revalidate + refill.
+
+    Возвращает: сколько дат было успешно найдено и сохранено.
+    """
+    from datetime import date as _date
+    from .npd_date_finder import binary_search_registration_date
+    from .npd_status import NpdStatusChecker, NpdStatusError
+    from sqlmodel import select
+    from app.models import NpdCandidate
+
+    candidates = session.exec(
+        select(NpdCandidate)
+        .where(NpdCandidate.status == "verified")
+        .where(NpdCandidate.registration_date.is_(None))
+        .order_by(NpdCandidate.fetched_at.asc())
+        .limit(limit)
+    ).all()
+
+    if not candidates:
+        log.info("[refine_dates] no candidates need refinement")
+        return 0
+
+    log.info(
+        f"[refine_dates] starting binary search for {len(candidates)} "
+        f"candidates (limit={limit})"
+    )
+
+    refined = 0
+    async with NpdStatusChecker() as checker:
+        for i, cand in enumerate(candidates, 1):
+            task.progress_text = (
+                f"Уточняю даты НПД: {i}/{len(candidates)} ({cand.inn})"
+            )
+            session.add(task)
+            session.commit()
+
+            try:
+                reg_date = await binary_search_registration_date(
+                    checker,
+                    cand.inn,
+                    upper_bound=cand.rmsp_pp_support_date or _date.today(),
+                )
+                if reg_date:
+                    fresh = session.get(NpdCandidate, cand.inn)
+                    if fresh:
+                        fresh.registration_date = reg_date
+                        session.add(fresh)
+                        session.commit()
+                        refined += 1
+                        log.info(f"[refine_dates] {cand.inn}: registration_date = {reg_date}")
+                else:
+                    log.warning(f"[refine_dates] {cand.inn} returned None")
+            except NpdStatusError as e:
+                log.warning(f"[refine_dates] {cand.inn}: {e}")
+            except Exception:
+                log.exception(f"[refine_dates] {cand.inn}: unexpected error")
+
+    log.info(f"[refine_dates] done: {refined}/{len(candidates)} dates refined")
+    return refined
+
+
 async def run_global_refill(
     session: Session,
     task_id: int,
@@ -705,6 +781,17 @@ async def run_global_refill(
                 continue
 
         # ----- Финал -----
+        # Pack 28.5: уточняем даты регистрации НПД у verified без даты
+        task.progress_text = "Уточняю даты регистрации НПД..."
+        session.add(task)
+        session.commit()
+        try:
+            refined = await _refine_pending_dates(session, task)
+            log.info(f"[run_global_refill] refined {refined} dates")
+        except Exception:
+            log.exception("[run_global_refill] refine_pending_dates failed")
+            # не валим весь cron из-за refine — это опциональный шаг
+
         task.status = "done"
         task.finished_at = datetime.utcnow()
         elapsed = time.time() - t_start
