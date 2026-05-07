@@ -39,6 +39,7 @@ from app.services.inn_generator.npd_pool import (
     KEY_REGIONS,
     get_pool_stats,
     run_global_refill,
+    run_lazy_region_refill,
 )
 
 from .dependencies import require_manager
@@ -292,3 +293,134 @@ def _run_global_refill_bg(
                     session.commit()
         except Exception:
             log.exception("[npd-pool] failed to mark task as failed")
+
+
+# ============================================================================
+# Pack 28.6 — кнопка "+ Добавить" по региону
+# ============================================================================
+
+@router.post(
+    "/region/{region_code}/refill",
+    response_model=NpdRefillTaskResponse,
+)
+async def refill_region(
+    region_code: str,
+    background_tasks: BackgroundTasks,
+    add_target: int = 5,
+    session: Session = Depends(get_session),
+    user=Depends(require_manager),
+):
+    """
+    Pack 28.6: запустить lazy refill для конкретного региона из админки.
+
+    Параметр add_target — сколько ДОПОЛНИТЕЛЬНО verified кандидатов искать
+    (поверх текущего количества). По умолчанию +5.
+
+    Idempotency: если для этого региона уже есть pending/running task младше
+    30 мин — переиспользуем её (не дублируем refill).
+    """
+    # Валидация region_code (2 цифры)
+    if not (region_code.isdigit() and len(region_code) == 2):
+        raise HTTPException(400, f"region_code должен быть 2 цифрами, получено: {region_code!r}")
+
+    if add_target < 1 or add_target > 20:
+        raise HTTPException(400, "add_target должен быть от 1 до 20")
+
+    # Считаем текущее количество verified в регионе
+    from sqlmodel import select
+    current_verified = session.exec(
+        select(NpdCandidate)
+        .where(NpdCandidate.region_code == region_code)
+        .where(NpdCandidate.status == "verified")
+    ).all()
+    current_count = len(current_verified)
+    absolute_target = current_count + add_target
+
+    log.info(
+        f"[refill_region] region={region_code} current={current_count} "
+        f"add={add_target} absolute_target={absolute_target}"
+    )
+
+    # Idempotency: ищем активную lazy_region task на этот регион младше 30 мин
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(minutes=30)
+    existing = session.exec(
+        select(NpdRefillTask)
+        .where(NpdRefillTask.kind == "lazy_region")
+        .where(NpdRefillTask.region_code == region_code)
+        .where(NpdRefillTask.created_at >= cutoff)
+        .where(NpdRefillTask.status.in_(["pending", "running"]))
+        .order_by(NpdRefillTask.created_at.desc())
+    ).first()
+
+    if existing:
+        log.info(
+            f"[refill_region] reusing existing task {existing.id} for region={region_code}"
+        )
+        return existing
+
+    # Создаём новую задачу
+    task = NpdRefillTask(
+        kind="lazy_region",
+        status="pending",
+        region_code=region_code,
+        progress_text=f"Поиск чистых самозанятых (регион {region_code}, +{add_target})...",
+        progress_total=absolute_target,
+        progress_current=current_count,
+        triggered_by=f"admin_refill_region:{getattr(user, 'id', '?')}",
+    )
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+
+    # Запускаем background task с absolute_target
+    background_tasks.add_task(
+        _run_region_refill_bg,
+        task_id=task.id,
+        region_code=region_code,
+        absolute_target=absolute_target,
+    )
+
+    return task
+
+
+def _run_region_refill_bg(task_id: int, region_code: str, absolute_target: int) -> None:
+    """
+    Pack 28.6: sync wrapper для BackgroundTasks (вызывает run_lazy_region_refill
+    с заданным absolute_target). Копирует паттерн из inn_generation._run_lazy_refill_bg.
+    """
+    import asyncio
+    from app.db.session import engine
+    from sqlmodel import Session
+
+    log.info(
+        f"[refill_region] BG task_id={task_id} region={region_code} target={absolute_target} starting"
+    )
+    try:
+        with Session(engine) as session:
+            asyncio.run(
+                run_lazy_region_refill(
+                    session=session,
+                    task_id=task_id,
+                    region_code=region_code,
+                    target=absolute_target,
+                )
+            )
+    except Exception as e:
+        log.exception(
+            f"[refill_region] BG task_id={task_id} FAILED: {e}"
+        )
+        # Помечаем task как failed
+        try:
+            with Session(engine) as session:
+                from app.models import NpdRefillTask
+                t = session.get(NpdRefillTask, task_id)
+                if t:
+                    t.status = "failed"
+                    t.error = f"{type(e).__name__}: {str(e)[:512]}"
+                    t.finished_at = datetime.utcnow()
+                    session.add(t)
+                    session.commit()
+        except Exception:
+            pass
+

@@ -2266,3 +2266,29 @@ export async function getRefineTask(taskId: number): Promise<RefineInnDateTask> 
   return res.json();
 }
 
+
+// ============================================================================
+// Pack 28.6 — Кнопка "+ Добавить" по региону в табе настроек
+// ============================================================================
+
+/**
+ * Pack 28.6: запустить lazy refill для конкретного региона.
+ * addTarget — сколько ДОПОЛНИТЕЛЬНО verified искать (поверх текущего).
+ *
+ * Возвращает task — поллить через getNpdPoolTask до status='done' или 'failed'.
+ */
+export async function refillRegion(
+  regionCode: string,
+  addTarget: number = 5,
+): Promise<NpdRefillTask> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/npd-pool/region/${regionCode}/refill?add_target=${addTarget}`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+

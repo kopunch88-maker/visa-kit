@@ -27,6 +27,7 @@ import {
   getNpdPoolStats,
   getNpdPoolTask,
   refillPoolGlobal,
+  refillRegion,
   NpdPoolStats,
   NpdRefillTask,
 } from "@/lib/api";
@@ -52,6 +53,8 @@ export function NpdPoolTab() {
 
   // Refill task state
   const [refillTask, setRefillTask] = useState<NpdRefillTask | null>(null);
+  // Pack 28.6: активные refill-задачи по регионам (для inline-прогресса в таблице)
+  const [regionTasks, setRegionTasks] = useState<Record<string, NpdRefillTask>>({});
   const [refillStartedAt, setRefillStartedAt] = useState<number | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -154,6 +157,42 @@ export function NpdPoolTab() {
   // (для KEY_REGIONS показываем явно, для остальных — отдельный блок)
   const verified = stats?.by_region_verified || {};
 
+  // Pack 28.6: запуск refill для региона + поллинг
+  async function handleRegionRefill(regionCode: string) {
+    if (regionTasks[regionCode]) return; // уже идёт
+    try {
+      const t = await refillRegion(regionCode, 5);
+      setRegionTasks((prev) => ({ ...prev, [regionCode]: t }));
+      pollRegionTask(regionCode, t.id);
+    } catch (e) {
+      console.error("refillRegion failed:", e);
+      alert("Не удалось запустить refill: " + (e as Error).message);
+    }
+  }
+
+  async function pollRegionTask(regionCode: string, taskId: number) {
+    try {
+      const t = await getNpdPoolTask(taskId);
+      setRegionTasks((prev) => ({ ...prev, [regionCode]: t }));
+      if (t.status === "done" || t.status === "failed") {
+        // Через 3 сек удаляем из активных и обновляем общую статистику
+        setTimeout(() => {
+          setRegionTasks((prev) => {
+            const next = { ...prev };
+            delete next[regionCode];
+            return next;
+          });
+          loadStats();
+        }, 3000);
+        return;
+      }
+      setTimeout(() => pollRegionTask(regionCode, taskId), TASK_POLL_INTERVAL_MS);
+    } catch (e) {
+      console.warn("pollRegionTask error:", e);
+      setTimeout(() => pollRegionTask(regionCode, taskId), TASK_POLL_INTERVAL_MS);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Сводка */}
@@ -249,6 +288,9 @@ export function NpdPoolTab() {
                 <th className="text-right px-3 py-2 font-medium text-tertiary">
                   Status
                 </th>
+                <th className="px-3 py-2 text-right text-xs font-medium text-tertiary uppercase tracking-wide">
+                  Действия
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -310,6 +352,14 @@ export function NpdPoolTab() {
                           Пусто
                         </span>
                       )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <RegionRefillButton
+                        regionCode={r.code}
+                        currentVerified={v}
+                        task={regionTasks[r.code]}
+                        onClick={() => handleRegionRefill(r.code)}
+                      />
                     </td>
                   </tr>
                 );
@@ -600,3 +650,92 @@ function formatDateTime(iso: string): string {
     return iso;
   }
 }
+
+// === Pack 28.6: Sub-component кнопки refill региона ===
+
+function RegionRefillButton({
+  regionCode,
+  currentVerified,
+  task,
+  onClick,
+}: {
+  regionCode: string;
+  currentVerified: number;
+  task: NpdRefillTask | undefined;
+  onClick: () => void;
+}) {
+  if (!task) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="px-2 py-1 rounded text-xs inline-flex items-center gap-1 hover:bg-secondary transition-colors"
+        style={{
+          border: "0.5px solid var(--color-border-tertiary)",
+          color: "var(--color-text-primary)",
+        }}
+        title={`Найти ещё 5 verified в регионе ${regionCode} (поверх текущих ${currentVerified})`}
+      >
+        <RefreshCw className="w-3 h-3" />
+        + Добавить 5
+      </button>
+    );
+  }
+
+  const isRunning = task.status === "pending" || task.status === "running";
+  const isDone = task.status === "done";
+  const isFailed = task.status === "failed";
+
+  if (isRunning) {
+    const added = task.verified_added || 0;
+    const target = 5;
+    return (
+      <span
+        className="text-xs px-2 py-1 rounded inline-flex items-center gap-1.5"
+        style={{
+          background: "var(--color-bg-secondary)",
+          color: "var(--color-text-primary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+        }}
+        title={task.progress_text || ""}
+      >
+        <Loader2 className="w-3 h-3 animate-spin" />
+        Поиск {added}/{target}
+      </span>
+    );
+  }
+
+  if (isDone) {
+    return (
+      <span
+        className="text-xs px-2 py-1 rounded inline-flex items-center gap-1"
+        style={{
+          background: "var(--color-bg-success)",
+          color: "var(--color-text-success)",
+        }}
+      >
+        <CheckCircle2 className="w-3 h-3" />
+        +{task.verified_added}
+      </span>
+    );
+  }
+
+  if (isFailed) {
+    return (
+      <span
+        className="text-xs px-2 py-1 rounded inline-flex items-center gap-1"
+        style={{
+          background: "var(--color-bg-danger)",
+          color: "var(--color-text-danger)",
+        }}
+        title={task.error || "Ошибка"}
+      >
+        <XCircle className="w-3 h-3" />
+        Ошибка
+      </span>
+    );
+  }
+
+  return null;
+}
+
