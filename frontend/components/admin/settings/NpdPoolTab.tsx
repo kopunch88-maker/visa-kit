@@ -334,7 +334,7 @@ export function NpdPoolTab() {
         return (
           <div>
             <div className="text-sm font-medium text-primary mb-2">
-              Другие регионы (verified > 0)
+              Другие регионы (verified &gt; 0)
             </div>
             <div className="flex flex-wrap gap-2">
               {others.map(([code, count]) => (
