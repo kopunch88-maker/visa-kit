@@ -1738,22 +1738,34 @@ export async function deleteRegion(id: number): Promise<void> {
 //   full_name_rmsp, address_was_generated, estimated_npd_start*, target_*,
 //   region_pick_*, yandex_search_url, rusprofile_url, rmsp_raw.
 // Реальные имена полей — ниже. Также добавлены fallback_* поля Pack 18.1.
-export type InnSuggestionResponse = {
+// Pack 28.2 Часть Б: discriminated union — backend может вернуть либо
+// мгновенный результат (kind: "immediate"), либо task_id для поллинга
+// (kind: "task") если в пуле verified=0 для региона applicant'а.
+export type InnSuggestionImmediate = {
+  kind: "immediate";
   inn: string;
   full_name: string;
   home_address: string;
-  kladr_code: string;            // 13-значный KLADR (раньше назывался target_kladr_code)
-  region_name: string;           // ФАКТИЧЕСКИЙ регион ИНН (после возможного fallback)
-  region_code: string;           // 2-значный код субъекта
-  inn_registration_date: string; // ISO дата (раньше estimated_npd_start)
-  source: string;                // 'home_address' | 'contract_city' | 'company_address' | 'diaspora' | 'fallback_moscow'
-
-  // Pack 18.1: warning-поля (для Pack 18.6 yellow plate)
+  kladr_code: string;
+  region_name: string;
+  region_code: string;
+  inn_registration_date: string;
+  source: string;
   fallback_used: boolean;
-  requested_region_name: string | null; // имя ИЗНАЧАЛЬНО желаемого региона (если был fallback)
+  requested_region_name: string | null;
   requested_region_code: string | null;
-  fallback_reason: string | null;       // 'no_free_in_target_region' | 'no_free_in_target_or_diaspora'
+  fallback_reason: string | null;
 };
+
+export type InnSuggestionTask = {
+  kind: "task";
+  task_id: number;
+  region_code: string;
+  region_name: string;
+  estimated_seconds: number;
+};
+
+export type InnSuggestionResponse = InnSuggestionImmediate | InnSuggestionTask;
 
 // Pack 18.6 fix: backend ждёт `kladr_code`, не `region_kladr_code`.
 // Старое имя молча игнорировалось pydantic'ом > applicant.inn_kladr_code не записывался.
@@ -2113,3 +2125,88 @@ export async function permanentDeleteApplication(appId: number): Promise<{ delet
   if (!res.ok) throw new Error(`Не удалось удалить навсегда: ${res.status} ${await res.text()}`);
   return res.json();
 }
+
+
+// ============================================================================
+// Pack 28.2 Part B - NPD Pool admin endpoints
+// ============================================================================
+
+export type NpdPoolStats = {
+  total: number;
+  by_status: Record<string, number>;
+  by_region_verified: Record<string, number>;
+  last_refill_at: string | null;
+  last_refill_region: string | null;
+};
+
+export type NpdRefillTask = {
+  id: number;
+  kind: string; // 'lazy_region' | 'global' | 'revalidate'
+  status: string; // 'pending' | 'running' | 'done' | 'failed'
+  region_code: string | null;
+
+  progress_text: string | null;
+  progress_current: number;
+  progress_total: number;
+
+  result_inn: string | null;
+  result_region_code: string | null;
+
+  verified_added: number;
+  egrul_rejected: number;
+  npd_rejected: number;
+  revalidated_total: number;
+  revalidated_invalidated: number;
+
+  error: string | null;
+
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+/**
+ * Pack 28.2 Часть Б: получить статистику пула.
+ */
+export async function getNpdPoolStats(): Promise<NpdPoolStats> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/stats`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Pack 28.2 Часть Б: получить статус задачи refill (для поллинга).
+ */
+export async function getNpdPoolTask(taskId: number): Promise<NpdRefillTask> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/tasks/${taskId}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/**
+ * Pack 28.2 Часть Б: запустить глобальный refill (ревалидация + добивка).
+ * Возвращает task_id, фронт поллит /tasks/{id} до завершения.
+ */
+export async function refillPoolGlobal(payload?: {
+  target_per_region?: number;
+  revalidate_first?: boolean;
+  regions?: string[];
+}): Promise<NpdRefillTask> {
+  const body = {
+    target_per_region: payload?.target_per_region ?? 5,
+    revalidate_first: payload?.revalidate_first ?? true,
+    regions: payload?.regions ?? null,
+  };
+  const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/refill-all`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+

@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Building2, Briefcase, UserCheck, MapPin, Landmark, Loader2 } from "lucide-react";
+import { ArrowLeft, Building2, Briefcase, UserCheck, MapPin, Landmark, Database, Loader2 } from "lucide-react";
 import { getToken } from "@/lib/api";
 import { CompaniesTab } from "@/components/admin/settings/CompaniesTab";
 import { PositionsTab } from "@/components/admin/settings/PositionsTab";
 import { RepresentativesTab } from "@/components/admin/settings/RepresentativesTab";
 import { SpainAddressesTab } from "@/components/admin/settings/SpainAddressesTab";
 import { BanksTab } from "@/components/admin/settings/BanksTab";
+import { NpdPoolTab } from "@/components/admin/settings/NpdPoolTab";
 
 const TABS = [
   { id: "companies", label: "Компании", icon: Building2 },
@@ -16,6 +17,7 @@ const TABS = [
   { id: "representatives", label: "Представители", icon: UserCheck },
   { id: "addresses", label: "Адреса в Испании", icon: MapPin },
   { id: "banks", label: "Банки", icon: Landmark },
+  { id: "npd_pool", label: "Пул самозанятых", icon: Database },
 ];
 
 export default function SettingsPage() {
@@ -85,6 +87,7 @@ export default function SettingsPage() {
         {activeTab === "representatives" && <RepresentativesTab />}
         {activeTab === "addresses" && <SpainAddressesTab />}
         {activeTab === "banks" && <BanksTab />}
+        {activeTab === "npd_pool" && <NpdPoolTab />}
       </div>
     </div>
   );

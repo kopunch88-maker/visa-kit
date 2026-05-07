@@ -7,88 +7,202 @@
  * Pack 18.6 — синхронизация с реальным API + два warning'а:
  *   - 🟡 жёлтая плашка fallback (ИНН выдан из другого региона из-за пустоты целевого)
  *   - 🟠 оранжевая плашка skipped_fns_unavailable (ФНС был недоступен, ручная проверка)
- *   - убраны мёртвые блоки (full_name_rmsp / address_was_generated / region_pick_explanation)
- *   - URL Яндекс/Rusprofile теперь генерируются на фронте из ИНН
- *   - Фикс payload accept: `kladr_code` вместо несуществующего `region_kladr_code`
+ *
+ * Pack 28.2 Часть Б — поддержка TASK-режима:
+ *   - Backend теперь возвращает union: { kind: "immediate", ... } | { kind: "task", task_id, ... }
+ *   - При kind="task" модал показывает спиннер «Идёт поиск чистого самозанятого… (до 4 мин)»
+ *     и поллит /admin/npd-pool/tasks/{task_id} каждые 3 сек
+ *   - Когда task завершается с done — повторно зовём suggestInn → получаем immediate
+ *   - Если task failed — показываем ошибку + кнопку «Попробовать ещё раз»
  *
  * Workflow:
- *  1. При открытии автоматически вызывает /inn-suggest → показывает кандидата
- *  2. Менеджер видит: ИНН, адрес, регион, дата НПД, ссылки на проверку
- *     + жёлтый warning если был fallback на другой регион
+ *  1. При открытии вызывает /inn-suggest
+ *     → kind="immediate" → показываем кандидата (как раньше)
+ *     → kind="task" → переходим в task-режим, поллим
+ *  2. Менеджер видит ИНН, адрес, регион, дата НПД, ссылки на проверку
  *  3. Кнопки:
  *     - «Принять»     → /inn-accept → проверка через ФНС, закрывает модал
- *                       (если ФНС вернул skipped — показываем оранжевый warning
- *                        и НЕ закрываем модал, менеджер может перепринять)
- *     - «Другой»      → повторный /inn-suggest (ещё кандидат)
+ *     - «Другой»      → повторный /inn-suggest
  *     - «Закрыть»     → закрывает без сохранения
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   X,
   Loader2,
   Sparkles,
   AlertCircle,
-  AlertTriangle, // Pack 18.6: жёлтая плашка fallback
-  WifiOff,       // Pack 18.6: оранжевая плашка ФНС-недоступен
+  AlertTriangle,
+  WifiOff,
   Check,
   RefreshCw,
   ExternalLink,
   MapPin,
   Calendar,
   Info,
+  Search,
 } from "lucide-react";
 import {
   suggestInn,
   acceptInn,
+  getNpdPoolTask,
   InnSuggestionResponse,
+  InnSuggestionImmediate,
   InnAcceptResult,
+  NpdRefillTask,
 } from "@/lib/api";
 
 interface Props {
   applicantId: number;
   /**
-   * Pack 17.3: был флаг что у applicant был адрес ДО открытия модалки.
-   * Pack 18.6: больше не используется — раньше сравнивали с suggestion.address_was_generated,
-   * но бэкенд это поле не шлёт. Оставлен в Props чтобы не править ApplicantDrawer.tsx.
+   * Pack 17.3 deprecated — оставлен в Props чтобы не править ApplicantDrawer.tsx.
    */
   hadAddressBefore: boolean;
   onClose: () => void;
-  onAccepted: () => void;     // вызывается после успешного accept
+  onAccepted: () => void;
 }
+
+// Pack 28.2: интервал поллинга task'а
+const TASK_POLL_INTERVAL_MS = 3000;
+// Максимум 6 минут поллинга (refill длится 4-5 мин, запас на rate-limit ФНС)
+const TASK_POLL_MAX_MS = 6 * 60 * 1000;
 
 export function InnSuggestionModal({
   applicantId,
-  hadAddressBefore: _hadAddressBefore, // Pack 18.6: deprecated, см. Props
+  hadAddressBefore: _hadAddressBefore,
   onClose,
   onAccepted,
 }: Props) {
-  const [suggestion, setSuggestion] = useState<InnSuggestionResponse | null>(null);
+  // immediate-result (когда suggest сразу нашёл verified)
+  const [suggestion, setSuggestion] = useState<InnSuggestionImmediate | null>(null);
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  // Pack 18.6: результат accept'а — для показа оранжевого warning'а если ФНС был недоступен
   const [acceptResult, setAcceptResult] = useState<InnAcceptResult | null>(null);
 
-  // Загружаем кандидата при открытии и по кнопке «Другой»
+  // Pack 28.2: task-режим
+  const [task, setTask] = useState<NpdRefillTask | null>(null);
+  const [taskRegionName, setTaskRegionName] = useState<string | null>(null);
+  const [taskStartedAt, setTaskStartedAt] = useState<number | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     loadSuggestion();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt]);
 
+  // Очистка поллинга при закрытии модала
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+  }, []);
+
   async function loadSuggestion() {
     setLoading(true);
     setError(null);
+    setTask(null);
+    setTaskRegionName(null);
+    setTaskStartedAt(null);
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+
     try {
-      const data = await suggestInn(applicantId);
-      setSuggestion(data);
+      const data: InnSuggestionResponse = await suggestInn(applicantId);
+
+      if (data.kind === "immediate") {
+        // Сразу нашли verified — показываем как раньше
+        setSuggestion(data);
+        setLoading(false);
+      } else if (data.kind === "task") {
+        // Пул пуст — стартанул refill task, поллим
+        setSuggestion(null);
+        setTaskRegionName(data.region_name);
+        setTaskStartedAt(Date.now());
+        setLoading(false); // спиннер теперь не общий, а в блоке task
+        startPollingTask(data.task_id);
+      }
     } catch (e) {
       setError((e as Error).message);
       setSuggestion(null);
-    } finally {
       setLoading(false);
     }
+  }
+
+  function startPollingTask(taskId: number) {
+    let elapsed = 0;
+
+    const poll = async () => {
+      try {
+        const t = await getNpdPoolTask(taskId);
+        setTask(t);
+
+        if (t.status === "done") {
+          // Refill завершился. Повторно зовём suggestInn — получим immediate.
+          if (pollTimerRef.current) {
+            clearTimeout(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+          // Маленькая задержка чтобы UI успел показать «Готово» прежде чем повторный suggest
+          await new Promise((r) => setTimeout(r, 500));
+          // Повторный suggest
+          try {
+            const data = await suggestInn(applicantId);
+            if (data.kind === "immediate") {
+              setSuggestion(data);
+              setTask(null);
+              setTaskRegionName(null);
+            } else {
+              // Маловероятно но возможно — пул опять пуст, опять task
+              setError(
+                "После пополнения пула в регионе всё ещё нет verified. Возможно, refill не нашёл подходящих кандидатов. Попробуйте «Другой кандидат».",
+              );
+            }
+          } catch (e) {
+            setError(`Не удалось получить кандидата после пополнения: ${(e as Error).message}`);
+          }
+          return;
+        }
+
+        if (t.status === "failed") {
+          if (pollTimerRef.current) {
+            clearTimeout(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+          setError(
+            t.error || "Не удалось пополнить пул самозанятых. Попробуйте «Другой кандидат» или попозже.",
+          );
+          return;
+        }
+
+        // pending или running — продолжаем поллинг
+        elapsed = taskStartedAt ? Date.now() - taskStartedAt : 0;
+        if (elapsed > TASK_POLL_MAX_MS) {
+          if (pollTimerRef.current) {
+            clearTimeout(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+          setError(
+            "Поиск длится слишком долго (> 6 мин). Закройте модал и попробуйте позже — refill в фоне продолжится.",
+          );
+          return;
+        }
+
+        pollTimerRef.current = setTimeout(poll, TASK_POLL_INTERVAL_MS);
+      } catch (e) {
+        // Не валим UI на сетевой ошибке — пробуем ещё раз
+        console.error("[InnSuggestionModal] poll error:", e);
+        pollTimerRef.current = setTimeout(poll, TASK_POLL_INTERVAL_MS);
+      }
+    };
+
+    pollTimerRef.current = setTimeout(poll, TASK_POLL_INTERVAL_MS);
   }
 
   async function handleAccept() {
@@ -97,53 +211,51 @@ export function InnSuggestionModal({
     setError(null);
     setAcceptResult(null);
     try {
-      // Pack 18.6 fixes vs Pack 17.3:
-      //   - kladr_code (не region_kladr_code — pydantic игнорировал это имя)
-      //   - inn_registration_date из реального поля (не estimated_npd_start)
-      //   - home_address передаём всегда (раньше только при address_was_generated,
-      //     но бэк это поле не шлёт). Бэк сам решает писать ли home_address —
-      //     см. inn_generation.py inn_accept(): if payload.home_address: applicant.home_address = ...
-      //     То есть для applicant с уже заполненным адресом он ВСЁ РАВНО будет перезаписан
-      //     значением из suggestion. Это намеренно: home_address из suggestion согласован с
-      //     ИНН (тот же регион), а старый адрес applicant'а мог быть из другого региона.
       const result = await acceptInn(applicantId, {
         inn: suggestion.inn,
         inn_registration_date: suggestion.inn_registration_date || null,
         home_address: suggestion.home_address || null,
         kladr_code: suggestion.kladr_code || null,
-        inn_source: "registry_snrip",
+        inn_source: "npd_pool", // Pack 28.2: новые ИНН из npd_candidate
       });
       setAcceptResult(result);
 
-      // Pack 18.6: если ФНС был недоступен — НЕ закрываем модал, показываем
-      // оранжевый warning + ссылку manual_check_url. Менеджер сам решает
-      // перепринять (нажать «Другой») или закрыть модал.
+      // skipped_fns_unavailable — НЕ закрываем модал, показываем оранжевый warning
       if (result.npd_check_status === "skipped_fns_unavailable") {
         setAccepting(false);
         return;
       }
 
-      // Успех (confirmed или skipped_already_checked) — закрываем
+      // confirmed / skipped_already_checked / skipped_recently_verified — закрываем
       onAccepted();
     } catch (e) {
-      // 409 от бэка: ФНС подтвердил отзыв НПД — кандидат помечен is_invalid,
-      // менеджер должен жать «Другой кандидат». Бэк присылает понятный текст ошибки.
       setError((e as Error).message);
       setAccepting(false);
     }
   }
 
   function handleAnother() {
-    setAcceptResult(null); // Pack 18.6: сбрасываем оранжевый warning при смене кандидата
+    setAcceptResult(null);
     setError(null);
     setAttempt((n) => n + 1);
   }
+
+  // Прогресс task'а в процентах (для возможной полосы прогресса)
+  const taskProgressPct = task && task.progress_total > 0
+    ? Math.min(100, Math.round((task.progress_current / task.progress_total) * 100))
+    : 0;
+
+  // Elapsed time текстом для UI
+  const elapsedSec = taskStartedAt
+    ? Math.floor((Date.now() - taskStartedAt) / 1000)
+    : 0;
+  const elapsedText = `${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, "0")}`;
 
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.6)" }}
-      onClick={onClose}
+      onClick={task ? undefined : onClose}
     >
       <div
         className="w-full max-w-2xl max-h-[90vh] overflow-auto rounded-lg flex flex-col"
@@ -194,7 +306,7 @@ export function InnSuggestionModal({
             </div>
           )}
 
-          {loading && (
+          {loading && !task && (
             <div
               className="p-6 rounded-md flex items-center justify-center gap-2 text-sm text-tertiary"
               style={{
@@ -207,10 +319,85 @@ export function InnSuggestionModal({
             </div>
           )}
 
-          {!loading && suggestion && (
+          {/* Pack 28.2: task-режим — спиннер с прогрессом */}
+          {task && (
+            <div
+              className="p-6 rounded-md space-y-4"
+              style={{
+                background: "var(--color-bg-secondary)",
+                border: "0.5px solid var(--color-border-secondary)",
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="w-6 h-6" style={{ color: "var(--color-accent)" }} />
+                  <Loader2
+                    className="w-6 h-6 animate-spin absolute inset-0"
+                    style={{ color: "var(--color-accent)", opacity: 0.4 }}
+                  />
+                </div>
+                <div className="flex-1">
+                  <div className="font-medium text-primary">
+                    Идёт поиск чистого самозанятого…
+                  </div>
+                  <div className="text-xs text-tertiary mt-0.5">
+                    до 4 минут — проверяем кандидатов через ЕГРЮЛ и ФНС НПД
+                  </div>
+                </div>
+                <div className="text-sm font-mono text-tertiary tabular-nums">
+                  {elapsedText}
+                </div>
+              </div>
+
+              {taskRegionName && (
+                <div className="text-xs text-tertiary">
+                  Регион: <span className="text-secondary">{taskRegionName}</span>
+                </div>
+              )}
+
+              {task.progress_text && (
+                <div className="text-xs text-secondary px-3 py-2 rounded"
+                     style={{ background: "var(--color-bg-info)", color: "var(--color-text-info)" }}>
+                  <Info className="w-3 h-3 inline mr-1.5 -mt-0.5" />
+                  {task.progress_text}
+                </div>
+              )}
+
+              {task.progress_total > 0 && (
+                <div>
+                  <div className="flex items-center justify-between text-xs text-tertiary mb-1">
+                    <span>Прогресс</span>
+                    <span className="font-mono tabular-nums">
+                      {task.progress_current} / {task.progress_total}
+                    </span>
+                  </div>
+                  <div
+                    className="h-2 rounded-full overflow-hidden"
+                    style={{ background: "var(--color-bg-tertiary)" }}
+                  >
+                    <div
+                      className="h-full transition-all duration-500"
+                      style={{
+                        width: `${taskProgressPct}%`,
+                        background: "var(--color-accent)",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="text-[11px] text-tertiary leading-relaxed">
+                Поиск идёт в фоне через rmsp-pp.nalog.ru → ЕГРЮЛ → ФНС НПД API.
+                ФНС ограничивает запросы (2/мин), поэтому на проверку каждого кандидата
+                нужно ~30 сек. Можно закрыть модал — refill продолжится в фоне,
+                и следующая попытка для этого региона будет мгновенной.
+              </div>
+            </div>
+          )}
+
+          {!loading && !task && suggestion && (
             <>
-              {/* Pack 18.6: 🟡 жёлтая плашка fallback — выводим ПЕРВОЙ чтобы менеджер
-                  заметил что регион подменён до того как смотрит на адрес */}
+              {/* 🟡 fallback warning (для immediate-результата) */}
               {suggestion.fallback_used && (
                 <div
                   className="p-3 rounded-md text-sm flex gap-2 items-start"
@@ -223,13 +410,9 @@ export function InnSuggestionModal({
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <div className="space-y-1">
                     <div className="font-medium">
-                      ИНН выдан из региона{" "}
-                      <b>{suggestion.region_name}</b>
+                      ИНН выдан из региона <b>{suggestion.region_name}</b>
                       {suggestion.requested_region_name && (
-                        <>
-                          {" "}вместо{" "}
-                          <b>{suggestion.requested_region_name}</b>
-                        </>
+                        <> вместо <b>{suggestion.requested_region_name}</b></>
                       )}
                     </div>
                     <div className="text-xs">
@@ -250,7 +433,6 @@ export function InnSuggestionModal({
                   border: "0.5px solid var(--color-border-secondary)",
                 }}
               >
-                {/* ИНН — крупно */}
                 <div>
                   <div className="text-xs uppercase tracking-wide text-tertiary mb-1">
                     ИНН
@@ -260,7 +442,6 @@ export function InnSuggestionModal({
                   </div>
                 </div>
 
-                {/* Дата начала НПД (Pack 18.6: правильное поле inn_registration_date) */}
                 {suggestion.inn_registration_date && (
                   <div>
                     <div className="text-xs uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1">
@@ -273,8 +454,6 @@ export function InnSuggestionModal({
                   </div>
                 )}
 
-                {/* Адрес (Pack 18.6: убрана badge СГЕНЕРИРОВАН/ИЗ ПРОФИЛЯ —
-                    бэкенд не шлёт address_was_generated, всё равно сравнить не с чем) */}
                 <div>
                   <div className="text-xs uppercase tracking-wide text-tertiary mb-1 flex items-center gap-1">
                     <MapPin className="w-3 h-3" />
@@ -283,8 +462,6 @@ export function InnSuggestionModal({
                   <div className="text-sm text-primary">{suggestion.home_address}</div>
                 </div>
 
-                {/* Регион + источник выбора (Pack 18.6: region_name из реального поля,
-                    region_pick_explanation бэкенд не шлёт — заменён на расшифровку source) */}
                 <div
                   className="text-xs p-2 rounded flex gap-1.5 items-start"
                   style={{
@@ -301,9 +478,7 @@ export function InnSuggestionModal({
                 </div>
               </div>
 
-              {/* Pack 18.6: 🟠 оранжевая плашка — ФНС был недоступен при принятии.
-                  Показываем после accept'а если backend вернул skipped_fns_unavailable.
-                  Менеджер должен зайти по ссылке и проверить вручную. */}
+              {/* 🟠 ФНС unavailable warning */}
               {acceptResult?.npd_check_status === "skipped_fns_unavailable" && (
                 <div
                   className="p-3 rounded-md text-sm space-y-2"
@@ -344,9 +519,7 @@ export function InnSuggestionModal({
                 </div>
               )}
 
-              {/* Ссылки на проверку «не светится ли»
-                  Pack 18.6: URL генерируются на фронте из ИНН (бэкенд эти поля не шлёт).
-                  Без full_name (мы его и не показываем — см. убранный блок выше). */}
+              {/* Ссылки на проверку */}
               <div className="space-y-2">
                 <div className="text-xs uppercase tracking-wide text-tertiary">
                   Ручная проверка перед принятием
@@ -402,7 +575,7 @@ export function InnSuggestionModal({
         >
           <button
             onClick={handleAnother}
-            disabled={loading || accepting || !suggestion}
+            disabled={loading || accepting || !!task}
             className="px-4 py-2 rounded-md text-sm border text-secondary disabled:opacity-40 hover:bg-secondary transition-colors flex items-center gap-1.5"
             style={{
               borderColor: "var(--color-border-tertiary)",
@@ -423,11 +596,8 @@ export function InnSuggestionModal({
                 borderWidth: 0.5,
               }}
             >
-              Отмена
+              {task ? "Закрыть (refill продолжится)" : "Отмена"}
             </button>
-            {/* Pack 18.6: после skipped_fns_unavailable accept уже произошёл на бэке.
-                Меняем «Принять» на «Готово, закрыть» — он просто триггерит onAccepted
-                (родитель перезагрузит applicant'а). */}
             {acceptResult?.npd_check_status === "skipped_fns_unavailable" ? (
               <button
                 onClick={onAccepted}
@@ -465,14 +635,11 @@ export function InnSuggestionModal({
 }
 
 function formatDate(iso: string): string {
-  // 2024-05-15 -> 15.05.2024
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return iso;
   return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
-// Pack 18.6: расшифровка fallback_reason из бэкенда (см. inn_generator/pipeline.py).
-// Значения формирует pick_candidate_with_fallback() — два варианта.
 function fallbackReasonExplain(reason: string | null): string {
   switch (reason) {
     case "no_free_in_target_region":
@@ -484,8 +651,6 @@ function fallbackReasonExplain(reason: string | null): string {
   }
 }
 
-// Pack 18.6: расшифровка поля source из бэкенда — откуда был взят регион для подбора.
-// Значения см. inn_generator/pipeline.py (resolve_target_region).
 function sourceExplain(source: string): string {
   switch (source) {
     case "home_address":

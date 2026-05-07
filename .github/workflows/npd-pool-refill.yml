@@ -1,0 +1,72 @@
+# Pack 28.2 Часть Б — еженедельный cron пополнения пула самозанятых.
+#
+# Каждое воскресенье в 03:00 UTC (06:00 МСК) дёргает endpoint
+# POST /api/admin/npd-pool/cron-refill с заголовком X-Cron-Token.
+#
+# Endpoint выполняет:
+#   1. Ревалидацию всех verified старше 7 дней (отсев тех кто открыл ИП
+#      или снялся с НПД за неделю)
+#   2. Добивку каждого ключевого региона до 5 verified
+#
+# Длительность ~30-60 мин в фоне на Railway. Сюда возвращается task_id
+# и сразу 200 — мы НЕ ждём окончания (workflow длится секунды).
+#
+# === НАСТРОЙКА ===
+# 1. Сгенерировать секретный токен (любую случайную строку, например):
+#    openssl rand -hex 32
+# 2. Добавить в Railway env: NPD_POOL_CRON_TOKEN=<токен>
+# 3. Добавить в GitHub Secrets (Settings → Secrets → Actions):
+#    NPD_POOL_CRON_TOKEN=<тот же токен>
+#
+# Без секрета endpoint вернёт 503 "disabled". Без правильного токена — 401.
+
+name: NPD Pool weekly refill
+
+on:
+  schedule:
+    # Воскресенье 03:00 UTC = 06:00 МСК
+    - cron: '0 3 * * 0'
+
+  # Можно запустить руками через GitHub UI: Actions → этот workflow → Run workflow
+  workflow_dispatch:
+
+jobs:
+  refill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger refill
+        run: |
+          set -euo pipefail
+
+          if [ -z "${{ secrets.NPD_POOL_CRON_TOKEN }}" ]; then
+            echo "::error::Secret NPD_POOL_CRON_TOKEN не настроен в репо"
+            exit 1
+          fi
+
+          echo "Triggering refill at $(date -u +%Y-%m-%dT%H:%M:%SZ)..."
+
+          response=$(curl -sS -w "\n%{http_code}" \
+            -X POST "https://visa-kit-production.up.railway.app/api/admin/npd-pool/cron-refill" \
+            -H "X-Cron-Token: ${{ secrets.NPD_POOL_CRON_TOKEN }}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "::error::Refill failed with HTTP $http_code"
+            exit 1
+          fi
+
+          # Парсим task_id из ответа для логирования
+          task_id=$(echo "$body" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', '?'))" 2>/dev/null || echo "?")
+          echo "✅ Refill task started: id=$task_id"
+          echo ""
+          echo "Refill идёт в фоне на Railway (~30-60 мин)."
+          echo "Прогресс можно посмотреть в админке:"
+          echo "  https://visa-kit.vercel.app/admin/settings → таб «Пул самозанятых»"
+          echo "Или через API:"
+          echo "  curl https://visa-kit-production.up.railway.app/api/admin/npd-pool/tasks/$task_id"
