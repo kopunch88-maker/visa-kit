@@ -86,6 +86,7 @@ from app.api import (  # noqa: E402
     inn_generation,
     inn_debug_pipeline,
     registry_admin,  # Pack 17.2.4
+    npd_pool_admin,  # Pack 28.2
     
 )
 from app.api import ifns_mfc
@@ -109,6 +110,7 @@ app.include_router(inn_debug.router, prefix="/api")
 app.include_router(inn_generation.router, prefix="/api")
 app.include_router(inn_debug_pipeline.router, prefix="/api")
 app.include_router(registry_admin.router, prefix="/api")  # Pack 17.2.4
+app.include_router(npd_pool_admin.router, prefix="/api")  # Pack 28.2
 
 
 @app.get("/", tags=["meta"])
