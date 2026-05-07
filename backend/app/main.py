@@ -20,6 +20,8 @@ from app.db.migrations import (
     apply_pack17_0_migration,
     apply_pack17_2_4_migration,
     apply_pack17_2_4_1_migration,
+    apply_pack28_0_migration,
+    apply_pack28_2_migration,
 )
 
 
@@ -38,6 +40,8 @@ async def lifespan(app: FastAPI):
     apply_pack17_0_migration()  # Region table + applicant.inn_* fields (Pack 17.0)
     apply_pack17_2_4_migration()  # self_employed_registry + registry_import_log (Pack 17.2.4)
     apply_pack17_2_4_1_migration()  # BigInteger fix + reset stuck imports (Pack 17.2.4.1)
+    apply_pack28_0_migration()  # npd_candidate indexes (Pack 28.0)
+    apply_pack28_2_migration()  # npd_refill_task table + indexes (Pack 28.2)
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)

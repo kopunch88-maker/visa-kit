@@ -1,0 +1,139 @@
+"""
+Pack 28 (07.05.2026): CLI для ручного наполнения пула чистых самозанятых.
+
+Использование (PowerShell):
+
+    cd D:\\VISA\\visa_kit\\backend
+    .venv\\Scripts\\Activate.ps1
+    $env:DATABASE_URL = "postgresql://postgres:uxGVZsShKKnbOZuHyiFpEaufEAnKjYXI@switchyard.proxy.rlwy.net:34408/railway"
+    $env:PYTHONIOENCODING = "utf-8"
+
+    # Наполнить пул для Краснодарского края (target=5 для smoke-теста)
+    python -m app.scripts.refill_npd_pool --region 23 --target 5
+
+    # Москва, 30
+    python -m app.scripts.refill_npd_pool --region 77 --target 30
+
+    # Только статистика
+    python -m app.scripts.refill_npd_pool --stats
+
+ВРЕМЯ:
+    NPD rate limiter = 31 сек/запрос. На 1 verified нужно ~2-4 NPD-запроса.
+    Реалистично:
+        target=5  → 5-10 минут
+        target=30 → 25-40 минут
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import sys
+
+from app.db.session import get_session_context
+from app.services.inn_generator.npd_pool import (
+    get_pool_stats,
+    refill_pool_for_region,
+)
+
+
+def _setup_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+def _print_stats(session) -> None:
+    stats = get_pool_stats(session)
+    print()
+    print("=" * 60)
+    print("📊 СТАТИСТИКА пула npd_candidate")
+    print("=" * 60)
+    print(f"  Всего записей: {stats.total}")
+    print()
+    print("  По статусам:")
+    for status, count in sorted(stats.by_status.items()):
+        marker = "✅" if status == "verified" else (
+            "🟡" if status == "pending" else
+            "❌" if status.startswith("rejected") else
+            "🔵" if status in ("allocated", "used") else "?"
+        )
+        print(f"    {marker} {status:<22} {count}")
+    print()
+    if stats.by_region_verified:
+        print("  ✅ Verified кандидаты по регионам (готовы к выдаче):")
+        for region, count in sorted(
+            stats.by_region_verified.items(),
+            key=lambda x: -x[1],
+        ):
+            print(f"      region {region}: {count}")
+    print()
+    if stats.last_refill_at:
+        print(f"  Последнее наполнение: {stats.last_refill_at} "
+              f"(регион {stats.last_refill_region})")
+    print()
+
+
+async def _async_main(args: argparse.Namespace) -> int:
+    with get_session_context() as session:
+        if args.stats:
+            _print_stats(session)
+            return 0
+
+        if not args.region:
+            print("❌ Нужно указать --region XX", file=sys.stderr)
+            return 1
+
+        region_code = args.region.strip().zfill(2)[:2]
+
+        print(f"🔄 refill region={region_code} target={args.target}")
+        print(f"   ВНИМАНИЕ: NPD API имеет rate limit 31 сек/запрос.")
+        print(f"   Запуск может занять 10-40+ минут.")
+        print()
+
+        result = await refill_pool_for_region(
+            session, region_code, target=args.target
+        )
+
+        print()
+        print("=" * 60)
+        print("✅ ЗАВЕРШЕНО")
+        print("=" * 60)
+        print(json.dumps(result.dict(), ensure_ascii=False, indent=2))
+        print()
+
+        if args.show_stats_after:
+            _print_stats(session)
+
+        return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Pack 28 — наполнение пула чистых самозанятых"
+    )
+    parser.add_argument("--region", help="2-значный код субъекта РФ")
+    parser.add_argument("--target", type=int, default=30,
+                        help="Сколько verified кандидатов (default 30)")
+    parser.add_argument("--stats", action="store_true",
+                        help="Только статистика, без наполнения")
+    parser.add_argument("--show-stats-after", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args()
+
+    _setup_logging(args.verbose)
+
+    try:
+        return asyncio.run(_async_main(args))
+    except KeyboardInterrupt:
+        print("\n⏸️  прервано пользователем")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

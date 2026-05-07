@@ -238,7 +238,7 @@ class RmspClient:
 
         # Pack 17.1.2: возвращаем формат запроса 17.1 (РАБОЧИЙ — kladr только в Referer)
         # ФНС не понравились kladr в URL/body (вернула 5xx).
-        url_params = {"m": "SupportExt", "sk": "SZ", "kladr": kladr_code}
+        url_params = {"m": "Support"}
 
         form_data = {
             "page": str(page),

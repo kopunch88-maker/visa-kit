@@ -507,3 +507,113 @@ def apply_pack17_2_4_1_migration():
                 log.info(f"[migration:pack17_2_4_1] Reset {reset_count} stuck import(s) to 'failed'")
         except Exception as e:
             log.warning(f"[migration:pack17_2_4_1] Failed to reset stuck imports: {e}")
+
+
+def apply_pack28_0_migration():
+    """
+    Pack 28.0 (07.05.2026): создание таблицы npd_candidate для пула чистых
+    самозанятых из rmsp-pp.nalog.ru, верифицированных через EGRUL + NPD API.
+
+    Создание самой таблицы делает SQLModel.metadata.create_all() в init_db
+    после того как модель зарегистрирована в app.models.__init__.py.
+
+    Эта миграция:
+      - Проверяет наличие таблицы (если нет — лог + return, ждём init_db)
+      - Создаёт индексы для быстрого подбора:
+          * (region_code, status) — основной запрос «verified кандидаты в регионе»
+          * (status) — общая статистика
+          * (used_by_applicant_id) — для проверки идемпотентности
+          * Частичный индекс (region_code) WHERE status='verified' — самый частый
+            запрос в горячем пути выдачи.
+
+    Идемпотентна: CREATE INDEX IF NOT EXISTS работает в Postgres.
+    """
+    with engine.begin() as conn:
+        if not _table_exists(conn, "npd_candidate"):
+            log.info(
+                "[migration:pack28_0] Table npd_candidate not found — "
+                "expected to be created by SQLModel.metadata.create_all() in init_db. "
+                "Make sure app.models.npd_candidate is imported in app.models.__init__.py"
+            )
+            return
+
+        try:
+            # Основной hot-path: подбор verified кандидатов по региону
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_candidate_region_status "
+                "ON npd_candidate (region_code, status)"
+            ))
+
+            # Для статистики
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_candidate_status "
+                "ON npd_candidate (status)"
+            ))
+
+            # Идемпотентность inn-accept — проверка «кому был выдан»
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_candidate_used_by_applicant "
+                "ON npd_candidate (used_by_applicant_id)"
+            ))
+
+            # Для cron «давно ли был последний refill»
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_candidate_fetched_at "
+                "ON npd_candidate (fetched_at)"
+            ))
+
+            # Postgres-only: частичный индекс на самый горячий запрос
+            if _is_postgres():
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_npd_candidate_verified_region "
+                    "ON npd_candidate (region_code) "
+                    "WHERE status = 'verified'"
+                ))
+
+            log.info("[migration:pack28_0] Indexes verified on npd_candidate")
+        except Exception as e:
+            log.warning(f"[migration:pack28_0] Index creation failed: {e}")
+
+
+def apply_pack28_2_migration():
+    """
+    Pack 28 ????? 2 (08.05.2026): ??????? npd_refill_task.
+
+    ????????? ????? SQLModel.metadata.create_all() ? init_db, ??? ??????
+    ??????? ??? performance.
+    """
+    with engine.begin() as conn:
+        if not _table_exists(conn, "npd_refill_task"):
+            log.info(
+                "[migration:pack28_2] Table npd_refill_task not found - "
+                "expected to be created by SQLModel.metadata.create_all()"
+            )
+            return
+
+        try:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_refill_task_status "
+                "ON npd_refill_task (status)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_refill_task_kind "
+                "ON npd_refill_task (kind)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_refill_task_region_code "
+                "ON npd_refill_task (region_code)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_npd_refill_task_created_at "
+                "ON npd_refill_task (created_at)"
+            ))
+            if _is_postgres():
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_npd_refill_task_active_lazy "
+                    "ON npd_refill_task (region_code, created_at) "
+                    "WHERE kind = 'lazy_region' AND status IN ('pending', 'running')"
+                ))
+            log.info("[migration:pack28_2] Indexes verified on npd_refill_task")
+        except Exception as e:
+            log.warning(f"[migration:pack28_2] Index creation failed: {e}")
+

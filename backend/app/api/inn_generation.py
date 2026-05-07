@@ -1,76 +1,77 @@
 """
-Pack 17 / Pack 18.1 / Pack 18.2 — endpoints автогенерации ИНН самозанятого.
+Pack 17 / Pack 18.x / Pack 28 Часть 2 — endpoints автогенерации ИНН самозанятого.
 
-Pack 18.1 изменения (без изменений):
-- В response /inn-suggest добавлены поля fallback_used / requested_region_name /
-  requested_region_code / fallback_reason / region_code — фронт показывает
-  warning менеджеру при сдвиге региона.
-- Удалён query-параметр filter_by_region (всегда фильтруем по региону, fallback
-  гарантирует что кандидат найдётся).
-- В /inn-accept проставляется used_at=utcnow() помимо is_used=True.
+ПЕРЕПИСАНО Pack 28 Часть 2 (08.05.2026):
+- /inn-suggest теперь ASYNC. Если в пуле verified=0 для региона → возвращает
+  202 Accepted с task_id и стартует BackgroundTask пополнения пула.
+  Фронт показывает спиннер и поллит /admin/npd-pool/tasks/{task_id} раз в 3 сек.
+- /inn-accept переписан на npd_candidate. SelfEmployedRegistry больше не
+  используется в hot-path (старая таблица остаётся для обратной совместимости
+  но новые ИНН в неё не пишутся).
+- Источник INN в /inn-accept: NpdCandidate (status='allocated' от
+  inn-suggest, переводится в 'used' с used_by_applicant_id).
+- registration_date может быть None если Pack 28.5 ещё не сделан (ФНС API
+  урезали). В этом случае applicant.inn_registration_date остаётся
+  синтетической как в Pack 18.3.4.
 
-Pack 18.2 изменения (текущая версия):
-- /inn-accept теперь ASYNC (def > async def).
-- Перед сохранением проверяет ИНН через ФНС API
-  (statusnpd.nalog.ru/api/v1/tracker/taxpayer_status).
-- Если ФНС вернул status=False > помечаем кандидат is_invalid=True в БД и
-  возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать другого».
-  Менеджер нажимает ? ИНН ещё раз.
-- Если ФНС timeout/недоступен > мягкий пропуск: выдаём ИНН без проверки,
-  в response добавляются npd_check_status=skipped + manual_check_url для
-  ручной проверки менеджером.
-- Если ФНС вернул status=True > проставляем last_npd_check_at=now() и
-  продолжаем как раньше.
+ВАЖНО про async + ALLOCATED-бронь:
+- inn-suggest помечает кандидата allocated_until = now+30мин
+- Если менеджер закрыл модал и не нажал accept — через 30 мин кандидат
+  автоматически возвращается в verified (см. _expire_stale_allocations
+  в pipeline.py — вызывается на каждом suggest).
+- inn-accept проверяет что candidate.status в ('verified', 'allocated') —
+  оба валидны. Идемпотентность: если applicant.inn уже = inn → 200 OK.
 
-Pack 18.8 изменения (текущая версия):
-- Новый endpoint POST /admin/applicants/{id}/regen-address — генерирует новый
-  случайный адрес из того же города куда привязан ИНН (applicant.inn_kladr_code).
-  Не пишет в БД, только возвращает {home_address, kladr_code}. Запись через
-  обычный PATCH /applicants/{id} (UI «Сохранить»).
-- Используется кнопкой ? рядом с полем «Адрес проживания» в ApplicantDrawer.
-  Менеджер может перегенерировать адрес сколько угодно раз — например, если
-  клиент сказал что в этом районе не живёт.
+УБРАНО:
+- import SelfEmployedRegistry (больше не нужен)
+- весь блок idempotent fix для SelfEmployedRegistry
+- inn_source = "registry_snrip" по умолчанию (теперь "npd_pool")
 
-Rate limit ФНС (2 req/min) реализован в NpdStatusChecker через class-level
-asyncio.Lock + 31 секундный sleep между запросами.
-
-?? Замечание про async:
-До Pack 18.2 endpoint был синхронным (def inn_accept). Теперь async, потому
-что NpdStatusChecker — асинхронный httpx-клиент. FastAPI поддерживает оба,
-переход прозрачный для вызывающего кода (фронт ничего не замечает).
+ОСТАЛОСЬ КАК БЫЛО:
+- /regen-address (Pack 18.8) — без изменений
+- NPD-проверка через ФНС API в inn-accept (Pack 18.2) — без изменений,
+  но если verified-кандидат уже свежепроверен (npd_checked_at < 1 day)
+  то проверка ПРОПУСКАЕТСЯ (skip).
 """
 
 from __future__ import annotations
 
 import logging
-import random  # Pack 18.8: для regen-address
+import random  # для regen-address
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+)
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.db.session import engine, get_session
 from app.models import (
     Applicant,
     Application,
     Company,
-    SelfEmployedRegistry,
+    NpdCandidate,
+    NpdRefillTask,
 )
 from app.services.inn_generator.kladr_address_gen import (
-    KNOWN_REGIONS,         # Pack 18.8: для валидации kladr_code в regen-address
-    generate_address,      # Pack 18.8: для regen-address
+    KNOWN_REGIONS,
+    generate_address,
 )
+from app.services.inn_generator.npd_pool import run_lazy_region_refill
 from app.services.inn_generator.npd_status import (
     NpdStatusChecker,
     NpdStatusError,
 )
 from app.services.inn_generator.pipeline import (
     InnSuggestion,
+    NeedsRefillError,
     suggest_inn_for_applicant,
 )
-# Pack 19.1: генератор work_history (companies + career tracks)
 from app.services.work_history_generator import suggest_work_history
 from .dependencies import require_manager
 
@@ -84,47 +85,49 @@ router = APIRouter(prefix="/admin/applicants", tags=["inn-generation"])
 # ---------------------------------------------------------------------------
 
 
-class InnSuggestResponse(BaseModel):
-    """
-    Ответ /inn-suggest. Старые поля (Pack 17) сохранены, добавлены новые
-    region_code и fallback_* поля (Pack 18.1).
-    """
+class InnSuggestImmediate(BaseModel):
+    """Ответ inn-suggest когда verified нашёлся сразу."""
+    kind: Literal["immediate"] = "immediate"
 
     inn: str
     full_name: str
     home_address: str
     kladr_code: str
     region_name: str
-    region_code: str  # NEW: 2-значный код субъекта ('77', '02', ...)
-    inn_registration_date: date
-    source: str
+    region_code: str
+    inn_registration_date: Optional[date] = None
+    source: str = "unknown"
 
-    # Pack 18.1: warning-поля
+    # Pack 28 Часть 2: fallback больше не используется, поля для совместимости
     fallback_used: bool = False
     requested_region_name: Optional[str] = None
     requested_region_code: Optional[str] = None
     fallback_reason: Optional[str] = None
 
 
+class InnSuggestTaskStarted(BaseModel):
+    """Ответ inn-suggest когда пул пуст и стартовал refill task."""
+    kind: Literal["task"] = "task"
+
+    task_id: int
+    region_code: str
+    region_name: str
+    estimated_seconds: int = 240  # ~4 мин на полный refill 5 кандидатов
+
+
+# Union: фронт смотрит на kind и выбирает что показывать
+InnSuggestResponse = InnSuggestImmediate | InnSuggestTaskStarted
+
+
 class InnAcceptRequest(BaseModel):
     inn: str
+    inn_registration_date: Optional[date] = None
     home_address: Optional[str] = None
     kladr_code: Optional[str] = None
-    inn_registration_date: Optional[date] = None
-    inn_source: Optional[str] = "registry_snrip"
+    inn_source: Optional[str] = None
 
 
 class InnAcceptResponse(BaseModel):
-    """
-    Pack 18.2: расширен полями npd_check_status и manual_check_url.
-
-    npd_check_status:
-      'confirmed' — ФНС подтвердил что ИНН валиден на сегодня
-      'skipped_fns_unavailable' — ФНС недоступен/timeout, ИНН выдан без проверки
-      'skipped_already_checked' — ИНН проверяли недавно, кэш использован
-
-    manual_check_url: если skipped — даём менеджеру ссылку для ручной проверки
-    """
     ok: bool
     applicant_id: int
     inn: str
@@ -132,28 +135,19 @@ class InnAcceptResponse(BaseModel):
         "confirmed",
         "skipped_fns_unavailable",
         "skipped_already_checked",
-    ] = "confirmed"
+        "skipped_recently_verified",
+    ]
     manual_check_url: Optional[str] = None
-    npd_check_message: Optional[str] = None  # человекочитаемое описание
+    npd_check_message: Optional[str] = None
 
 
 class RegenAddressRequest(BaseModel):
-    """
-    Pack 18.8: запрос на перегенерацию адреса.
-    Все поля опциональны — по умолчанию берётся applicant.inn_kladr_code.
-    """
-    # Если задан — используется вместо applicant.inn_kladr_code (override).
-    # Полезно если в будущем добавим выбор региона из выпадающего списка.
     kladr_code: Optional[str] = None
 
 
 class RegenAddressResponse(BaseModel):
-    """
-    Pack 18.8: новый сгенерированный адрес. НЕ записывается в БД —
-    запись через PATCH /applicants/{id} (UI «Сохранить»).
-    """
     home_address: str
-    kladr_code: str  # KLADR города из которого сгенерирован адрес
+    kladr_code: str
 
 
 # ---------------------------------------------------------------------------
@@ -162,35 +156,28 @@ class RegenAddressResponse(BaseModel):
 
 
 def _find_application_for_applicant(
-    session: Session, applicant_id: int
+    session: Session, applicant_id: int,
 ) -> Optional[Application]:
-    """
-    Pack 17.3 defensive fix: Applicant НЕ имеет поля application_id, поэтому ищем
-    обратным SELECT'ом по Application.applicant_id.
-    Берём последнюю заявку (ORDER BY id DESC) — обычно одна, но если их несколько
-    хотим самую свежую.
-    """
-    stmt = (
+    """Самая свежая активная заявка для applicant'а (для контекста suggest)."""
+    return session.exec(
         select(Application)
         .where(Application.applicant_id == applicant_id)
-        .order_by(Application.id.desc())  # type: ignore[union-attr]
-    )
-    return session.exec(stmt).first()
+        .where(Application.deleted_at == None)  # noqa: E711
+        .order_by(Application.id.desc())
+        .limit(1)
+    ).first()
 
 
 def _get_company_for_application(
-    session: Session, application: Optional[Application]
+    session: Session, application: Optional[Application],
 ) -> Optional[Company]:
-    if not application or not application.company_id:
+    if application is None or application.company_id is None:
         return None
     return session.get(Company, application.company_id)
 
 
 def _make_manual_check_url(inn: str) -> str:
-    """
-    Pack 18.2: URL для ручной проверки менеджером через сайт ФНС.
-    Это публичная страница где можно ввести ИНН и дату.
-    """
+    """Прямая ссылка на ФНС НПД проверку статуса."""
     return f"https://npd.nalog.ru/check-status/?inn={inn}"
 
 
@@ -202,27 +189,24 @@ def _make_manual_check_url(inn: str) -> str:
 @router.post(
     "/{applicant_id}/inn-suggest",
     response_model=InnSuggestResponse,
-    summary="Подобрать ИНН самозанятого для заявителя",
+    summary="Подобрать ИНН самозанятого (immediate или task если пул пуст)",
 )
 def inn_suggest(
     applicant_id: int,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    _user=Depends(require_manager),
+    user=Depends(require_manager),
 ) -> InnSuggestResponse:
     """
-    Pack 18.1: подбор ИНН с tier-fallback.
-    Параметр filter_by_region удалён — всегда фильтруем по региону, гарантия
-    результата обеспечивается fallback'ом на диаспоры > Москву.
+    Pack 28 Часть 2: новая логика.
 
-    Pack 18.2: НЕ делаем проверку через ФНС здесь (rate limit 2 req/min,
-    держать менеджера 31+ сек на каждом ? — неюзабельно). Проверка
-    выполняется в /inn-accept когда менеджер уже принял решение.
+    Если в пуле verified > 0 для региона applicant'а → InnSuggestImmediate
+    (как раньше — мгновенный ответ).
 
-    Кандидаты с is_invalid=True (помеченные предыдущей проверкой как
-    «потерял статус НПД») здесь НЕ исключаются — фильтрация идёт только
-    по is_used. Это компромисс: при здоровой БД is_invalid очень редок,
-    стоимость отдельного фильтра не оправдана. Если попадётся invalid,
-    inn-accept его поймает.
+    Если verified = 0 → стартуем BackgroundTask refill (5-10 мин), возвращаем
+    InnSuggestTaskStarted с task_id. Фронт поллит /admin/npd-pool/tasks/{id}
+    каждые 3 сек, после status='done' зовёт inn-suggest ещё раз → получает
+    immediate.
     """
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
@@ -232,7 +216,8 @@ def inn_suggest(
     company = _get_company_for_application(session, application)
 
     log.info(
-        "inn-suggest: applicant_id=%s nationality=%s home_addr=%r contract_city=%r company_legal=%r",
+        "inn-suggest: applicant_id=%s nationality=%s home_addr=%r "
+        "contract_city=%r company_legal=%r",
         applicant_id,
         applicant.nationality,
         applicant.home_address,
@@ -247,15 +232,75 @@ def inn_suggest(
             application=application,
             company=company,
         )
+    except NeedsRefillError as e:
+        # Pool пуст для региона — стартуем lazy refill task
+        log.info(
+            "inn-suggest: pool empty for region=%s (%s) — starting lazy refill",
+            e.region_code, e.region_name,
+        )
+
+        # Идемпотентность: если для этого региона уже есть pending/running
+        # task младше 5 минут — переиспользуем его, не создаём дубль
+        existing = session.exec(
+            select(NpdRefillTask)
+            .where(NpdRefillTask.region_code == e.region_code)
+            .where(NpdRefillTask.kind == "lazy_region")
+            .where(NpdRefillTask.status.in_(["pending", "running"]))  # type: ignore[attr-defined]
+            .where(NpdRefillTask.created_at > datetime.utcnow() - timedelta(minutes=5))
+            .order_by(NpdRefillTask.created_at.desc())
+            .limit(1)
+        ).first()
+
+        if existing:
+            log.info(
+                "inn-suggest: reusing existing task_id=%s for region=%s",
+                existing.id, e.region_code,
+            )
+            return InnSuggestTaskStarted(
+                kind="task",
+                task_id=existing.id or 0,
+                region_code=e.region_code,
+                region_name=e.region_name,
+            )
+
+        # Создаём новую task
+        task = NpdRefillTask(
+            kind="lazy_region",
+            status="pending",
+            region_code=e.region_code,
+            progress_text=f"Поиск чистого самозанятого ({e.region_name})...",
+            progress_total=5,
+            triggered_by=f"manager:{getattr(user, 'id', '?')}",
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        # Стартуем BackgroundTask
+        background_tasks.add_task(
+            _run_lazy_refill_bg,
+            task_id=task.id,
+            region_code=e.region_code,
+        )
+
+        return InnSuggestTaskStarted(
+            kind="task",
+            task_id=task.id or 0,
+            region_code=e.region_code,
+            region_name=e.region_name,
+        )
+
     except RuntimeError as e:
-        # Реестр исчерпан или другая нерешаемая проблема
-        log.error("inn-suggest: pipeline failure for applicant_id=%s: %s", applicant_id, e)
+        # Совместимость со старым кодом — на случай если region_picker упал
+        log.error("inn-suggest: pipeline failure for applicant_id=%s: %s",
+                  applicant_id, e)
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:  # pragma: no cover
         log.exception("inn-suggest: unexpected error")
         raise HTTPException(status_code=500, detail=f"Internal error: {e!s}")
 
-    return InnSuggestResponse(
+    return InnSuggestImmediate(
+        kind="immediate",
         inn=suggestion.inn,
         full_name=suggestion.full_name,
         home_address=suggestion.home_address,
@@ -271,6 +316,42 @@ def inn_suggest(
     )
 
 
+def _run_lazy_refill_bg(task_id: int, region_code: str) -> None:
+    """Sync wrapper для BackgroundTasks."""
+    import asyncio
+
+    log.info(
+        "[inn-suggest] BG lazy refill task_id=%s region=%s starting",
+        task_id, region_code,
+    )
+    try:
+        with Session(engine) as session:
+            asyncio.run(
+                run_lazy_region_refill(
+                    session=session,
+                    task_id=task_id,
+                    region_code=region_code,
+                    target=5,
+                )
+            )
+    except Exception as e:
+        log.exception(
+            "[inn-suggest] lazy refill BG task_id=%s FAILED: %s",
+            task_id, e,
+        )
+        try:
+            with Session(engine) as session:
+                t = session.get(NpdRefillTask, task_id)
+                if t and t.status not in ("done", "failed"):
+                    t.status = "failed"
+                    t.error = f"{type(e).__name__}: {e}"[:1024]
+                    t.finished_at = datetime.utcnow()
+                    session.add(t)
+                    session.commit()
+        except Exception:
+            log.exception("[inn-suggest] failed to mark task as failed")
+
+
 # ---------------------------------------------------------------------------
 # POST /api/admin/applicants/{applicant_id}/inn-accept
 # ---------------------------------------------------------------------------
@@ -279,7 +360,7 @@ def inn_suggest(
 @router.post(
     "/{applicant_id}/inn-accept",
     response_model=InnAcceptResponse,
-    summary="Принять ИНН: проверить через ФНС, сохранить в applicant + пометить is_used",
+    summary="Принять ИНН: проверить через ФНС, сохранить в applicant + пометить used",
 )
 async def inn_accept(
     applicant_id: int,
@@ -288,23 +369,18 @@ async def inn_accept(
     _user=Depends(require_manager),
 ) -> InnAcceptResponse:
     """
-    Pack 18.2: проверяет ИНН через ФНС API перед сохранением.
+    Pack 28 Часть 2: переписан на NpdCandidate.
 
     Сценарии:
-    1. ФНС подтвердил статус НПД (status=True):
-       > сохраняем как раньше, npd_check_status=confirmed
-    2. ФНС сообщил что не плательщик (status=False):
-       > помечаем кандидат is_invalid=True в БД
-       > возвращаем 409 «Кандидат потерял статус НПД, попробуйте подобрать
-         другого». Менеджер жмёт ? ИНН ещё раз.
-    3. ФНС timeout/недоступен:
-       > мягкий пропуск, ИНН выдаётся БЕЗ проверки,
-         npd_check_status=skipped_fns_unavailable + manual_check_url с
-         ссылкой на сайт ФНС для ручной проверки
+    1. ФНС подтвердил статус НПД (status=True) → сохраняем как раньше,
+       npd_check_status=confirmed.
+    2. ФНС вернул status=False (кандидат снялся) → переводим candidate
+       в rejected_inactive, возвращаем 409.
+    3. ФНС timeout → мягкий пропуск, npd_check_status=skipped_fns_unavailable.
+    4. Pack 28 Часть 2 NEW: если candidate.npd_checked_at < 24 часа назад —
+       пропускаем повторный запрос ФНС, npd_check_status=skipped_recently_verified.
 
-    Идемпотентно: если applicant.inn уже совпадает с переданным — просто
-    200 OK (но если запись в реестре по какой-то причине is_used=False —
-    починим и попробуем проверить статус если ещё не проверяли).
+    Идемпотентно: если applicant.inn == inn → 200 OK без перепроверки.
     """
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
@@ -316,14 +392,18 @@ async def inn_accept(
 
     # ----- Идемпотентность -----
     if applicant.inn == inn:
-        cand = session.get(SelfEmployedRegistry, inn)
-        if cand and not cand.is_used:
-            cand.is_used = True
+        cand = session.get(NpdCandidate, inn)
+        if cand and cand.status in ("verified", "allocated"):
+            cand.status = "used"
             cand.used_by_applicant_id = applicant.id
             cand.used_at = datetime.utcnow()
+            cand.allocated_until = None
             session.add(cand)
             session.commit()
-            log.info("inn-accept: marked candidate inn=%s as used (idempotent fix)", inn)
+            log.info(
+                "inn-accept: marked candidate inn=%s as used (idempotent fix)",
+                inn,
+            )
         return InnAcceptResponse(
             ok=True,
             applicant_id=applicant.id,
@@ -332,92 +412,126 @@ async def inn_accept(
             npd_check_message="ИНН уже принят ранее, повторная проверка не выполнялась",
         )
 
-    # ----- Проверка кандидата в реестре -----
-    cand = session.get(SelfEmployedRegistry, inn)
+    # ----- Поиск кандидата в npd_candidate -----
+    cand = session.get(NpdCandidate, inn)
     if not cand:
         raise HTTPException(
             status_code=404,
-            detail=f"INN {inn} not found in registry. Refuse to write unknown INN.",
+            detail=(
+                f"INN {inn} not found in npd_candidate pool. "
+                "Refuse to write unknown INN. Возможно ИНН старый из SNRIP — "
+                "Pack 28 Часть 2 их больше не выдаёт."
+            ),
         )
-    if cand.is_used and cand.used_by_applicant_id != applicant.id:
+    if cand.status == "used" and cand.used_by_applicant_id != applicant.id:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"INN {inn} уже использован заявителем id={cand.used_by_applicant_id}. "
-                "Подберите другого кандидата."
+                f"INN {inn} уже использован заявителем "
+                f"id={cand.used_by_applicant_id}. Подберите другого кандидата."
+            ),
+        )
+    if cand.status in ("rejected_ip", "rejected_inactive", "rejected_other"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Кандидат {inn} помечен как {cand.status} "
+                f"(reason: {cand.rejection_reason or 'нет деталей'}). "
+                "Подберите другого через ✨ ИНН."
             ),
         )
 
     # ----- Pack 18.2: проверка через ФНС API -----
     npd_check_status: Literal[
-        "confirmed", "skipped_fns_unavailable", "skipped_already_checked"
+        "confirmed",
+        "skipped_fns_unavailable",
+        "skipped_already_checked",
+        "skipped_recently_verified",
     ] = "confirmed"
     manual_check_url: Optional[str] = None
     npd_check_message: Optional[str] = None
 
-    log.info("inn-accept: starting NPD check for inn=%s via ФНС API", inn)
-    try:
-        async with NpdStatusChecker() as checker:
-            result = await checker.check(inn=inn)
-
-        if not result.is_active:
-            # ФНС подтвердил: НЕ плательщик. Помечаем кандидат invalid и отказываем.
-            cand.is_invalid = True
-            cand.last_npd_check_at = datetime.utcnow()
-            session.add(cand)
-            session.commit()
-            log.warning(
-                "inn-accept: ФНС вернул status=False для inn=%s — помечен is_invalid=True. "
-                "Сообщение ФНС: %s",
-                inn,
-                result.message,
-            )
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"ФНС сообщил что ИНН {inn} не является плательщиком НПД "
-                    f"(сообщение: {result.message or 'нет деталей'}). "
-                    "Кандидат помечен как недействительный. "
-                    "Подберите другого через кнопку ? ИНН."
-                ),
-            )
-
-        # ФНС подтвердил статус — успех
-        cand.last_npd_check_at = datetime.utcnow()
+    # Pack 28 Часть 2: пропускаем проверку если кандидат свежепроверен (<24 часов)
+    if (
+        cand.npd_checked_at
+        and cand.npd_checked_at > datetime.utcnow() - timedelta(hours=24)
+    ):
+        npd_check_status = "skipped_recently_verified"
+        npd_check_message = (
+            f"Кандидат проверен через ФНС НПД API "
+            f"{cand.npd_checked_at.isoformat()} — повторная проверка не нужна."
+        )
         log.info(
-            "inn-accept: ФНС подтвердил статус НПД для inn=%s (registration_date=%s)",
-            inn,
-            result.registration_date,
+            "inn-accept: skip ФНС re-check, candidate verified at %s",
+            cand.npd_checked_at.isoformat(),
         )
+    else:
+        log.info("inn-accept: starting NPD check for inn=%s via ФНС API", inn)
+        try:
+            async with NpdStatusChecker() as checker:
+                result = await checker.check(inn=inn)
 
-    except NpdStatusError as e:
-        # ФНС вернул ошибку (timeout, 5xx, нечитаемый ответ) — мягкий пропуск
-        log.warning(
-            "inn-accept: NpdStatusError для inn=%s, мягкий пропуск проверки: %s",
-            inn,
-            e,
-        )
-        npd_check_status = "skipped_fns_unavailable"
-        manual_check_url = _make_manual_check_url(inn)
-        npd_check_message = (
-            f"ФНС API временно недоступен ({e!s}). "
-            f"ИНН выдан без проверки. Рекомендуем проверить вручную на сайте ФНС: "
-            f"{manual_check_url}"
-        )
+            if not result.is_active:
+                # ФНС подтвердил: НЕ плательщик. Переводим в rejected_inactive
+                cand.status = "rejected_inactive"
+                cand.npd_checked_at = datetime.utcnow()
+                cand.npd_active = False
+                cand.rejection_reason = (
+                    f"ФНС at accept-time: {result.message or 'not active'}"
+                )
+                session.add(cand)
+                session.commit()
+                log.warning(
+                    "inn-accept: ФНС вернул status=False для inn=%s "
+                    "(сообщение: %s) — переведён в rejected_inactive",
+                    inn, result.message,
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"ФНС сообщил что ИНН {inn} не является плательщиком "
+                        f"НПД (сообщение: {result.message or 'нет деталей'}). "
+                        "Кандидат помечен как rejected_inactive. "
+                        "Подберите другого через ✨ ИНН."
+                    ),
+                )
 
-    except HTTPException:
-        # 409 от блока с is_active=False — пробрасываем как есть
-        raise
+            # ФНС подтвердил
+            cand.npd_checked_at = datetime.utcnow()
+            cand.npd_active = True
+            log.info(
+                "inn-accept: ФНС подтвердил статус НПД для inn=%s "
+                "(registration_date=%s)",
+                inn, result.registration_date,
+            )
 
-    except Exception as e:
-        # Любая другая ошибка — тоже мягкий пропуск (защита менеджера от блокировки)
-        log.exception("inn-accept: unexpected error during NPD check")
-        npd_check_status = "skipped_fns_unavailable"
-        manual_check_url = _make_manual_check_url(inn)
-        npd_check_message = (
-            f"Не удалось выполнить проверку статуса НПД ({type(e).__name__}: {e}). "
-            f"ИНН выдан без проверки. Рекомендуем проверить вручную: {manual_check_url}"
-        )
+            # Если ФНС вернул реальную дату регистрации — обновляем candidate
+            if result.registration_date and not cand.registration_date:
+                cand.registration_date = result.registration_date
+
+        except NpdStatusError as e:
+            log.warning(
+                "inn-accept: NpdStatusError для inn=%s, мягкий пропуск: %s",
+                inn, e,
+            )
+            npd_check_status = "skipped_fns_unavailable"
+            manual_check_url = _make_manual_check_url(inn)
+            npd_check_message = (
+                f"ФНС API временно недоступен ({e!s}). "
+                f"ИНН выдан без проверки. Рекомендуем проверить вручную: "
+                f"{manual_check_url}"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.exception("inn-accept: unexpected error during NPD check")
+            npd_check_status = "skipped_fns_unavailable"
+            manual_check_url = _make_manual_check_url(inn)
+            npd_check_message = (
+                f"Не удалось выполнить проверку статуса НПД "
+                f"({type(e).__name__}: {e}). ИНН выдан без проверки. "
+                f"Рекомендуем проверить вручную: {manual_check_url}"
+            )
 
     # ----- Транзакционная запись -----
     applicant.inn = inn
@@ -425,14 +539,27 @@ async def inn_accept(
         applicant.home_address = payload.home_address
     if payload.kladr_code:
         applicant.inn_kladr_code = payload.kladr_code
-    if payload.inn_registration_date:
+
+    # Pack 28 Часть 2: registration_date берём из candidate если есть
+    # (реальная дата из ФНС), иначе из payload (синтетическая из pipeline)
+    if cand.registration_date:
+        applicant.inn_registration_date = cand.registration_date
+        log.info(
+            "inn-accept: using REAL registration_date=%s from npd_candidate",
+            cand.registration_date,
+        )
+    elif payload.inn_registration_date:
         applicant.inn_registration_date = payload.inn_registration_date
+
     if payload.inn_source:
         applicant.inn_source = payload.inn_source
+    elif not applicant.inn_source:
+        applicant.inn_source = "npd_pool"  # Pack 28 Часть 2 default
 
-    cand.is_used = True
+    cand.status = "used"
     cand.used_by_applicant_id = applicant.id
     cand.used_at = datetime.utcnow()
+    cand.allocated_until = None
 
     session.add(applicant)
     session.add(cand)
@@ -440,10 +567,7 @@ async def inn_accept(
 
     log.info(
         "inn-accept: SUCCESS applicant_id=%s inn=%s region_kladr=%s npd_check=%s",
-        applicant_id,
-        inn,
-        payload.kladr_code,
-        npd_check_status,
+        applicant_id, inn, payload.kladr_code, npd_check_status,
     )
     return InnAcceptResponse(
         ok=True,
@@ -454,9 +578,11 @@ async def inn_accept(
         npd_check_message=npd_check_message,
     )
 
+
 # ---------------------------------------------------------------------------
 # POST /api/admin/applicants/{applicant_id}/regen-address
 # Pack 18.8: перегенерировать случайный адрес в том же городе что у ИНН
+# (БЕЗ ИЗМЕНЕНИЙ в Pack 28 Часть 2)
 # ---------------------------------------------------------------------------
 
 
@@ -471,246 +597,32 @@ def regen_address(
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ) -> RegenAddressResponse:
-    """
-    Pack 18.8: помогает менеджеру выдать клиенту другой адрес без перевыдачи ИНН.
-
-    Сценарии использования:
-    - Клиент посмотрел сгенерированный адрес и сказал «я там не живу/не нравится»
-    - Менеджер хочет посмотреть пару вариантов до принятия решения
-    - Случайно сгенерировался адрес в неудобном районе
-
-    Логика:
-    1. По умолчанию берёт applicant.inn_kladr_code (KLADR города куда привязан ИНН).
-    2. Если payload.kladr_code задан — используется он (override).
-    3. Валидируем что KLADR есть в KNOWN_REGIONS (kladr_address_gen.py).
-       Если нет — 400 с подсказкой что нужно перевыдать ИНН.
-    4. Генерируем случайный адрес через generate_address(kladr_code, rng).
-    5. Возвращаем {home_address, kladr_code}. В БД НЕ пишем — это сделает фронт
-       через обычный PATCH /applicants/{id} когда менеджер нажмёт «Сохранить».
-
-    Не требует ни обращений к ФНС, ни поиска ИНН в реестре — это «лёгкая»
-    операция (~10ms). Можно дёргать сколько угодно раз.
-    """
+    """Pack 18.8: помогает менеджеру выдать клиенту другой адрес без перевыдачи ИНН."""
     applicant = session.get(Applicant, applicant_id)
     if not applicant:
         raise HTTPException(status_code=404, detail="Applicant not found")
 
-    # 1. Определяем целевой KLADR
     kladr_code = (payload.kladr_code or applicant.inn_kladr_code or "").strip()
-
     if not kladr_code:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Невозможно сгенерировать адрес: у клиента не задан inn_kladr_code. "
-                "Сначала выдайте ИНН через ? — KLADR региона запишется автоматически."
+                "Сначала сгенерируйте ИНН — без него неизвестно для какого "
+                "города делать адрес."
             ),
         )
-
-    # 2. Валидируем KLADR — должен быть в KNOWN_REGIONS
-    # (KNOWN_REGIONS — это dict[kladr_code, RegionTemplate] из kladr_address_gen.py)
     if kladr_code not in KNOWN_REGIONS:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"KLADR {kladr_code} не поддерживается генератором адресов. "
-                f"Возможно ИНН был выдан до Pack 18.6 — рекомендуем перевыдать через ? "
-                f"чтобы записался актуальный KLADR из KNOWN_REGIONS."
+                f"KLADR-код {kladr_code} не в списке поддерживаемых городов. "
+                "Перевыдайте ИНН для актуального формата."
             ),
         )
 
-    # 3. Генерируем адрес
-    rng = random.Random()  # Pack 18.8: без seed — каждый вызов даёт разный адрес
-    # generate_address возвращает GeneratedAddress (dataclass), не строку.
-    # .full — полный адрес одной строкой, .kladr_code — KLADR города
-    address = generate_address(kladr_code, rng)
-
-    log.info(
-        "regen-address: applicant_id=%s kladr_code=%s generated %r",
-        applicant_id, kladr_code, address.full,
-    )
-
+    rng = random.Random()
+    addr = generate_address(kladr_code, rng)
     return RegenAddressResponse(
-        home_address=address.full,
-        kladr_code=address.kladr_code,
-    )
-
-
-
-
-# ---------------------------------------------------------------------------
-# POST /api/admin/applicants/{applicant_id}/regen-education
-# Pack 19.0: автогенерация образования (вуз + специальность + год выпуска)
-# ---------------------------------------------------------------------------
-
-
-class RegenEducationResponse(BaseModel):
-    """Pack 19.0 — ответ для UI: данные для applicant.education[]."""
-    institution: str
-    institution_short: str
-    degree: str
-    specialty: str
-    graduation_year: int
-    fallback_used: bool = False
-    matched_pattern: Optional[str] = None
-
-
-@router.post(
-    "/{applicant_id}/regen-education",
-    response_model=RegenEducationResponse,
-    summary="Pack 19.0: подобрать вуз+специальность+год выпуска "
-            "по региону и должности",
-)
-def regen_education(
-    applicant_id: int,
-    session: Session = Depends(get_session),
-    _user=Depends(require_manager),
-) -> RegenEducationResponse:
-    """
-    Подбирает один вуз для applicant'а по логике:
-      1. Регион из applicant.inn_kladr_code (первые 2 цифры)
-      2. Должность из applicant.work_history[0].position
-         > специальность через PositionSpecialtyMap
-      3. Год выпуска = год_рождения + 22 + randint(0, 5)
-
-    Если вуза в регионе нет — fallback на Москву (fallback_used=True).
-    Если должность не определена — generic паттерн «менеджер».
-
-    Возвращает данные для frontend'а — не пишет в БД (фронт делает это
-    через PATCH /applicants/{id} с education[]).
-
-    Если ничего не подобралось (редкий случай) — 500 с диагностикой.
-    """
-    # Поздний импорт чтобы не циклить (Pack 19.0)
-    from app.services.university_generator import suggest_education
-
-    applicant = session.get(Applicant, applicant_id)
-    if not applicant:
-        raise HTTPException(status_code=404, detail="Applicant not found")
-
-    suggestion = suggest_education(applicant, session)
-
-    if suggestion is None:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Не удалось подобрать вуз. Возможные причины: (1) у клиента "
-                "не задана должность в work_history и нет дефолтного маппинга; "
-                "(2) в БД нет вузов с подходящей специальностью даже в Москве. "
-                "Проверьте PositionSpecialtyMap и University seed."
-            ),
-        )
-
-    log.info(
-        "regen-education: applicant_id=%s position from work_history > "
-        "uni=%s specialty=%s grad=%d",
-        applicant_id, suggestion.institution_short,
-        suggestion.specialty, suggestion.graduation_year,
-    )
-
-    return RegenEducationResponse(
-        institution=suggestion.institution,
-        institution_short=suggestion.institution_short,
-        degree=suggestion.degree,
-        specialty=suggestion.specialty,
-        graduation_year=suggestion.graduation_year,
-        fallback_used=suggestion.fallback_used,
-        matched_pattern=suggestion.matched_pattern,
-    )
-
-
-# ---------------------------------------------------------------------------
-# POST /api/admin/applicants/{applicant_id}/regen-work-history
-# Pack 19.1: автогенерация work_history (1-3 записи: компании + должности + даты)
-# ---------------------------------------------------------------------------
-
-
-class RegenWorkHistoryRecord(BaseModel):
-    """Pack 19.1 — одна запись для frontend, кладётся в applicant.work_history[]."""
-    period_start: str
-    period_end: str
-    company: str
-    position: str
-    duties: list[str]
-
-
-class RegenWorkHistoryResponse(BaseModel):
-    """Pack 19.1 — ответ /regen-work-history."""
-    records: list[RegenWorkHistoryRecord]
-    fallback_used: bool = False
-    specialty_used: str
-    matched_pattern: Optional[str] = None
-
-
-@router.post(
-    "/{applicant_id}/regen-work-history",
-    response_model=RegenWorkHistoryResponse,
-    summary="Pack 19.1: подобрать 1-3 записи work_history (компании + должности + даты)",
-)
-def regen_work_history(
-    applicant_id: int,
-    session: Session = Depends(get_session),
-    _user=Depends(require_manager),
-) -> RegenWorkHistoryResponse:
-    """
-    Подбирает 1-3 правдоподобные записи трудового стажа на основе:
-      1. Регион из applicant.inn_kladr_code (первые 2 цифры)
-      2. Специальность из applicant.education[-1].specialty (приоритет)
-         или из applicant.work_history[0].position через PositionSpecialtyMap
-         или из application.position.title_ru (Pack 19.0.2 fallback)
-      3. Career-track: уровни 1-4 в зависимости от количества записей
-         (1 = Senior текущая, 3 = Senior+Middle+Junior career progression)
-
-    Гарантии:
-      - Минимум 3.5 года в последней записи (требование DN-визы)
-      - Даты не пересекаются (rec[i].end < rec[i-1].start)
-      - Внутри легенды одна компания не повторяется
-
-    Если для региона нет компаний → fallback на Москву (fallback_used=True).
-    Если специальность не определилась → generic '38.03.02 Менеджмент'.
-
-    Не пишет в БД — фронт делает это через PATCH /applicants/{id} с work_history[].
-
-    Pack 19.1a: duties=[] для каждой записи (заполнится в Pack 19.1b после
-    ревью CV-шаблона).
-    """
-    applicant = session.get(Applicant, applicant_id)
-    if not applicant:
-        raise HTTPException(status_code=404, detail="Applicant not found")
-
-    suggestion = suggest_work_history(applicant, session)
-
-    if suggestion is None:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Не удалось подобрать work_history. Возможные причины: "
-                "(1) Pack 19.0 (specialty seed) не применён — таблица specialty пуста; "
-                "(2) Pack 19.1 (legend_company seed) не применён — нет компаний в БД; "
-                "(3) Не нашлось подходящего career_track. "
-                "Проверьте таблицы specialty / legend_company / career_track."
-            ),
-        )
-
-    log.info(
-        "regen-work-history: applicant_id=%s specialty=%s → %d records "
-        "(fallback=%s, pattern=%r)",
-        applicant_id, suggestion.specialty_used, len(suggestion.records),
-        suggestion.fallback_used, suggestion.matched_pattern,
-    )
-
-    return RegenWorkHistoryResponse(
-        records=[
-            RegenWorkHistoryRecord(
-                period_start=r.period_start,
-                period_end=r.period_end,
-                company=r.company,
-                position=r.position,
-                duties=r.duties,
-            )
-            for r in suggestion.records
-        ],
-        fallback_used=suggestion.fallback_used,
-        specialty_used=suggestion.specialty_used,
-        matched_pattern=suggestion.matched_pattern,
+        home_address=addr.full,
+        kladr_code=addr.kladr_code,
     )

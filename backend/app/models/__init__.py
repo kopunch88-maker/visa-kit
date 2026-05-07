@@ -11,6 +11,7 @@ Import from here, not from individual files:
 # Base utilities
 from ._base import TimestampMixin, utcnow, CountryCode, CurrencyCode
 from app.models.ifns_mfc import IfnsOffice, MfcOffice
+from app.models.npd_refill_task import NpdRefillTask
 # Directory entities
 from .company import Company, CompanyCreate, CompanyUpdate, CompanyRead
 from .position import Position, PositionCreate, PositionUpdate, PositionRead
@@ -96,6 +97,8 @@ from .translation import (
     TranslationStatus,
 )
 
+from .npd_candidate import NpdCandidate, NpdPoolStats, NpdPoolRefillResult
+
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -152,4 +155,6 @@ __all__ = [
       # ... existing ...
     "IfnsOffice",
     "MfcOffice",
+    "NpdCandidate", "NpdPoolStats", "NpdPoolRefillResult",
+    "NpdRefillTask",
 ]
