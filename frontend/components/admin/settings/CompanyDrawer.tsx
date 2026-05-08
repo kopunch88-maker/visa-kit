@@ -10,6 +10,9 @@ import {
   updateCompany,
   listBanks,
   generateAccount,
+  // Pack 29.4
+  ContractTemplateOption,
+  listContractTemplates,
 } from "@/lib/api";
 
 interface Props {
@@ -55,8 +58,12 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     bank_account: "",
     bank_bic: "",
     bank_correspondent_account: "",
+    contract_template_slug: null,  // Pack 29.4
     notes: "",
   });
+
+  // Pack 29.4 — список доступных шаблонов договоров
+  const [contractTemplates, setContractTemplates] = useState<ContractTemplateOption[]>([]);
 
   // Pack 26.0 — если переданы initialFields (импорт из DOCX) — применяем их к форме.
   // Делаем при первом рендере и при смене initialFields. Для existing-режима поверх
@@ -91,6 +98,13 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
   useEffect(() => {
     listBanks().then(setBanks).catch((e) => {
       console.warn("Failed to load banks:", e);
+    });
+  }, []);
+
+  // Pack 29.4 — загрузка списка контрактных шаблонов
+  useEffect(() => {
+    listContractTemplates().then(setContractTemplates).catch((e) => {
+      console.warn("Failed to load contract templates:", e);
     });
   }, []);
 
@@ -223,6 +237,33 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                   <TextField label="КПП (только для РФ)" value={form.tax_id_secondary || ""}
                     onChange={(v) => setField("tax_id_secondary", v)} placeholder="771501001" />
                 </Grid>
+              </Section>
+
+              {/* Pack 29.4 — Шаблон договора */}
+              <Section title="Шаблон договора">
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    Шаблон, по которому будет рендериться 01_Договор.docx
+                  </label>
+                  <select
+                    value={form.contract_template_slug || ""}
+                    onChange={(e) => setField("contract_template_slug", e.target.value || null)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  >
+                    <option value="">— Не выбран (модалка при генерации) —</option>
+                    {contractTemplates.map((t) => (
+                      <option key={t.slug} value={t.slug}>
+                        {t.label} [{t.archetype}]
+                      </option>
+                    ))}
+                  </select>
+                  {form.contract_template_slug && (
+                    <p className="text-xs text-tertiary mt-1">
+                      {contractTemplates.find((t) => t.slug === form.contract_template_slug)?.description || ""}
+                    </p>
+                  )}
+                </div>
               </Section>
 
               <Section title="Адреса">

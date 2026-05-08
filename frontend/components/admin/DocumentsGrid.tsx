@@ -3,9 +3,13 @@
 import { useState } from "react";
 import { Download, Loader2, Check, RefreshCw } from "lucide-react";
 import { API_BASE_URL, getToken } from "@/lib/api";
+// Pack 29.4
+import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
 
 interface Props {
   applicationId: number;
+  // Pack 29.4 — для модалки выбора шаблона договора
+  companyId?: number | null;
 }
 
 type DocItem = {
@@ -38,11 +42,40 @@ const DOCUMENTS: DocItem[] = [
   { id: "apostille",           filename: "16_Апостиль.docx",                        kind: "docx" },
 ];
 
-export function DocumentsGrid({ applicationId }: Props) {
+export function DocumentsGrid({ applicationId, companyId }: Props) {
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipDownloaded, setZipDownloaded] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Pack 29.4 — состояние модалки выбора шаблона при 409 NEEDS_CONTRACT_TEMPLATE
+  const [pickerState, setPickerState] = useState<{
+    isOpen: boolean;
+    companyId: number;
+    companyShortName: string;
+    onSaved: () => void;
+  } | null>(null);
+
+  // Pack 29.4 — проверка 409 NEEDS_CONTRACT_TEMPLATE
+  // Возвращает true если открыли модалку (нужно прервать обработку), false если 409 не пришла
+  async function handle409IfNeedsTemplate(res: Response, retryFn: () => void): Promise<boolean> {
+    if (res.status !== 409) return false;
+    let detail: any;
+    try {
+      const json = await res.json();
+      detail = json.detail;
+    } catch {
+      return false;
+    }
+    if (!detail || detail.code !== "NEEDS_CONTRACT_TEMPLATE") return false;
+    setPickerState({
+      isOpen: true,
+      companyId: detail.company_id,
+      companyShortName: detail.company_short_name || `id=${detail.company_id}`,
+      onSaved: retryFn,
+    });
+    return true;
+  }
 
   async function handleDownloadZip() {
     setDownloadingZip(true);
@@ -53,6 +86,10 @@ export function DocumentsGrid({ applicationId }: Props) {
         `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
+      // Pack 29.4 — обработка 409 NEEDS_CONTRACT_TEMPLATE
+      if (await handle409IfNeedsTemplate(res, () => handleDownloadZip())) {
+        return;
+      }
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
 
       const blob = await res.blob();
@@ -76,6 +113,10 @@ export function DocumentsGrid({ applicationId }: Props) {
         `${API_BASE_URL}/api/admin/applications/${applicationId}/download-file/${doc.id}`,
         { method: "GET", headers: { Authorization: `Bearer ${token}` } },
       );
+      // Pack 29.4 — обработка 409 NEEDS_CONTRACT_TEMPLATE
+      if (await handle409IfNeedsTemplate(res, () => handleDownloadOne(doc))) {
+        return;
+      }
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
 
       const blob = await res.blob();
@@ -189,6 +230,21 @@ export function DocumentsGrid({ applicationId }: Props) {
           );
         })}
       </div>
+
+      {/* Pack 29.4 — Модалка выбора шаблона договора при 409 */}
+      {pickerState && pickerState.isOpen && (
+        <ContractTemplatePickerModal
+          companyId={pickerState.companyId}
+          companyShortName={pickerState.companyShortName}
+          onClose={() => setPickerState(null)}
+          onSaved={() => {
+            const retry = pickerState.onSaved;
+            setPickerState(null);
+            // Небольшая задержка чтобы UI закрыл модалку перед повторной попыткой
+            setTimeout(() => retry(), 100);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -192,6 +192,7 @@ export type CompanyResponse = {
   bank_correspondent_account?: string;
   egryl_extract_date?: string;
   egryl_is_fresh?: boolean;
+  contract_template_slug?: string | null;  // Pack 29.0
   is_active: boolean;
   notes?: string;
   application_count?: number;
@@ -1063,6 +1064,26 @@ export async function deleteCompany(id: number): Promise<void> {
     method: "DELETE", headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Не удалось удалить: ${res.status}`);
+}
+
+// ============================================================================
+// Pack 29.0/29.4 — Contract templates
+// ============================================================================
+
+export type ContractTemplateOption = {
+  slug: string;
+  label: string;
+  archetype: string;       // 'vozmezdnoe' | 'vozmezdnoe_hourly' | 'gph'
+  description: string;
+};
+
+export async function listContractTemplates(): Promise<ContractTemplateOption[]> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/companies/contract-templates`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Contract templates: ${res.status}`);
+  const data = await res.json();
+  return data.templates;
 }
 
 // ============================================================================
