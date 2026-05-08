@@ -553,7 +553,10 @@ async def inn_accept(
 
     if payload.inn_source:
         applicant.inn_source = payload.inn_source
-    elif not applicant.inn_source:
+    else:
+        # Pack 32.0.3: always update inn_source on accept (was: elif not applicant.inn_source).
+        # The previous elif left stale values when a manager regenerates an INN for an
+        # applicant who already had inn_source set from a previous attempt.
         applicant.inn_source = (
             "npd_pool_real" if cand and cand.registration_date
             else "npd_pool_synthetic"
