@@ -216,7 +216,8 @@ export function InnSuggestionModal({
         inn_registration_date: suggestion.inn_registration_date || null,
         home_address: suggestion.home_address || null,
         kladr_code: suggestion.kladr_code || null,
-        inn_source: "npd_pool", // Pack 28.2: новые ИНН из npd_candidate
+        // Pack 32.0.2: inn_source determined by backend (npd_pool_real / npd_pool_synthetic)
+        // based on whether npd_candidate has registration_date. Frontend should NOT send it.
       });
       setAcceptResult(result);
 
