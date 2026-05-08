@@ -1,14 +1,22 @@
 """
-Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix + Pack 15.7 firstLine fix).
+Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix + Pack 15.8 firstLine merge).
 
-Pack 15.7 fix:
-- _set_paragraph_text теперь зануляет w:firstLine indent у переведённого
-  параграфа. На русском (короткие описания типа "Перевод по СБП") firstLine
-  не виден — всё в одну строку. На испанском описания длиннее, переносятся
-  на 2+ строки, и firstLine отступ ломает выравнивание (первая строка
-  отступает на firstLine, остальные — нет; получается лесенка).
-  Шаблоны на русском трогать нельзя (правила Кости — шаблон для русского
-  идеален), поэтому фикс делаем на стороне переводчика.
+Pack 15.8 fix (заменяет Pack 15.7):
+- _set_paragraph_text теперь МЕРДЖИТ w:firstLine в w:left у переведённого
+  параграфа: new_left = old_left + firstLine, firstLine удаляется.
+  
+  Зачем: Pack 15.7 просто удалял firstLine, но в шаблоне выписки последняя
+  строка блока Concepto уже имеет left=394 (без firstLine) — она была
+  выровнена с предыдущими строками которые имели left=199 firstLine=195
+  (эффективная позиция тоже 394). После Pack 15.7 первые 3 строки уехали
+  на left=199, а Concepto осталась на left=394 — лесенка наоборот.
+  
+  Pack 15.8: 199+195=394 — все 4 строки совпадают. Длинные испанские
+  описания тоже выравниваются по 394 (без лесенки между первой и
+  последующими строками одного параграфа).
+
+  Шаблоны на русском трогать нельзя (правило Кости — русский шаблон идеален),
+  поэтому фикс делаем на стороне переводчика.
 
 Pack 15.6 fix:
 - _collect_all_paragraphs теперь обходит <w:txbxContent> внутри <w:drawing>
@@ -237,15 +245,28 @@ def _set_paragraph_text(p: Paragraph, new_text: str) -> None:
     p.runs[0].text = new_text
     for run in p.runs[1:]:
         run.text = ""
-    # Pack 15.7: зануляем firstLine indent. На русском короткие описания
-    # умещаются в 1 строку и firstLine незаметен. На испанском описания
-    # длиннее, переносятся, и firstLine ломает выравнивание (лесенка).
-    # left indent сохраняем — он определяет общий отступ от края ячейки.
+    # Pack 15.8: мерджим w:firstLine в w:left.
+    # На русском короткие описания умещаются в 1 строку и firstLine незаметен.
+    # На испанском описания длиннее, переносятся, и firstLine ломает выравнивание
+    # (первая строка отступает на firstLine, остальные — нет; получается лесенка).
+    # Просто удалить firstLine нельзя: в шаблоне выписки соседние параграфы
+    # одного блока (Ordenante/NIF/Cuenta vs Concepto) рассчитаны на одну
+    # визуальную позицию, но достигают её разными способами (left=199+firstLine=195
+    # vs left=394). Поэтому мерджим: new_left = old_left + firstLine, firstLine удаляем.
     pPr = p._element.find(qn('w:pPr'))
     if pPr is not None:
         ind = pPr.find(qn('w:ind'))
-        if ind is not None and ind.get(qn('w:firstLine')) is not None:
-            del ind.attrib[qn('w:firstLine')]
+        if ind is not None:
+            first_line = ind.get(qn('w:firstLine'))
+            if first_line is not None:
+                try:
+                    fl = int(first_line)
+                    left = int(ind.get(qn('w:left')) or '0')
+                    ind.set(qn('w:left'), str(left + fl))
+                    del ind.attrib[qn('w:firstLine')]
+                except ValueError:
+                    # Не number — просто удалим firstLine на всякий случай
+                    del ind.attrib[qn('w:firstLine')]
 
 
 def _is_inside_mc_fallback(elem) -> bool:
