@@ -666,3 +666,66 @@ def apply_pack28_5_migration():
         except Exception as e:
             log.warning(f"[migration:pack28_5] Backfill failed: {e}")
 
+# ============================================================================
+# Pack 29.0 — Per-company contract template slug
+# ============================================================================
+def apply_pack29_0_migration():
+    """
+    Pack 29.0 — добавление company.contract_template_slug + индекс +
+    backfill по ИНН для известных компаний.
+
+    Идемпотентна. Применяется при каждом старте через lifespan.
+    """
+    from sqlalchemy import create_engine, text as sa_text
+    from app.config import settings
+
+    # Маппинг ИНН → slug. Должен совпадать с
+    # contracts_registry.COMPANY_INN_TO_SLUG (Pack 29.0).
+    COMPANY_INN_TO_SLUG = {
+        "6168006148": "sk10",
+        "9705067089": "ssk",
+        "7701411241": "kns_grupp",
+        "4003040489": "hayat",
+        "7714709349": "avtodom",
+        "7727286316": "factor_stroy",
+        "7810890724": "protech",
+        "7706796034": "buki_vedi",
+        "7729634103": "tikompani",
+        "7731579629": "king_david",
+    }
+
+    engine = create_engine(settings.database_url)
+    with engine.begin() as conn:
+        # 1. ADD COLUMN IF NOT EXISTS
+        col_exists = conn.execute(sa_text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'company' AND column_name = 'contract_template_slug'
+        """)).first()
+        if not col_exists:
+            conn.execute(sa_text("""
+                ALTER TABLE company
+                ADD COLUMN contract_template_slug VARCHAR(64) NULL
+            """))
+            print("  ✓ Pack 29.0: ADD COLUMN company.contract_template_slug")
+
+        # 2. CREATE INDEX IF NOT EXISTS
+        idx_exists = conn.execute(sa_text("""
+            SELECT 1 FROM pg_indexes
+            WHERE indexname = 'ix_company_contract_template_slug'
+        """)).first()
+        if not idx_exists:
+            conn.execute(sa_text("""
+                CREATE INDEX ix_company_contract_template_slug
+                ON company (contract_template_slug)
+            """))
+            print("  ✓ Pack 29.0: CREATE INDEX ix_company_contract_template_slug")
+
+        # 3. Backfill — только для компаний с известным ИНН и пустым slug
+        for inn, slug in COMPANY_INN_TO_SLUG.items():
+            conn.execute(sa_text("""
+                UPDATE company
+                SET contract_template_slug = :slug
+                WHERE tax_id_primary = :inn
+                  AND (contract_template_slug IS NULL OR contract_template_slug = '')
+            """), {"slug": slug, "inn": inn})
+

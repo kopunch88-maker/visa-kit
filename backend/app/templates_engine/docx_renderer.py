@@ -31,6 +31,38 @@ from .context import build_context
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates" / "docx"
+REPO_ROOT = Path(__file__).resolve().parents[3]  # Pack 29.0: для resolve_contract_template_path
+
+# Pack 29.0: реестр контрактных шаблонов
+from .contracts_registry import (
+    resolve_contract_template_path,
+    is_template_slug_valid,
+    COMPANY_INN_TO_SLUG,
+    get_available_template_options,
+)
+from fastapi import HTTPException
+
+
+class NeedsContractTemplateError(HTTPException):
+    """
+    Pack 29.0 — поднимается из render_contract когда у компании не выбран
+    шаблон договора и ИНН не в COMPANY_INN_TO_SLUG. Frontend ловит 409
+    и показывает модалку выбора шаблона.
+    """
+    def __init__(self, company):
+        super().__init__(
+            status_code=409,
+            detail={
+                "code": "NEEDS_CONTRACT_TEMPLATE",
+                "message": (
+                    f"Для компании '{company.short_name}' (id={company.id}) "
+                    f"не выбран шаблон договора. Выберите шаблон в форме компании."
+                ),
+                "company_id": company.id,
+                "company_short_name": company.short_name,
+                "available_templates": get_available_template_options(),
+            },
+        )
 
 W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
@@ -49,9 +81,39 @@ def _render(template_name: str, context: dict) -> bytes:
     return buffer.getvalue()
 
 
+def _render_from_repo_path(repo_relative_path: str, context: dict) -> bytes:
+    """
+    Pack 29.0 — рендер шаблона по пути относительно корня репо
+    (например 'templates/docx/contracts/by_company/sk10/contract_template.docx').
+    Используется для контрактных шаблонов, выбираемых через contracts_registry.
+    """
+    template_path = REPO_ROOT / repo_relative_path
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    template = DocxTemplate(str(template_path))
+    template.render(context)
+
+    buffer = io.BytesIO()
+    template.save(buffer)
+    return buffer.getvalue()
+
+
 def render_contract(application: Application, session: Session) -> bytes:
+    """
+    Pack 29.0 — выбор шаблона по company.contract_template_slug:
+      1. Если slug задан и валиден → шаблон из contracts_registry.
+      2. Иначе если ИНН компании в COMPANY_INN_TO_SLUG → fallback по ИНН.
+      3. Иначе → 409 NEEDS_CONTRACT_TEMPLATE (фронт показывает модалку).
+    """
+    company = application.company
+    if not is_template_slug_valid(getattr(company, 'contract_template_slug', None)):
+        if (company.tax_id_primary or '') not in COMPANY_INN_TO_SLUG:
+            raise NeedsContractTemplateError(company)
+
     context = build_context(application, session)
-    return _render("contract_template.docx", context)
+    relative_path = resolve_contract_template_path(company)
+    return _render_from_repo_path(relative_path, context)
 
 
 def render_act(application: Application, session: Session, sequence_number: int) -> bytes:

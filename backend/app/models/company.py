@@ -85,6 +85,16 @@ class Company(TimestampMixin, table=True):
                     "If empty, GOST transliteration is used as fallback.",
     )
 
+    # Pack 29.0: контрактный шаблон (slug в contracts_registry)
+    contract_template_slug: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        index=True,
+        description="Slug шаблона договора (см. contracts_registry). "
+                    "Если NULL — fallback на COMPANY_INN_TO_SLUG[tax_id_primary] или 'default'. "
+                    "Если ни то ни другое — render_contract вернёт 409 NEEDS_CONTRACT_TEMPLATE.",
+    )
+
     # Banking — primary account used for receiving payments under contracts
     bank_name: str = Field(max_length=128)
     bank_account: str = Field(max_length=32)
@@ -125,6 +135,7 @@ class CompanyCreate(SQLModel):
     director_short_ru: str
     director_position_ru: str = "Генерального директора"
     director_full_name_latin: Optional[str] = None  # Pack 15.1
+    contract_template_slug: Optional[str] = None  # Pack 29.0
     bank_name: str
     bank_account: str
     bank_bic: str
@@ -148,6 +159,7 @@ class CompanyUpdate(SQLModel):
     director_short_ru: Optional[str] = None
     director_position_ru: Optional[str] = None
     director_full_name_latin: Optional[str] = None  # Pack 15.1
+    contract_template_slug: Optional[str] = None  # Pack 29.0
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_bic: Optional[str] = None
@@ -173,6 +185,7 @@ class CompanyRead(SQLModel):
     director_short_ru: str
     director_position_ru: str
     director_full_name_latin: Optional[str] = None  # Pack 15.1
+    contract_template_slug: Optional[str] = None  # Pack 29.0
     bank_name: str
     bank_account: str
     bank_bic: str

@@ -24,6 +24,11 @@ from sqlmodel import Session, select, func
 from app.db.session import get_session
 from app.models import Company, CompanyCreate, CompanyUpdate, CompanyRead, Application
 from app.services.transliteration import transliterate_name
+# Pack 29.0
+from app.templates_engine.contracts_registry import (
+    get_available_template_options,
+    is_template_slug_valid,
+)
 # Pack 26.0 — импорт реквизитов из DOCX
 from app.services.company_extractor import (
     extract_company_from_docx,
@@ -82,6 +87,15 @@ def list_companies(
     return [_enrich(c, session) for c in companies]
 
 
+@router.get("/contract-templates", tags=["companies"])
+def list_contract_templates(_user=Depends(require_manager)) -> dict:
+    """
+    Pack 29.0 — список slug-ов контрактных шаблонов для UI dropdown
+    при создании/редактировании компании.
+    """
+    return {"templates": get_available_template_options()}
+
+
 @router.get("/{company_id}", response_model=CompanyRead)
 def get_company(
     company_id: int,
@@ -107,6 +121,13 @@ def create_company(
     if existing:
         raise HTTPException(409, f"Company '{payload.short_name}' already exists")
 
+    # Pack 29.0: валидация контрактного шаблона если указан
+    if payload.contract_template_slug and not is_template_slug_valid(payload.contract_template_slug):
+        raise HTTPException(
+            400,
+            f"Unknown contract_template_slug: {payload.contract_template_slug}",
+        )
+
     company = Company(**payload.model_dump())
     session.add(company)
     session.flush()
@@ -126,6 +147,13 @@ def update_company(
         raise HTTPException(404, "Company not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    # Pack 29.0: валидация контрактного шаблона если меняется
+    new_slug = update_data.get("contract_template_slug")
+    if new_slug is not None and new_slug != "" and not is_template_slug_valid(new_slug):
+        raise HTTPException(
+            400,
+            f"Unknown contract_template_slug: {new_slug}",
+        )
     for key, value in update_data.items():
         setattr(company, key, value)
 
