@@ -389,7 +389,13 @@ async def _refill_one_region_inner(
     t_start = time.time()
     result = NpdPoolRefillResult(region_code=region_code)
 
-    fetch_count = max(int(target * fetch_multiplier), 10)
+    # Pack 28.6 fix2: компенсируем кандидатов которые уже в БД (любого статуса).
+    # Иначе search_multiple_pages вернёт первые fetch_count уникальных и они окажутся
+    # все уже виденными, после _filter_already_in_db останется 0 новых.
+    already_in_db_count = len(session.exec(
+        select(NpdCandidate).where(NpdCandidate.region_code == region_code)
+    ).all())
+    fetch_count = max(int(target * fetch_multiplier) + already_in_db_count, 10)
     kladr = _region_code_to_subject_kladr(region_code)
 
     log.info(
