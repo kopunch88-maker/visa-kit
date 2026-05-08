@@ -32,6 +32,22 @@ class StorageBackend(ABC):
         ...
 
     @abstractmethod
+    def get_upload_url(
+        self,
+        key: str,
+        content_type: str | None = None,
+        expires_in: int = 600,
+    ) -> str:
+        """
+        Pack 32.0: вернуть presigned PUT URL для прямой загрузки файла в storage.
+
+        Браузер шлёт PUT с телом файла напрямую (минуя FastAPI/Railway).
+        - Для R2: presigned URL через generate_presigned_url("put_object", ...)
+        - Для local: NotImplementedError (не используется в проде)
+        """
+        ...
+
+    @abstractmethod
     def get_url(self, key: str, expires_in: int = 3600) -> str:
         """
         Получить URL для скачивания.

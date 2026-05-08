@@ -72,6 +72,28 @@ class R2Storage(StorageBackend):
         except self.client.exceptions.ClientError:
             return False
 
+    def get_upload_url(
+        self,
+        key: str,
+        content_type: str | None = None,
+        expires_in: int = 600,
+    ) -> str:
+        """
+        Pack 32.0: presigned PUT URL для прямой загрузки из браузера.
+
+        ВАЖНО: content_type должен совпадать с тем что фронт пошлёт
+        в Content-Type заголовке PUT — иначе AWS отклонит подпись.
+        Если content_type не задан — фронт обязан слать без Content-Type.
+        """
+        params = {"Bucket": self.bucket_name, "Key": key}
+        if content_type:
+            params["ContentType"] = content_type
+        return self.client.generate_presigned_url(
+            "put_object",
+            Params=params,
+            ExpiresIn=expires_in,
+        )
+
     def get_url(self, key: str, expires_in: int = 3600) -> str:
         """Генерирует signed URL валидный expires_in секунд (по умолчанию 1 час)."""
         return self.client.generate_presigned_url(

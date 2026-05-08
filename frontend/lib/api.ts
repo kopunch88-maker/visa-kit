@@ -815,6 +815,131 @@ export async function importPackageStatus(sessionId: string): Promise<ImportSess
   return res.json();
 }
 
+// ============================================================================
+// Pack 32.0 full — presigned PUT upload directly to R2
+// ============================================================================
+
+export type ImportPresignUpload = {
+  file_id: string;
+  name: string;
+  size: number;
+  mime: string;
+  extension: string;
+  temp_storage_key: string;
+  upload_url: string;
+};
+
+export type ImportPresignBatchResponse = {
+  session_id: string;
+  uploads: ImportPresignUpload[];
+};
+
+export type PresignFileMeta = {
+  name: string;
+  size: number;
+  mime: string;
+};
+
+/**
+ * Pack 32.0: получить presigned PUT URLs для прямой загрузки файлов в R2
+ * (минуя FastAPI/Railway). Возвращает session_id и массив upload_url'ов.
+ */
+export async function importPackagePresignBatch(
+  files: PresignFileMeta[],
+): Promise<ImportPresignBatchResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/import-package/presign-batch`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка presign (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
+ * Pack 32.0: финализирует upload — после того как фронт сам залил все файлы
+ * напрямую в R2 через presigned URLs. Бэк проверяет что файлы на месте,
+ * распаковывает архив (если был), и запускает фоновую классификацию.
+ */
+export async function importPackageFinalizeUploads(
+  sessionId: string,
+): Promise<ImportSession> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize-uploads`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Ошибка финализации загрузки (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/**
+ * Pack 32.0: PUT-загрузка одного файла прямо в R2 через presigned URL.
+ * Возвращает Promise который резолвится при HTTP 200/201 от R2.
+ * onProgress(0..1) — callback для прогресс-бара.
+ *
+ * Используем XMLHttpRequest (не fetch), потому что fetch не даёт
+ * onprogress для upload-stream'а.
+ */
+export function uploadToR2WithProgress(
+  uploadUrl: string,
+  file: File,
+  contentType: string,
+  onProgress?: (fraction: number) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl, true);
+    xhr.setRequestHeader("Content-Type", contentType);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded / e.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(1);
+        resolve();
+      } else {
+        reject(new Error(`R2 PUT failed: ${xhr.status} ${xhr.statusText}`));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error(`R2 PUT network error`));
+    };
+
+    xhr.onabort = () => {
+      reject(new Error(`R2 PUT aborted`));
+    };
+
+    xhr.send(file);
+  });
+}
+
 
 // Admin Applications
 // ============================================================================

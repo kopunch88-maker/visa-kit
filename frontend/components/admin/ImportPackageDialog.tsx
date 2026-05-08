@@ -22,6 +22,10 @@ import {
   importPackageFinalizeSkipCompany,
   importPackageCancel,
   importPackageStatus,
+  // Pack 32.0: presigned PUT upload
+  importPackagePresignBatch,
+  importPackageFinalizeUploads,
+  uploadToR2WithProgress,
 } from "@/lib/api";
 import {
   pdfToImagePages,
@@ -57,7 +61,7 @@ const DOC_TYPE_OPTIONS: Array<{ value: ClientDocumentType | "skip"; label: strin
   { value: "other", label: DOCUMENT_TYPE_LABELS.other },
 ];
 
-type Step = "upload" | "classify" | "company" | "submitting" | "done";
+type Step = "upload" | "uploading" | "classify" | "company" | "submitting" | "done";
 
 // Pack 27.0 — допустимые расширения для одиночных файлов
 const SUPPORTED_FILE_EXTENSIONS = new Set([
@@ -78,6 +82,10 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
   const [error, setError] = useState<string | null>(null);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [choices, setChoices] = useState<Record<string, FileChoice>>({});
+  // Pack 32.0: прогресс заливки каждого файла в R2 (0..1) + текущая фаза
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
+  const [uploadPhase, setUploadPhase] = useState<"presigning" | "uploading" | "finalizing" | null>(null);
 
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [internalNotes, setInternalNotes] = useState("");
@@ -153,9 +161,87 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
       setInternalNotes(clientName);
     }
 
-    setStep("submitting");
+    // Pack 32.0: presigned PUT flow.
+    // Was: single big POST /upload via Railway -> 502 on big archives.
+    // Now: presign-batch -> PUT each file directly to R2 -> finalize-uploads.
+    setStep("uploading");
+    setUploadingFiles(filesList.map((f) => ({ name: f.name, size: f.size })));
+    setUploadProgress({});
+    setUploadPhase("presigning");
+
     try {
-      const session = await importPackageUpload(filesList);
+      // 1) presign-batch
+      const presignReq = filesList.map((f) => ({
+        name: f.name,
+        size: f.size,
+        mime: f.type || "application/octet-stream",
+      }));
+      const presign = await importPackagePresignBatch(presignReq);
+      const sessionId = presign.session_id;
+
+      // 2) PUT each file directly to R2 - parallel, up to 3 at a time
+      setUploadPhase("uploading");
+      const filesByName = new Map<string, File>();
+      filesList.forEach((f) => filesByName.set(f.name, f));
+
+      const CONCURRENCY = 3;
+      const queue = [...presign.uploads];
+      let inFlight = 0;
+      let firstError: Error | null = null;
+
+      await new Promise<void>((resolve) => {
+        const tryStartNext = () => {
+          if (firstError) {
+            if (inFlight === 0) resolve();
+            return;
+          }
+          while (inFlight < CONCURRENCY && queue.length > 0) {
+            const u = queue.shift()!;
+            const file = filesByName.get(u.name);
+            if (!file) {
+              firstError = new Error(`File ${u.name} not in selection`);
+              continue;
+            }
+            inFlight++;
+            uploadToR2WithProgress(
+              u.upload_url,
+              file,
+              u.mime,
+              (frac) => {
+                setUploadProgress((prev) => ({ ...prev, [u.name]: frac }));
+              },
+            )
+              .then(() => {
+                setUploadProgress((prev) => ({ ...prev, [u.name]: 1 }));
+              })
+              .catch((err) => {
+                if (!firstError) firstError = err as Error;
+              })
+              .finally(() => {
+                inFlight--;
+                if (queue.length === 0 && inFlight === 0) {
+                  resolve();
+                } else {
+                  tryStartNext();
+                }
+              });
+          }
+        };
+        tryStartNext();
+      });
+
+      if (firstError) {
+        // If any file failed - ask backend to clean up temp keys
+        try {
+          await importPackageCancel(sessionId);
+        } catch {}
+        throw firstError;
+      }
+
+      // 3) finalize-uploads - backend checks files are present, extracts archive,
+      //    starts background classification (Pack 31.0)
+      setUploadPhase("finalizing");
+      const session = await importPackageFinalizeUploads(sessionId);
       setImportSession(session);
 
       // Pack 14c — Автоматически проставляем типы из ИИ-классификатора
@@ -174,9 +260,11 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
         };
       });
       setChoices(initialChoices);
+      setUploadPhase(null);
       setStep("classify");
     } catch (e) {
       setError((e as Error).message);
+      setUploadPhase(null);
       setStep("upload");
     }
   }
@@ -440,6 +528,54 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
 
           {step === "upload" && (
             <UploadStep onFilesSelected={handleFilesSelected} />
+          )}
+
+          {step === "uploading" && (
+            <div className="flex flex-col items-stretch py-10 px-2 gap-4">
+              <div className="text-sm text-secondary font-medium text-center">
+                {uploadPhase === "presigning" && "Подготовка загрузки..."}
+                {uploadPhase === "uploading" && "Загружаем файлы напрямую в облако..."}
+                {uploadPhase === "finalizing" && "Распаковываем и обрабатываем..."}
+              </div>
+              {uploadPhase === "uploading" && (
+                <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+                  {uploadingFiles.map((f) => {
+                    const frac = uploadProgress[f.name] ?? 0;
+                    const pct = Math.round(frac * 100);
+                    return (
+                      <div key={f.name} className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-secondary truncate max-w-[60%]">{f.name}</span>
+                          <span className="text-tertiary">
+                            {(f.size / 1024 / 1024).toFixed(1)} МБ — {pct}%
+                          </span>
+                        </div>
+                        <div
+                          className="h-1.5 rounded-full overflow-hidden"
+                          style={{ background: "var(--color-bg-secondary)" }}
+                        >
+                          <div
+                            className="h-full transition-all"
+                            style={{
+                              width: `${pct}%`,
+                              background:
+                                pct >= 100
+                                  ? "var(--color-text-success)"
+                                  : "var(--color-text-secondary)",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {uploadPhase !== "uploading" && (
+                <div className="flex justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-secondary" />
+                </div>
+              )}
+            </div>
           )}
 
           {step === "submitting" && !importSession && (

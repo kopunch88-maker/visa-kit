@@ -40,6 +40,19 @@ class LocalStorage(StorageBackend):
     def exists(self, key: str) -> bool:
         return self._full_path(key).exists()
 
+    def get_upload_url(
+        self,
+        key: str,
+        content_type: str | None = None,
+        expires_in: int = 600,
+    ) -> str:
+        # Pack 32.0: presigned PUT не реализован для local storage —
+        # для локальной разработки используется обычный /upload endpoint.
+        raise NotImplementedError(
+            "Presigned PUT not supported for local storage. "
+            "Use /upload endpoint directly."
+        )
+
     def get_url(self, key: str, expires_in: int = 3600) -> str:
         # Для local возвращаем относительный путь к API endpoint
         # (нужно будет добавить endpoint /api/storage/{key} если используется)

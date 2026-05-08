@@ -253,6 +253,334 @@ def _file_to_classifier_image(file_bytes: bytes, ext: str) -> tuple[bytes, str]:
 
 
 # ============================================================================
+# Pack 32.0 full — Endpoint: /presign-batch
+#   Фронт шлёт сюда метаданные файлов, бэк генерирует presigned PUT URLs.
+#   Затем фронт грузит файлы напрямую в R2 (минуя Railway-edge timeout).
+# ============================================================================
+
+@router.post("/presign-batch")
+async def presign_batch(
+    body: dict = Body(...),
+):
+    """
+    Pack 32.0: создаёт сессию импорта и возвращает presigned PUT URLs
+    для прямой загрузки файлов в R2.
+
+    Body: {"files": [{"name": str, "size": int, "mime": str}, ...]}
+    Returns: {
+      "session_id": str,
+      "uploads": [{"file_id": str, "name": str, "size": int, "mime": str,
+                   "temp_storage_key": str, "upload_url": str}, ...]
+    }
+
+    Фронт ОБЯЗАН при PUT в R2 послать заголовок Content-Type точно такой же
+    как в mime — иначе подпись AWS не сойдётся (см. R2Storage.get_upload_url).
+    """
+    _cleanup_old_sessions()
+
+    files_meta = body.get("files") or []
+    if not files_meta:
+        raise HTTPException(422, "No files provided")
+
+    # Лимит количества файлов — тот же что в /upload
+    if len(files_meta) > MAX_FILES_IN_ARCHIVE:
+        raise HTTPException(
+            413,
+            f"Too many files: {len(files_meta)} (max {MAX_FILES_IN_ARCHIVE})"
+        )
+
+    # Базовая валидация и подсчёт суммы
+    total_size = 0
+    for fm in files_meta:
+        name = (fm.get("name") or "").strip()
+        size = int(fm.get("size") or 0)
+        if not name:
+            raise HTTPException(422, "Missing file name")
+        if size <= 0:
+            raise HTTPException(422, f"Invalid size for {name}")
+        if size > MAX_FILE_SIZE_IN_ARCHIVE:
+            raise HTTPException(
+                413,
+                f"File {name} too large: {size} bytes "
+                f"(max {MAX_FILE_SIZE_IN_ARCHIVE // 1024 // 1024} MB)"
+            )
+        total_size += size
+
+    if total_size > MAX_ARCHIVE_SIZE:
+        raise HTTPException(
+            413,
+            f"Total upload size {total_size} bytes exceeds "
+            f"{MAX_ARCHIVE_SIZE // 1024 // 1024} MB"
+        )
+
+    session_id = secrets.token_urlsafe(16)
+    storage = get_storage()
+
+    uploads = []
+    pending_files = []  # для import_sessions[session_id]["pending_uploads"]
+    for fm in files_meta:
+        name = fm["name"].strip()
+        size = int(fm["size"])
+        mime = (fm.get("mime") or "application/octet-stream").strip() or "application/octet-stream"
+        ext = PathLib(name).suffix.lower()
+
+        file_id = uuid.uuid4().hex
+        temp_key = f"_import_temp/{session_id}/{file_id}{ext}"
+
+        try:
+            upload_url = storage.get_upload_url(
+                temp_key,
+                content_type=mime,
+                expires_in=600,  # 10 минут
+            )
+        except NotImplementedError:
+            raise HTTPException(
+                500,
+                "Presigned upload not available on this storage backend. "
+                "Use /upload endpoint directly."
+            )
+        except Exception as e:
+            log.error(f"Failed to generate presigned PUT URL: {e}")
+            raise HTTPException(500, f"Storage error: {e}")
+
+        upload_info = {
+            "file_id": file_id,
+            "name": name,
+            "size": size,
+            "mime": mime,
+            "extension": ext,
+            "temp_storage_key": temp_key,
+            "upload_url": upload_url,
+        }
+        uploads.append(upload_info)
+        pending_files.append({
+            "file_id": file_id,
+            "name": name,
+            "size": size,
+            "mime": mime,
+            "extension": ext,
+            "temp_storage_key": temp_key,
+        })
+
+    # Создаём сессию в состоянии "ожидаем uploads от фронта".
+    # Структура отличается от обычной сессии — здесь нет classification_done и т.п.
+    # Это будет заменено в /finalize-uploads после успешной загрузки.
+    import_sessions[session_id] = {
+        "created_at_ts": time.time(),
+        "pending_uploads": pending_files,
+        "archive_name": "",  # установится в finalize-uploads
+        "files": [],  # пока пусто
+        "classification_done": False,
+        "is_pending_uploads": True,  # флаг для /status и /cancel
+    }
+
+    log.info(
+        f"Pack 32.0 presign-batch: session={session_id} files={len(uploads)} "
+        f"total_size={total_size}"
+    )
+
+    return {
+        "session_id": session_id,
+        "uploads": uploads,
+    }
+
+
+# ============================================================================
+# Pack 32.0 full — Endpoint: /{session_id}/finalize-uploads
+#   После того как фронт залил все файлы напрямую в R2,
+#   бэк собирает их в нормальный import_session и запускает классификацию.
+#   Если был один архив — распаковывает его и заменяет на отдельные файлы.
+# ============================================================================
+
+@router.post("/{session_id}/finalize-uploads")
+async def finalize_uploads(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Pack 32.0: финализирует presigned upload.
+
+    Бэк:
+    1. Проверяет что все файлы реально лежат в R2 (storage.exists)
+    2. Если был один архив — скачивает, распаковывает, заливает обратно
+       каждый файл как отдельный, удаляет архив
+    3. Иначе — регистрирует загруженные файлы как обычные file_metas
+    4. Запускает фоновую классификацию (Pack 31.0)
+    5. Возвращает ImportSession (так же как старый /upload)
+    """
+    sess = import_sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Import session not found or expired")
+    if not sess.get("is_pending_uploads"):
+        raise HTTPException(409, "Session already finalized or in wrong state")
+
+    pending = sess.get("pending_uploads") or []
+    if not pending:
+        raise HTTPException(422, "No pending uploads in session")
+
+    storage = get_storage()
+
+    # Проверка что все файлы на месте — параллельно
+    async def check_one(p: dict) -> tuple[dict, bool]:
+        ok = await asyncio.to_thread(storage.exists, p["temp_storage_key"])
+        return p, ok
+
+    check_results = await asyncio.gather(*[check_one(p) for p in pending])
+    missing = [p["name"] for p, ok in check_results if not ok]
+    if missing:
+        raise HTTPException(
+            422,
+            f"Some files were not uploaded to R2: {', '.join(missing[:5])}"
+        )
+
+    # Случай: один файл и это архив → распаковка
+    is_single_archive = (
+        len(pending) == 1
+        and PathLib(pending[0]["name"]).suffix.lower() in (".zip", ".rar")
+    )
+
+    file_metas: List[dict] = []
+    archive_name: str
+
+    if is_single_archive:
+        only = pending[0]
+        archive_name = only["name"]
+        archive_key = only["temp_storage_key"]
+
+        # Скачиваем архив из R2
+        try:
+            archive_bytes = await asyncio.to_thread(storage.read, archive_key)
+        except Exception as e:
+            log.error(f"Failed to read archive from R2: {e}")
+            raise HTTPException(500, f"Failed to read archive: {e}")
+
+        # Распаковываем
+        archive_type = _detect_archive_type(only["name"], only["mime"])
+        try:
+            if archive_type == "zip":
+                extracted = _extract_zip(archive_bytes)
+            else:
+                extracted = _extract_rar(archive_bytes)
+        finally:
+            # Архив больше не нужен — удаляем (даже если распаковка упала)
+            try:
+                await asyncio.to_thread(storage.delete, archive_key)
+            except Exception as e:
+                log.warning(f"Failed to delete archive after extraction: {e}")
+
+        if not extracted:
+            raise HTTPException(
+                422,
+                "No supported files in archive. "
+                "Supported: PDF, JPEG, PNG, WebP, HEIC."
+            )
+
+        # Параллельно заливаем извлечённые файлы обратно в R2
+        # (как в Pack 32.0 lite — to_thread + Semaphore для параллельности)
+        sem = asyncio.Semaphore(5)
+
+        async def save_extracted(item: dict) -> dict:
+            async with sem:
+                name = item["name"]
+                data = item["data"]
+                size = item["size"]
+                ext = PathLib(name).suffix.lower()
+                mime = EXTENSION_TO_MIME.get(ext, "application/octet-stream")
+                temp_key = f"_import_temp/{session_id}/{uuid.uuid4().hex}{ext}"
+
+                await asyncio.to_thread(storage.save, temp_key, data, content_type=mime)
+
+                preview_url = None
+                try:
+                    preview_url = storage.get_url(temp_key, expires_in=3600)
+                except Exception as e:
+                    log.warning(f"Failed to generate preview URL: {e}")
+
+                return {
+                    "file_id": uuid.uuid4().hex,
+                    "name": name,
+                    "size": size,
+                    "mime": mime,
+                    "extension": ext,
+                    "is_pdf": ext == ".pdf",
+                    "temp_storage_key": temp_key,
+                    "preview_url": preview_url,
+                    "classified_type": None,
+                    "classifier_confidence": None,
+                    "classifier_country": None,
+                    "classifier_reasoning": None,
+                    "classifier_error": None,
+                    "classification_status": "pending",
+                }
+
+        file_metas = await asyncio.gather(*[save_extracted(it) for it in extracted])
+
+    else:
+        # Случай: набор одиночных файлов — просто регистрируем + preview_url
+        async def register_one(p: dict) -> dict:
+            ext = p["extension"]
+            mime = p["mime"]
+            preview_url = None
+            try:
+                preview_url = await asyncio.to_thread(
+                    storage.get_url, p["temp_storage_key"], 3600
+                )
+            except Exception as e:
+                log.warning(f"Failed to generate preview URL: {e}")
+
+            return {
+                "file_id": p["file_id"],
+                "name": p["name"],
+                "size": p["size"],
+                "mime": mime,
+                "extension": ext,
+                "is_pdf": ext == ".pdf",
+                "temp_storage_key": p["temp_storage_key"],
+                "preview_url": preview_url,
+                "classified_type": None,
+                "classifier_confidence": None,
+                "classifier_country": None,
+                "classifier_reasoning": None,
+                "classifier_error": None,
+                "classification_status": "pending",
+            }
+
+        file_metas = await asyncio.gather(*[register_one(p) for p in pending])
+        if len(pending) == 1:
+            archive_name = pending[0]["name"]
+        else:
+            archive_name = (
+                f"{len(pending)} файл(ов): "
+                + ", ".join(p["name"] for p in pending[:3])
+                + ("..." if len(pending) > 3 else "")
+            )
+
+    # Обновляем сессию: теперь это обычная import_session
+    import_sessions[session_id] = {
+        "created_at_ts": sess.get("created_at_ts", time.time()),
+        "files": file_metas,
+        "archive_name": archive_name,
+        "classification_done": False,
+        # is_pending_uploads убираем
+    }
+
+    log.info(
+        f"Pack 32.0 finalize-uploads: session={session_id} "
+        f"final_files={len(file_metas)} archive_name={archive_name!r}"
+    )
+
+    # Запускаем фоновую классификацию (Pack 31.0)
+    background_tasks.add_task(_classify_session_in_background, session_id)
+
+    return {
+        "session_id": session_id,
+        "archive_name": archive_name,
+        "files": file_metas,
+        "classification_done": False,
+    }
+
+
+# ============================================================================
 # Endpoint: /upload
 # ============================================================================
 
