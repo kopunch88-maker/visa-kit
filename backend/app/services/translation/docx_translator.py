@@ -1,5 +1,14 @@
 """
-Pack 15 — DOCX translator (v3 — Pack 15.2).
+Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix).
+
+Pack 15.6 fix:
+- _collect_all_paragraphs теперь обходит <w:txbxContent> внутри <w:drawing>
+  (textbox-ы внутри плавающих фигур). До этого пропускалась ВСЯ карточка
+  реквизитов клиента в bank_statement_template (она в textbox-ах) и шапка
+  таблицы операций (она в textbox-ах внутри header1.xml).
+- Корректно обрабатываем <mc:AlternateContent>: переводим только <mc:Choice>,
+  пропускаем <mc:Fallback> (Word при сохранении сам синхронизирует Fallback
+  с Choice; перевод обоих через LLM приведёт к расхождению).
 
 Pack 15.2 changes vs Pack 15.1:
 - Промпт явно требует переводить ИНН → NIF, КПП → KPP, ОГРН → OGRN, БИК → BIC
@@ -15,6 +24,7 @@ from typing import Optional
 
 from docx import Document
 from docx.text.paragraph import Paragraph
+from docx.oxml.ns import qn
 
 from app.services.llm import get_llm_client
 
@@ -30,6 +40,12 @@ _SKIP_PATTERNS = [
     re.compile(r"^[\d\s.,\-/:]+$"),
     re.compile(r"^[A-Z]{2,5}\s*\d{6,}$"),
 ]
+
+
+# Pack 15.6: namespaces для обхода textbox-ов
+_W_TXBX = qn('w:txbxContent')
+_W_P = qn('w:p')
+_MC_FALLBACK = '{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback'
 
 
 # Pack 15.2: jurada-style промпт со словарём из реальных подач.
@@ -68,6 +84,31 @@ Document types:
 - Письмо от компании / Письмо-поручение → Carta de la empresa
 - Выписка по счёту → Extracto de cuenta
 - Справка → Certificado
+
+Bank statement headers (Pack 15.6 — appear as standalone fragments from textbox columns):
+- Номер счета → Número de cuenta
+- Дата открытия счета → Fecha de apertura de la cuenta
+- Валюта счета → Moneda de la cuenta
+- Тип счета → Tipo de cuenta
+- Текущий счёт → Cuenta corriente
+- Дата формирования выписки → Fecha de emisión del extracto
+- Клиент → Cliente
+- Адрес регистрации → Dirección de registro
+- Паспорт → Pasaporte
+- Дата проводки → Fecha de contabilización
+- Код операции → Código de operación
+- Описание → Descripción
+- Сумма в валюте счета / Сумма в валюте счёта → Importe en la divisa de la cuenta
+- Операции по счету → Operaciones en cuenta
+- Выписка по счету → Extracto de cuenta
+- Страница → Página, из (in "Страница X из Y") → de
+- Входящий остаток → Saldo entrante
+- Исходящий остаток → Saldo saliente
+- Поступления → Ingresos
+- Расходы → Gastos
+- Уполномоченное лицо → persona autorizada
+- (подпись сотрудника АО «АЛЬФА-БАНК») → (firma del empleado de «ALFA-BANK», S.A.)
+- Ф.И.О. сотрудника АО «АЛЬФА-БАНК» → Nombre completo del empleado de «ALFA-BANK», S.A.
 
 Roles:
 - Исполнитель → el Contratista
@@ -189,7 +230,39 @@ def _set_paragraph_text(p: Paragraph, new_text: str) -> None:
         run.text = ""
 
 
+def _is_inside_mc_fallback(elem) -> bool:
+    """Pack 15.6: True если элемент внутри <mc:Fallback>.
+    Word дублирует drawings в <mc:Choice> (modern WPS) и <mc:Fallback> (legacy VML).
+    Word рендерит только Choice; при сохранении сам синхронизирует Fallback с Choice.
+    Поэтому мы переводим только Choice — иначе LLM может выдать чуть разные переводы
+    и Fallback будет расходиться с Choice."""
+    parent = elem.getparent()
+    while parent is not None:
+        if parent.tag == _MC_FALLBACK:
+            return True
+        parent = parent.getparent()
+    return False
+
+
+def _iter_txbx_paragraphs(part_element, doc: Document):
+    """Pack 15.6: возвращает все <w:p> внутри <w:txbxContent> данного part-элемента,
+    пропуская дубликаты в <mc:Fallback>. part_element — это doc.element.body для
+    основного документа или header._element / footer._element для колонтитулов."""
+    for txbx in part_element.iter(_W_TXBX):
+        if _is_inside_mc_fallback(txbx):
+            continue
+        for p_elem in txbx.iter(_W_P):
+            yield Paragraph(p_elem, doc.element.body)
+
+
 def _collect_all_paragraphs(doc: Document) -> list[Paragraph]:
+    """Pack 15.6: добавлен обход <w:txbxContent> в body, headers и footers.
+
+    Без этого обхода пропускались textbox-ы в bank_statement_template:
+    - левая карточка реквизитов клиента (Номер счета, Дата открытия счета, ...)
+    - шапка таблицы операций в header1.xml (Дата проводки, Код операции, ...)
+    - нумерация страниц в footer1.xml (Страница X из Y)
+    """
     paragraphs: list[Paragraph] = []
     paragraphs.extend(doc.paragraphs)
 
@@ -202,13 +275,24 @@ def _collect_all_paragraphs(doc: Document) -> list[Paragraph]:
 
     _walk_tables(doc.tables)
 
+    # Pack 15.6: textbox-ы в body
+    paragraphs.extend(_iter_txbx_paragraphs(doc.element.body, doc))
+
     for section in doc.sections:
         for header in (section.header, section.first_page_header, section.even_page_header):
+            if header is None:
+                continue
             paragraphs.extend(header.paragraphs)
             _walk_tables(header.tables)
+            # Pack 15.6: textbox-ы в header
+            paragraphs.extend(_iter_txbx_paragraphs(header._element, doc))
         for footer in (section.footer, section.first_page_footer, section.even_page_footer):
+            if footer is None:
+                continue
             paragraphs.extend(footer.paragraphs)
             _walk_tables(footer.tables)
+            # Pack 15.6: textbox-ы в footer
+            paragraphs.extend(_iter_txbx_paragraphs(footer._element, doc))
 
     return paragraphs
 
@@ -294,9 +378,23 @@ async def translate_docx(
 
     Pack 15.2: pre-substitution теперь покрывает метки ИНН/КПП/ОГРН/БИК → NIF/KPP/etc
     + applicant.full_name_native + company.short_name + None → —.
+    Pack 15.6: обходим textbox-ы (карточка реквизитов в выписке, шапка операций в header).
     """
     doc = Document(io.BytesIO(docx_bytes))
     paragraphs = _collect_all_paragraphs(doc)
+
+    # Pack 15.6: дедупликация по id <w:p> элемента — на случай если один параграф
+    # попал в список несколько раз (gridSpan-ячейки в таблицах python-docx).
+    seen_elem_ids: set[int] = set()
+    deduped: list[Paragraph] = []
+    for p in paragraphs:
+        elem_id = id(p._element)
+        if elem_id in seen_elem_ids:
+            continue
+        seen_elem_ids.add(elem_id)
+        deduped.append(p)
+    paragraphs = deduped
+
     log.info(
         f"[translation] DOCX has {len(paragraphs)} paragraphs"
         + (f", {len(substitutions)} pre-substitutions" if substitutions else "")
