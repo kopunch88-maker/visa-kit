@@ -1,5 +1,14 @@
 """
-Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix).
+Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix + Pack 15.7 firstLine fix).
+
+Pack 15.7 fix:
+- _set_paragraph_text теперь зануляет w:firstLine indent у переведённого
+  параграфа. На русском (короткие описания типа "Перевод по СБП") firstLine
+  не виден — всё в одну строку. На испанском описания длиннее, переносятся
+  на 2+ строки, и firstLine отступ ломает выравнивание (первая строка
+  отступает на firstLine, остальные — нет; получается лесенка).
+  Шаблоны на русском трогать нельзя (правила Кости — шаблон для русского
+  идеален), поэтому фикс делаем на стороне переводчика.
 
 Pack 15.6 fix:
 - _collect_all_paragraphs теперь обходит <w:txbxContent> внутри <w:drawing>
@@ -228,6 +237,15 @@ def _set_paragraph_text(p: Paragraph, new_text: str) -> None:
     p.runs[0].text = new_text
     for run in p.runs[1:]:
         run.text = ""
+    # Pack 15.7: зануляем firstLine indent. На русском короткие описания
+    # умещаются в 1 строку и firstLine незаметен. На испанском описания
+    # длиннее, переносятся, и firstLine ломает выравнивание (лесенка).
+    # left indent сохраняем — он определяет общий отступ от края ячейки.
+    pPr = p._element.find(qn('w:pPr'))
+    if pPr is not None:
+        ind = pPr.find(qn('w:ind'))
+        if ind is not None and ind.get(qn('w:firstLine')) is not None:
+            del ind.attrib[qn('w:firstLine')]
 
 
 def _is_inside_mc_fallback(elem) -> bool:
