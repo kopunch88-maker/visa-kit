@@ -298,11 +298,17 @@ async def presign_batch(
             raise HTTPException(422, "Missing file name")
         if size <= 0:
             raise HTTPException(422, f"Invalid size for {name}")
-        if size > MAX_FILE_SIZE_IN_ARCHIVE:
+        # Pack 32.0.1: archive vs single-file size limit
+        # Если файл сам является архивом — валидируем по MAX_ARCHIVE_SIZE (250 МБ),
+        # иначе по MAX_FILE_SIZE_IN_ARCHIVE (50 МБ).
+        ext_lower = PathLib(name).suffix.lower()
+        is_archive = ext_lower in (".zip", ".rar")
+        max_per_file = MAX_ARCHIVE_SIZE if is_archive else MAX_FILE_SIZE_IN_ARCHIVE
+        if size > max_per_file:
             raise HTTPException(
                 413,
                 f"File {name} too large: {size} bytes "
-                f"(max {MAX_FILE_SIZE_IN_ARCHIVE // 1024 // 1024} MB)"
+                f"(max {max_per_file // 1024 // 1024} MB)"
             )
         total_size += size
 
