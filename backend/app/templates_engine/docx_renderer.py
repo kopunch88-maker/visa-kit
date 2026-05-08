@@ -26,7 +26,7 @@ from docxtpl import DocxTemplate
 from sqlmodel import Session
 import lxml.etree as etree
 
-from app.models import Application
+from app.models import Application, Company
 from .context import build_context
 
 
@@ -101,12 +101,25 @@ def _render_from_repo_path(repo_relative_path: str, context: dict) -> bytes:
 
 def render_contract(application: Application, session: Session) -> bytes:
     """
-    Pack 29.0 — выбор шаблона по company.contract_template_slug:
+    Pack 29.0/29.3.1 — выбор шаблона по company.contract_template_slug:
       1. Если slug задан и валиден → шаблон из contracts_registry.
       2. Иначе если ИНН компании в COMPANY_INN_TO_SLUG → fallback по ИНН.
       3. Иначе → 409 NEEDS_CONTRACT_TEMPLATE (фронт показывает модалку).
+
+    Pack 29.3.1 fix: Application не имеет relationship 'company',
+    только foreign key company_id. Загружаем Company явно через session.
     """
-    company = application.company
+    if not application.company_id:
+        raise ValueError(
+            f"Application id={application.id} has no company_id assigned"
+        )
+    company = session.get(Company, application.company_id)
+    if not company:
+        raise ValueError(
+            f"Company id={application.company_id} not found for "
+            f"application id={application.id}"
+        )
+
     if not is_template_slug_valid(getattr(company, 'contract_template_slug', None)):
         if (company.tax_id_primary or '') not in COMPANY_INN_TO_SLUG:
             raise NeedsContractTemplateError(company)
