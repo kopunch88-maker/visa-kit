@@ -562,12 +562,16 @@ export type ImportFileMeta = {
   classifier_country?: string | null;
   classifier_reasoning?: string | null;
   classifier_error?: string | null;
+  // Pack 31.0
+  classification_status?: "pending" | "done" | "error";
 };
 
 export type ImportSession = {
   session_id: string;
   archive_name: string;
   files: ImportFileMeta[];
+  // Pack 31.0
+  classification_done?: boolean;
 };
 
 export type ImportFileAssignment = {
@@ -797,6 +801,18 @@ export async function importPackageCancel(sessionId: string): Promise<void> {
     method: "POST",
     headers: authHeaders(),
   });
+}
+
+// Pack 31.0 — polling статуса классификации
+export async function importPackageStatus(sessionId: string): Promise<ImportSession> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/import-package/${sessionId}/status`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) {
+    throw new Error(`importPackageStatus: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
 }
 
 

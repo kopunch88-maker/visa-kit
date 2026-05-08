@@ -66,9 +66,9 @@ router = APIRouter(
 # Constants
 # ============================================================================
 
-MAX_ARCHIVE_SIZE = 100 * 1024 * 1024
+MAX_ARCHIVE_SIZE = 250 * 1024 * 1024  # Pack 31.0: было 100
 MAX_FILES_IN_ARCHIVE = 30
-MAX_FILE_SIZE_IN_ARCHIVE = 20 * 1024 * 1024
+MAX_FILE_SIZE_IN_ARCHIVE = 50 * 1024 * 1024  # Pack 31.0: было 20
 
 SUPPORTED_FILE_EXTENSIONS = {
     ".pdf",
@@ -257,6 +257,7 @@ def _file_to_classifier_image(file_bytes: bytes, ext: str) -> tuple[bytes, str]:
 
 @router.post("/upload")
 async def upload_archive(
+    background_tasks: BackgroundTasks,  # Pack 31.0
     file: Optional[UploadFile] = File(None),
     files: Optional[List[UploadFile]] = File(None),
     session: Session = Depends(get_session),
@@ -412,30 +413,14 @@ async def upload_archive(
         except Exception as e:
             log.warning(f"Failed to generate preview URL: {e}")
 
-        # ИИ-классификация
+        # Pack 31.0: классификация перенесена в фон (BackgroundTasks ниже).
+        # При создании file_meta — все поля classifier_* пусты,
+        # classification_status='pending'. Фоновая задача обновит их.
         classified_type = None
         classifier_confidence = None
         classifier_country = None
         classifier_reasoning = None
         classifier_error = None
-
-        try:
-            classifier_image, classifier_mime = _file_to_classifier_image(data, ext)
-            classification = await classify_document(classifier_image, classifier_mime)
-            classified_type = classification.get("type")
-            classifier_confidence = classification.get("confidence")
-            classifier_country = classification.get("country_hint")
-            classifier_reasoning = classification.get("reasoning")
-            log.info(
-                f"Classified {name}: {classified_type} "
-                f"({classifier_confidence}, country={classifier_country})"
-            )
-        except OCRError as e:
-            classifier_error = str(e)[:200]
-            log.warning(f"Classification failed for {name}: {e}")
-        except Exception as e:
-            classifier_error = f"Unexpected: {str(e)[:200]}"
-            log.error(f"Unexpected classifier error for {name}: {e}", exc_info=True)
 
         file_metas.append({
             "file_id": uuid.uuid4().hex,
@@ -451,12 +436,14 @@ async def upload_archive(
             "classifier_country": classifier_country,
             "classifier_reasoning": classifier_reasoning,
             "classifier_error": classifier_error,
+            "classification_status": "pending",  # Pack 31.0
         })
 
     import_sessions[session_id] = {
         "created_at_ts": time.time(),
         "files": file_metas,
         "archive_name": archive_name,
+        "classification_done": False,  # Pack 31.0
     }
 
     log.info(
@@ -464,10 +451,14 @@ async def upload_archive(
         f"archive={archive_name} files={len(file_metas)}"
     )
 
+    # Pack 31.0: запускаем классификацию в фоне
+    background_tasks.add_task(_classify_session_in_background, session_id)
+
     return {
         "session_id": session_id,
         "archive_name": archive_name,
         "files": file_metas,
+        "classification_done": False,  # Pack 31.0
     }
 
 
@@ -1429,3 +1420,82 @@ def cancel_import(session_id: str):
             log.warning(f"Failed to delete temp file: {e}")
 
     return {"cancelled": True, "files_deleted": deleted}
+
+
+# ============================================================================
+# Pack 31.0 — фоновая классификация документов
+# ============================================================================
+
+import asyncio  # Pack 31.0
+
+
+async def _classify_session_in_background(session_id: str) -> None:
+    """Pack 31.0: проходит файлы сессии и классифицирует через AI с параллелизмом 5.
+
+    Файлы скачиваются из R2 (storage.read), не берутся из памяти — это даёт
+    константную память на бэкграунде (актуально для архивов 200 МБ+).
+
+    Обновляет import_sessions[session_id]["files"][i] поля classifier_*.
+    После всех — выставляет import_sessions[session_id]["classification_done"] = True.
+    """
+    sess = import_sessions.get(session_id)
+    if not sess:
+        log.warning(f"Pack 31.0: session {session_id} not found for classification")
+        return
+
+    files = sess["files"]
+    storage = get_storage()
+    sem = asyncio.Semaphore(5)  # 5 параллельных вызовов AI
+
+    async def classify_one(idx: int, fmeta: dict) -> None:
+        async with sem:
+            name = fmeta["name"]
+            ext = fmeta["extension"]
+            temp_key = fmeta["temp_storage_key"]
+            try:
+                # Скачиваем байты обратно из R2 (память не растёт)
+                file_bytes = storage.read(temp_key)
+                classifier_image, classifier_mime = _file_to_classifier_image(file_bytes, ext)
+                classification = await classify_document(classifier_image, classifier_mime)
+                fmeta["classified_type"] = classification.get("type")
+                fmeta["classifier_confidence"] = classification.get("confidence")
+                fmeta["classifier_country"] = classification.get("country_hint")
+                fmeta["classifier_reasoning"] = classification.get("reasoning")
+                fmeta["classification_status"] = "done"
+                log.info(
+                    f"Pack 31.0 classified {name}: {fmeta['classified_type']} "
+                    f"({fmeta['classifier_confidence']}, country={fmeta['classifier_country']})"
+                )
+            except OCRError as e:
+                fmeta["classifier_error"] = str(e)[:200]
+                fmeta["classification_status"] = "error"
+                log.warning(f"Pack 31.0 classification failed for {name}: {e}")
+            except Exception as e:
+                fmeta["classifier_error"] = f"Unexpected: {str(e)[:200]}"
+                fmeta["classification_status"] = "error"
+                log.error(f"Pack 31.0 unexpected classifier error for {name}: {e}", exc_info=True)
+
+    # gather всех файлов
+    await asyncio.gather(*[classify_one(i, f) for i, f in enumerate(files)])
+
+    # Помечаем сессию как готовую
+    if session_id in import_sessions:
+        import_sessions[session_id]["classification_done"] = True
+        log.info(f"Pack 31.0: session {session_id} classification_done")
+
+
+@router.get("/{session_id}/status")
+def get_session_status(session_id: str) -> dict:
+    """Pack 31.0: возвращает текущее состояние сессии для polling'а с фронта.
+
+    Фронт дёргает каждые 1.5 сек пока classification_done != True.
+    """
+    sess = import_sessions.get(session_id)
+    if not sess:
+        raise HTTPException(404, "Import session not found or expired")
+    return {
+        "session_id": session_id,
+        "archive_name": sess.get("archive_name", ""),
+        "files": sess.get("files", []),
+        "classification_done": bool(sess.get("classification_done", False)),
+    }

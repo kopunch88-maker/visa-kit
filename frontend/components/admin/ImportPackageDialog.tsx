@@ -21,6 +21,7 @@ import {
   importPackageFinalizeWithCompany,
   importPackageFinalizeSkipCompany,
   importPackageCancel,
+  importPackageStatus,
 } from "@/lib/api";
 import {
   pdfToImagePages,
@@ -64,8 +65,8 @@ const SUPPORTED_FILE_EXTENSIONS = new Set([
 ]);
 const ARCHIVE_EXTENSIONS = new Set([".zip", ".rar"]);
 const MAX_FILES = 30;
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
-const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB — Pack 31.0
+const MAX_TOTAL_SIZE = 250 * 1024 * 1024; // 250 MB — Pack 31.0
 
 function getExt(name: string): string {
   const idx = name.lastIndexOf(".");
@@ -95,6 +96,50 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSession?.session_id]);
+
+  // Pack 31.0 — polling статуса классификации
+  useEffect(() => {
+    if (!importSession?.session_id) return;
+    if (importSession.classification_done) return;
+    if (step !== "classify") return;
+    
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await importPackageStatus(importSession.session_id);
+        if (cancelled) return;
+        // Обновляем сессию
+        setImportSession(fresh);
+        // Дополняем choices автотипами для НОВЫХ классифицированных файлов
+        // (без затирания того что менеджер уже выбрал руками)
+        setChoices((prev) => {
+          const updated = { ...prev };
+          fresh.files.forEach((f) => {
+            const existing = prev[f.file_id];
+            // Файл новый или менеджер ещё не трогал docType (skip по умолчанию)
+            if (
+              f.classification_status === "done" &&
+              f.classified_type &&
+              (f.classifier_confidence === "high" || f.classifier_confidence === "medium") &&
+              existing &&
+              existing.docType === "skip"
+            ) {
+              updated[f.file_id] = { ...existing, docType: f.classified_type };
+            }
+          });
+          return updated;
+        });
+      } catch (e) {
+        console.warn("Pack 31.0 polling error:", e);
+      }
+    }, 1500);
+    
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importSession?.session_id, importSession?.classification_done, step]);
 
   async function handleFilesSelected(filesList: File[], clientName: string) {
     setError(null);
@@ -1130,7 +1175,19 @@ function FileRow({
             <span className="text-sm font-medium text-primary truncate">
               {file.name}
             </span>
-            {confidenceLabel && (
+            {/* Pack 31.0 — состояния badge */}
+            {file.classification_status === "pending" ? (
+              <span
+                className="text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{
+                  background: "var(--color-bg-secondary)",
+                  color: "var(--color-text-tertiary)",
+                }}
+              >
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Классифицирую...
+              </span>
+            ) : confidenceLabel ? (
               <span
                 className="text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1"
                 style={{
@@ -1142,7 +1199,7 @@ function FileRow({
                 {confidenceLabel}
                 {file.classifier_country ? ` (${file.classifier_country})` : ""}
               </span>
-            )}
+            ) : null}
           </div>
 
           <div className="text-xs text-tertiary mb-2">
