@@ -22,6 +22,7 @@ Workflow:
 5. POST /{session_id}/cancel — отменить, удалить временные файлы
 """
 
+import asyncio
 import io
 import logging
 import secrets
@@ -391,53 +392,56 @@ async def upload_archive(
     session_id = secrets.token_urlsafe(16)
     storage = get_storage()
 
-    file_metas = []
-    for file_data in files:
-        name = file_data["name"]
-        data = file_data["data"]
-        size = file_data["size"]
+    # Pack 32.0: параллельная заливка в R2 (asyncio.gather + Semaphore).
+    # boto3 sync → оборачиваем storage.save в asyncio.to_thread.
+    # Раньше: 5 файлов последовательно × 20 сек = ~100 сек (упирались в браузерный таймаут).
+    # Теперь: 5 параллельно × 20 сек = ~20 сек.
+    _save_sem = asyncio.Semaphore(5)
 
-        ext = PathLib(name).suffix.lower()
-        mime = EXTENSION_TO_MIME.get(ext, "application/octet-stream")
+    async def _save_one_file(file_data: dict) -> dict:
+        async with _save_sem:
+            name = file_data["name"]
+            data = file_data["data"]
+            size = file_data["size"]
 
-        temp_key = f"_import_temp/{session_id}/{uuid.uuid4().hex}{ext}"
-        try:
-            storage.save(temp_key, data, content_type=mime)
-        except Exception as e:
-            log.error(f"Failed to save temp file: {e}")
-            raise HTTPException(500, f"Storage error: {e}")
+            ext = PathLib(name).suffix.lower()
+            mime = EXTENSION_TO_MIME.get(ext, "application/octet-stream")
 
-        preview_url = None
-        try:
-            preview_url = storage.get_url(temp_key, expires_in=3600)
-        except Exception as e:
-            log.warning(f"Failed to generate preview URL: {e}")
+            temp_key = f"_import_temp/{session_id}/{uuid.uuid4().hex}{ext}"
+            try:
+                # boto3 синхронный — гоним в thread pool, чтобы не блокировать event loop
+                await asyncio.to_thread(storage.save, temp_key, data, content_type=mime)
+            except Exception as e:
+                log.error(f"Failed to save temp file: {e}")
+                raise HTTPException(500, f"Storage error: {e}")
 
-        # Pack 31.0: классификация перенесена в фон (BackgroundTasks ниже).
-        # При создании file_meta — все поля classifier_* пусты,
-        # classification_status='pending'. Фоновая задача обновит их.
-        classified_type = None
-        classifier_confidence = None
-        classifier_country = None
-        classifier_reasoning = None
-        classifier_error = None
+            preview_url = None
+            try:
+                # get_url — это локальный presign (HMAC-SHA256), без сетевого I/O,
+                # дёшево и быстро, можно не уносить в thread.
+                preview_url = storage.get_url(temp_key, expires_in=3600)
+            except Exception as e:
+                log.warning(f"Failed to generate preview URL: {e}")
 
-        file_metas.append({
-            "file_id": uuid.uuid4().hex,
-            "name": name,
-            "size": size,
-            "mime": mime,
-            "extension": ext,
-            "is_pdf": ext == ".pdf",
-            "temp_storage_key": temp_key,
-            "preview_url": preview_url,
-            "classified_type": classified_type,
-            "classifier_confidence": classifier_confidence,
-            "classifier_country": classifier_country,
-            "classifier_reasoning": classifier_reasoning,
-            "classifier_error": classifier_error,
-            "classification_status": "pending",  # Pack 31.0
-        })
+            # Pack 31.0: классификация перенесена в фон (BackgroundTasks ниже).
+            return {
+                "file_id": uuid.uuid4().hex,
+                "name": name,
+                "size": size,
+                "mime": mime,
+                "extension": ext,
+                "is_pdf": ext == ".pdf",
+                "temp_storage_key": temp_key,
+                "preview_url": preview_url,
+                "classified_type": None,
+                "classifier_confidence": None,
+                "classifier_country": None,
+                "classifier_reasoning": None,
+                "classifier_error": None,
+                "classification_status": "pending",  # Pack 31.0
+            }
+
+    file_metas = await asyncio.gather(*[_save_one_file(fd) for fd in files])
 
     import_sessions[session_id] = {
         "created_at_ts": time.time(),
@@ -1425,9 +1429,6 @@ def cancel_import(session_id: str):
 # ============================================================================
 # Pack 31.0 — фоновая классификация документов
 # ============================================================================
-
-import asyncio  # Pack 31.0
-
 
 async def _classify_session_in_background(session_id: str) -> None:
     """Pack 31.0: проходит файлы сессии и классифицирует через AI с параллелизмом 5.
