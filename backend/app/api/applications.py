@@ -56,6 +56,8 @@ def _enrich(app: Application, session: Session) -> dict:
     data["business_rule_problems"] = app.validate_business_rules()
     # Pack 10: вычисляемое поле — можно ли архивировать
     data["can_be_archived"] = app.can_be_archived()
+    # Pack 30.0
+    data["is_urgent"] = bool(getattr(app, "is_urgent", False))
 
     # Pack 10.1: подгружаем имя заявителя для отображения в списках
     # (на странице архива и потенциально в других списках)
@@ -142,10 +144,21 @@ def list_applications(
             Application.is_archived == archived,
             Application.deleted_at.is_(None),
         )
-    query = query.order_by(Application.created_at.desc())
+    # Pack 30.0: срочные сверху (is_urgent DESC), внутри группы по created_at DESC.
+    # Алфавитная сортировка urgent-блока делается ниже на уже обогащённых dict-ах,
+    # потому что applicant_name_native собирается в _enrich (через session.get на applicant).
+    query = query.order_by(
+        Application.is_urgent.desc(),
+        Application.created_at.desc(),
+    )
     if status:
         query = query.where(Application.status == status)
-    return [_enrich(a, session) for a in session.exec(query).all()]
+    enriched = [_enrich(a, session) for a in session.exec(query).all()]
+    # Pack 30.0: внутри urgent-группы — алфавит по applicant_name_native (case-insensitive).
+    urgent = [d for d in enriched if d.get("is_urgent")]
+    rest   = [d for d in enriched if not d.get("is_urgent")]
+    urgent.sort(key=lambda d: (d.get("applicant_name_native") or "").casefold())
+    return urgent + rest
 
 
 @router.get("/{app_id}")
@@ -583,6 +596,35 @@ def archive_application(
         session, app.id, "manager", user_id, "application_archived",
         f"Заявка перенесена в архив (статус: {app.status})",
         {"status_at_archive": str(app.status)},
+    )
+    session.commit()
+    session.refresh(app)
+    return _enrich(app, session)
+
+
+# ============================================================================
+# Pack 30.0 — флаг "срочно" (toggle)
+# ============================================================================
+
+@router.post("/{app_id}/toggle-urgent")
+def toggle_urgent(
+    app_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Переключает флаг is_urgent. Срочные заявки выходят на верх списка
+    в /admin (внутри urgent-группы — по алфавиту ФИО)."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    new_value = not bool(getattr(app, "is_urgent", False))
+    app.is_urgent = new_value
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id,
+        "application_urgent_toggled",
+        f"is_urgent set to {new_value}",
+        {"is_urgent": new_value},
     )
     session.commit()
     session.refresh(app)

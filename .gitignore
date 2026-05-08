@@ -71,3 +71,6 @@ backend/visa_kit_backend.egg-info/
 
 # Patch (TS variant — забыл в первый раз)
 *_PATCH.ts
+
+# Pack patcher backups
+*.bak_pre_pack30_0*

@@ -96,6 +96,8 @@ export type ApplicationResponse = {
   is_archived?: boolean;
   archived_at?: string;
   can_be_archived?: boolean;
+  // Pack 30.0
+  is_urgent?: boolean;
   applicant_name_native?: string;
   applicant_name_latin?: string;
 };
@@ -1014,6 +1016,15 @@ export async function archiveApplication(appId: number): Promise<ApplicationResp
     method: "POST", headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Не удалось архивировать: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+// Pack 30.0
+export async function toggleUrgent(appId: number): Promise<ApplicationResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-urgent`, {
+    method: "POST", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`toggle-urgent: ${res.status} ${await res.text()}`);
   return res.json();
 }
 

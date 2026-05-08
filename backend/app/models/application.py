@@ -104,6 +104,8 @@ class Application(TimestampMixin, table=True):
     # === Pack 10: архивирование ===
     is_archived: bool = Field(default=False, index=True)
     archived_at: Optional[datetime] = Field(default=None)
+    # === Pack 30.0: флаг "срочно" ===
+    is_urgent: bool = Field(default=False, index=True)
     # Pack 27.0 — soft-delete с автоудалением через 7 дней
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 
@@ -198,3 +200,5 @@ class ApplicationRead(SQLModel):
     is_archived: Optional[bool] = None
     archived_at: Optional[datetime] = None
     can_be_archived: Optional[bool] = None
+    # Pack 30.0
+    is_urgent: Optional[bool] = None

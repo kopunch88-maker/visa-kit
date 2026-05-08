@@ -1,5 +1,7 @@
 "use client";
 
+// Pack 30.0
+import { Flame } from "lucide-react";
 import { ApplicationResponse, STATUS_LABELS } from "@/lib/api";
 
 interface Props {
@@ -105,8 +107,16 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
             }}
           >
             <div className="flex items-start justify-between gap-2 mb-1">
-              <div className="text-sm font-semibold text-primary line-clamp-1">
-                {displayTitle}
+              <div className="text-sm font-semibold text-primary line-clamp-1 flex items-center gap-1.5 min-w-0">
+                {/* Pack 30.0 — огонёк у срочных */}
+                {app.is_urgent && (
+                  <Flame
+                    className="w-3.5 h-3.5 flex-shrink-0"
+                    style={{ color: "#f97316", fill: "#f97316" }}
+                    aria-label="Срочно"
+                  />
+                )}
+                <span className="truncate">{displayTitle}</span>
               </div>
               <div className="text-xs text-tertiary font-mono whitespace-nowrap">
                 #{app.reference}

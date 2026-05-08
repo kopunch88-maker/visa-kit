@@ -729,3 +729,28 @@ def apply_pack29_0_migration():
                   AND (contract_template_slug IS NULL OR contract_template_slug = '')
             """), {"slug": slug, "inn": inn})
 
+
+
+# ============================================================================
+# Pack 30.0 — флаг is_urgent на Application
+# ============================================================================
+
+def apply_pack30_0_migration() -> None:
+    """Pack 30.0 миграция:
+       - ALTER TABLE application ADD COLUMN is_urgent BOOLEAN NOT NULL DEFAULT FALSE
+       - CREATE INDEX ix_application_is_urgent
+       Идемпотентна — IF NOT EXISTS на обоих шагах.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_urgent "
+            "ON application (is_urgent)"
+        ))
+    print("[migration] Pack 30.0: application.is_urgent ready")

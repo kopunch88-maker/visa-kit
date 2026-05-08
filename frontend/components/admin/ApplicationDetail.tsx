@@ -29,6 +29,8 @@ import { SubmissionDrawer } from "./SubmissionDrawer";
 import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
+// Pack 30.0
+import { UrgentToggleButton } from "./UrgentToggleButton";
 // Pack 27.0 — кнопка удаления в корзину
 import { DeleteButton } from "./DeleteButton";
 import { AdminClientDocuments } from "./AdminClientDocuments";
@@ -201,9 +203,13 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       >
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-bold text-primary mb-0.5 leading-tight">
-              {fullNameRu}
-            </h2>
+            {/* Pack 30.0 — огонёк рядом с именем клиента */}
+            <div className="flex items-center gap-2 mb-0.5">
+              <UrgentToggleButton application={application} onChanged={handleArchiveChanged} />
+              <h2 className="text-2xl font-bold text-primary leading-tight">
+                {fullNameRu}
+              </h2>
+            </div>
             {fullNameLatin && (
               <div className="text-sm text-tertiary uppercase tracking-wide mb-2">
                 {fullNameLatin}
