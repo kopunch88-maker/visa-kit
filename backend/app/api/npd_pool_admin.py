@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.db.session import engine, get_session
-from app.models import NpdPoolStats, NpdRefillTask
+from app.models import NpdPoolStats, NpdRefillTask, NpdCandidate
 from app.services.inn_generator.npd_pool import (
     KEY_REGIONS,
     get_pool_stats,
