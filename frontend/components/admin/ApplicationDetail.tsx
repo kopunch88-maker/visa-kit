@@ -275,6 +275,11 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
                 обновлено {formatRelativeTime(application.created_at)}
               </span>
             </div>
+
+            {/* Pack 32.2 — заметки по клиенту, размещены под мета-строкой */}
+            <div className="mt-3">
+              <NotesCard application={application} onSaved={loadAll} />
+            </div>
           </div>
 
           <div className="flex flex-col items-stretch gap-2 min-w-[260px]">
@@ -334,9 +339,6 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           </div>
         </div>
       </div>
-
-      {/* Pack 32.1 — заметки по клиенту (видны всем менеджерам) */}
-      <NotesCard application={application} onSaved={loadAll} />
 
       {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
