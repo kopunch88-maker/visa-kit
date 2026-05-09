@@ -5,6 +5,8 @@ import { ExternalLink, Loader2, Copy, Check, Link2 } from "lucide-react";
 import {
   getApplication,
   getApplicantById,
+  // Pack 32.0 — создание пустого кандидата по клику карандаша
+  createApplicantForApplication,
   ApplicationResponse,
   ApplicantResponse,
   STATUS_LABELS,
@@ -81,6 +83,8 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const [showCompanyDrawer, setShowCompanyDrawer] = useState(false);
   const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);
   const [showApplicantDrawer, setShowApplicantDrawer] = useState(false);
+  // Pack 32.0 — спиннер пока создаём пустого кандидата
+  const [creatingApplicant, setCreatingApplicant] = useState(false);
 
   async function loadAll() {
     setError(null);
@@ -156,6 +160,32 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
     onUpdated();
   }
 
+  // Pack 32.0 — клик по карандашу в карточке «Кандидат».
+  // Если applicant ещё не создан — сначала создаём пустого с placeholder «—»,
+  // после чего открываем Drawer для редактирования. Если уже создан — просто
+  // открываем Drawer.
+  async function handleEditApplicant() {
+    if (applicant) {
+      setShowApplicantDrawer(true);
+      return;
+    }
+    if (!application) return;
+    setCreatingApplicant(true);
+    try {
+      const created = await createApplicantForApplication(application.id);
+      setApplicant(created);
+      // Перезагрузим application чтобы у него обновилось applicant_id.
+      const app = await getApplication(application.id);
+      setApplication(app);
+      setShowApplicantDrawer(true);
+      onUpdated();
+    } catch (e) {
+      alert(`Не удалось создать кандидата: ${(e as Error).message}`);
+    } finally {
+      setCreatingApplicant(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -183,10 +213,24 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const isAssigned = !!application.company_id;
   const statusColors = STATUS_COLORS[application.status] || STATUS_COLORS.draft;
 
-  // Двуязычное ФИО
-  const fullNameRu = applicant?.full_name_native || application.internal_notes || "Без имени";
+  // Двуязычное ФИО.
+  // Pack 32.0: если applicant создан с placeholder'ами «—» — не показываем
+  // эту фейковую запись в шапке заявки, fallback на internal_notes.
+  const isPlaceholderApplicant =
+    !!applicant &&
+    (applicant.last_name_native || "").trim() === "—" &&
+    (applicant.first_name_native || "").trim() === "—";
+
+  const fullNameRu =
+    (!isPlaceholderApplicant && applicant?.full_name_native) ||
+    application.internal_notes ||
+    "Без имени";
   const fullNameLatin =
-    applicant?.last_name_latin && applicant?.first_name_latin
+    !isPlaceholderApplicant &&
+    applicant?.last_name_latin &&
+    applicant?.first_name_latin &&
+    applicant.last_name_latin !== "—" &&
+    applicant.first_name_latin !== "—"
       ? `${applicant.last_name_latin} ${applicant.first_name_latin}`
       : null;
 
@@ -291,10 +335,13 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
 
       {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Pack 32.0 — onEdit передаётся всегда: handleEditApplicant сам решит,
+            создавать пустого applicant'а или сразу открывать Drawer. */}
         <CandidateCard
           applicant={applicant}
           application={application}
-          onEdit={applicant ? () => setShowApplicantDrawer(true) : undefined}
+          onEdit={handleEditApplicant}
+          editLoading={creatingApplicant}
         />
         <CompanyCard
           company={company}

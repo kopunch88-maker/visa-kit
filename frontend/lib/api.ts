@@ -988,6 +988,24 @@ export async function getApplicantById(id: number): Promise<ApplicantResponse> {
   return res.json();
 }
 
+// Pack 32.0 — createApplicantForApplication
+// Создаёт пустого Applicant'а с placeholder ФИО «—» и привязывает к application.
+// Возвращает enriched dict (тот же формат что getApplicantById).
+// Идемпотентно: если applicant уже есть у заявки — вернёт существующего.
+export async function createApplicantForApplication(
+  appId: number,
+): Promise<ApplicantResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/for-application/${appId}`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) {
+    throw new Error(`Не удалось создать кандидата: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
+
+
 /**
  * Обновить данные кандидата (Applicant) от имени менеджера.
  * Pack 14 finishing: позволяет менеджеру вписать русские ФИО для иностранцев,

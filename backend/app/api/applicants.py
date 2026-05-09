@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlmodel import Session
 
 from app.db.session import get_session
-from app.models import Applicant
+from app.models import Applicant, Application
 from app.models.self_employed_registry import SelfEmployedRegistry
 from app.services.transliteration import transliterate_lat_to_ru, normalize_russian_case
 from .dependencies import require_manager
@@ -246,3 +246,62 @@ def transliterate(
         "first_name_native": first_ru,
         "warning": "Автоматический черновик транслитерации. Проверьте и поправьте если нужно.",
     }
+
+
+# ============================================================================
+# Pack 32.0 — POST /for-application/{app_id}
+# ============================================================================
+# Создаёт пустого Applicant'а с placeholder ФИО «—» и привязывает к указанной
+# Application. Используется когда менеджер хочет начать редактировать карточку
+# кандидата СРАЗУ после создания пустой заявки, не дожидаясь пока клиент
+# заполнит анкету через свой кабинет.
+#
+# Если у application уже есть applicant_id — возвращает существующего (идемпотентно).
+# Placeholder'ы тот же приём что в import_package.py:_auto_apply_ocr_to_applicant
+# (NOT NULL constraint на имена, но реальные данные пока неизвестны).
+
+@router.post("/for-application/{app_id}", status_code=201)
+def create_empty_applicant_for_application(
+    app_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """
+    Создать пустого Applicant'а для заявки если у неё ещё нет applicant_id.
+
+    Возвращает _enrich(applicant) — тот же формат, что GET /admin/applicants/{id},
+    чтобы фронт мог сразу подсунуть результат в стейт без дополнительного
+    refetch'а.
+    """
+    application = session.get(Application, app_id)
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    # Идемпотентность — если applicant уже привязан, вернём его.
+    if application.applicant_id:
+        existing = session.get(Applicant, application.applicant_id)
+        if existing:
+            return _enrich(existing, session)
+        # applicant_id указывает на удалённую запись — отвяжем и пересоздадим.
+        application.applicant_id = None
+
+    # Placeholder'ы для NOT NULL имён. Менеджер потом перезапишет через
+    # PATCH /admin/applicants/{id} (тот же ApplicantDrawer).
+    applicant = Applicant(
+        last_name_native="—",
+        first_name_native="—",
+        last_name_latin="—",
+        first_name_latin="—",
+    )
+    session.add(applicant)
+    session.flush()
+    session.refresh(applicant)
+
+    application.applicant_id = applicant.id
+    session.add(application)
+
+    session.commit()
+    session.refresh(applicant)
+
+    return _enrich(applicant, session)
+
