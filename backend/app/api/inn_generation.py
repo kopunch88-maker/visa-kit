@@ -57,6 +57,7 @@ from app.models import (
     Company,
     NpdCandidate,
     NpdRefillTask,
+    WorkHistorySuggestion,  # Pack 30.0
 )
 from app.services.inn_generator.kladr_address_gen import (
     KNOWN_REGIONS,
@@ -632,3 +633,62 @@ def regen_address(
         home_address=addr.full,
         kladr_code=addr.kladr_code,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/admin/applicants/{applicant_id}/regen-work-history
+# Pack 30.0 (09.05.2026): endpoint-обёртка над suggest_work_history.
+#
+# Сервис suggest_work_history() из app.services.work_history_generator
+# существует с Pack 19.1a и был расширен в Pack 20.3 (duties-snapshot).
+# Импорт стоит наверху файла с момента Pack 19.1a, но сам endpoint
+# никогда не был зарегистрирован — фронт получал 404. Этот пакет
+# ровно одну вещь и делает: дописывает обёртку.
+#
+# Контракт совпадает с frontend/lib/api.ts:regenerateWorkHistory():
+#   POST /api/admin/applicants/{applicant_id}/regen-work-history
+#   → 200 WorkHistorySuggestion
+#
+# UX: сервис не пишет в БД. Фронт получает массив records[] и предлагает
+# менеджеру нажать «Сохранить» (PATCH /admin/applicants/{id} с
+# work_history[]).
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{applicant_id}/regen-work-history",
+    response_model=WorkHistorySuggestion,
+    summary="Подобрать опыт работы (work_history) на основе specialty + region клиента",
+)
+def regen_work_history(
+    applicant_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> WorkHistorySuggestion:
+    """
+    Pack 30.0: обёртка над suggest_work_history().
+
+    Возможные ошибки:
+      - 404 если applicant не найден
+      - 422 если генератор вернул None (специальность не определилась
+        и default-fallback тоже не сработал — обычно это значит что
+        Pack 19.0 specialty-seed не применён)
+      - 500 при пустых seed-таблицах LegendCompany / Position / CareerTrack
+        (исключение пробрасывается из сервиса)
+    """
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+
+    result = suggest_work_history(applicant, session)
+    if result is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Не удалось определить специальность для подбора опыта работы. "
+                "Проверь что у клиента заполнено образование (applicant.education) "
+                "или назначена должность в заявке (application.position_id), "
+                "и что Pack 19.0 specialty-seed применён."
+            ),
+        )
+    return result
