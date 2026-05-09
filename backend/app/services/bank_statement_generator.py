@@ -438,6 +438,89 @@ def generate_default_transactions(
             f"{period_start}..{period_end} — generator bug"
         )
 
+    # === Pack 32.3: лимит ≤2 страниц через бюджет «веса строк» ===
+    # Вес транзакции = 1 + count('\n') в описании.
+    # - single-line (KWIKPAY, НПД, комиссия, подписка) = 1.0
+    # - СБП multiline (Получатель + банк/телефон) = 2.0
+    # - Зарплата multiline (Плательщик + ИНН + Счёт + Назначение) = 5.0
+    #
+    # Эмпирически 1 страница A4 ~= 22 единицы веса (Word, Times New Roman 10,
+    # шапка выписки + таблица). 2 страницы = 44, целевой бюджет 38 даёт запас
+    # на orphan-control, разные размеры подписи, разрывы.
+    #
+    # Бюджет настраиваемый через ENV var BANK_STATEMENT_MAX_WEIGHT.
+    import os as _os
+    try:
+        _max_weight = int(_os.environ.get("BANK_STATEMENT_MAX_WEIGHT", "38"))
+    except (ValueError, TypeError):
+        _max_weight = 38
+
+    def _tx_weight(t: dict) -> float:
+        desc = t.get("description") or ""
+        return 1.0 + desc.count("\n")
+
+    def _is_subscription(t: dict) -> bool:
+        desc = t.get("description") or ""
+        return desc.startswith("Оплата услуг.")
+
+    def _is_sbp(t: dict) -> bool:
+        desc = t.get("description") or ""
+        return desc.startswith("Перевод по СБП.")
+
+    total_weight = sum(_tx_weight(t) for t in transactions)
+    log.info(
+        "[Pack 32.3] page budget: %d transactions, total_weight=%.1f, max=%d",
+        len(transactions), total_weight, _max_weight,
+    )
+
+    if total_weight > _max_weight:
+        # Шаг 1 — удаляем подписки случайно по одной, пока не уложимся.
+        sub_indices = [i for i, t in enumerate(transactions) if _is_subscription(t)]
+        random.shuffle(sub_indices)
+        removed_subs = 0
+        for idx in sub_indices:
+            if total_weight <= _max_weight:
+                break
+            total_weight -= _tx_weight(transactions[idx])
+            transactions[idx] = None  # tombstone — удалим скопом ниже
+            removed_subs += 1
+
+        # Шаг 2 — если всё ещё перебор, удаляем лишние СБП, но не ниже MIN_SBP_KEEP.
+        MIN_SBP_KEEP = 3
+        removed_sbp = 0
+        if total_weight > _max_weight:
+            sbp_indices = [
+                i for i, t in enumerate(transactions)
+                if t is not None and _is_sbp(t)
+            ]
+            keep_count = MIN_SBP_KEEP
+            removable = max(0, len(sbp_indices) - keep_count)
+            random.shuffle(sbp_indices)
+            for idx in sbp_indices[:removable]:
+                if total_weight <= _max_weight:
+                    break
+                total_weight -= _tx_weight(transactions[idx])
+                transactions[idx] = None
+                removed_sbp += 1
+
+        # Скопом удаляем tombstones
+        transactions = [t for t in transactions if t is not None]
+
+        if total_weight > _max_weight:
+            log.warning(
+                "[Pack 32.3] page budget exceeded after trimming: "
+                "weight=%.1f > max=%d (removed %d subs + %d sbp). "
+                "Likely period_months > 3 — выписка может занять >2 страниц.",
+                total_weight, _max_weight, removed_subs, removed_sbp,
+            )
+        else:
+            log.info(
+                "[Pack 32.3] trimmed %d subscriptions + %d sbp, "
+                "now %d transactions, weight=%.1f",
+                removed_subs, removed_sbp, len(transactions), total_weight,
+            )
+    # === конец Pack 32.3 ===
+
     # Сортируем от новой к старой (как в реальной выписке Альфы — последняя сверху)
     transactions.sort(key=lambda t: t["transaction_date"], reverse=True)
 
