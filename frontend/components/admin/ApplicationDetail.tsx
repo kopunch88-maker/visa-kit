@@ -24,6 +24,8 @@ import {
 import { CandidateCard } from "./cards/CandidateCard";
 import { CompanyCard } from "./cards/CompanyCard";
 import { SubmissionCard } from "./cards/SubmissionCard";
+// Pack 32.1 — блок заметок по клиенту
+import { NotesCard } from "./cards/NotesCard";
 import { BusinessChecksBlock } from "./BusinessChecksBlock";
 import { DocumentsGrid } from "./DocumentsGrid";
 import { CompanyContractDrawer } from "./CompanyContractDrawer";
@@ -332,6 +334,9 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Pack 32.1 — заметки по клиенту (видны всем менеджерам) */}
+      <NotesCard application={application} onSaved={loadAll} />
 
       {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
