@@ -6,6 +6,11 @@
 
 Pack 14 finishing: расширены справочники стран (TUR, POL, DEU и т.д.) +
 fallback на latin если у иностранца нет русского имени.
+
+Pack 33.1 (10.05.2026): добавлен алиас fmt_date_quoted_ru = fmt_date_long_ru.
+Шаблоны avtodom/hayat использовали имя fmt_date_quoted_ru, которого не было
+в контексте — Jinja падал с UndefinedError. Формат идентичен fmt_date_long_ru:
+«05» сентября 2025 г. Алиас, не дубликат — единая точка правды для формата.
 """
 
 import re
@@ -247,6 +252,12 @@ def fmt_date_long_ru(d: date | None) -> str:
     if d is None:
         return ""
     return f'«{d.day:02d}» {_MONTHS_GENITIVE_RU[d.month - 1]} {d.year} г.'
+
+
+# Pack 33.1: алиас для шаблонов avtodom/hayat где автор использовал имя
+# fmt_date_quoted_ru. Формат идентичен fmt_date_long_ru: «05» сентября 2025 г.
+# Алиас (не дубликат логики) — единая точка правды для формата.
+fmt_date_quoted_ru = fmt_date_long_ru
 
 
 def fmt_date_human_ru(d: date | None) -> str:
@@ -1198,9 +1209,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
 
         "fmt_date_ru": fmt_date_ru,
         "fmt_date_long_ru": fmt_date_long_ru,
+        "fmt_date_quoted_ru": fmt_date_quoted_ru,
         "fmt_date_human_ru": fmt_date_human_ru,
         "fmt_money": fmt_money,
         "fmt_money_kop": fmt_money_kop,
         "fmt_amount_signed": fmt_amount_signed,
     }
-
