@@ -22,6 +22,8 @@ import {
   ApplicationResponse,
   patchApplication,
   regenerateBankTransactions,
+  // Pack 34.0 — единый список стран (~195) для Гражданство/Страна рождения/Страна жительства
+  COUNTRY_OPTIONS as ALL_COUNTRIES,
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
 import { RefineInnDateModal } from "./RefineInnDateModal";
@@ -41,37 +43,12 @@ const SEX_OPTIONS = [
   { value: "M", label: "Женский" },
 ];
 
+// Pack 34.0 — локальный COUNTRY_OPTIONS теперь генерится из ALL_COUNTRIES
+// (полный мир ISO 3166-1 из @/lib/api). Префикс «— Не указано —» сохранён.
+// Формат label «Страна (ISO3)» — привычный для менеджеров.
 const COUNTRY_OPTIONS = [
   { value: "", label: "— Не указано —" },
-  { value: "RUS", label: "Россия (RUS)" },
-  { value: "TUR", label: "Турция (TUR)" },
-  { value: "KAZ", label: "Казахстан (KAZ)" },
-  { value: "UKR", label: "Украина (UKR)" },
-  { value: "BLR", label: "Беларусь (BLR)" },
-  { value: "ARM", label: "Армения (ARM)" },
-  { value: "AZE", label: "Азербайджан (AZE)" },
-  { value: "GEO", label: "Грузия (GEO)" },
-  { value: "UZB", label: "Узбекистан (UZB)" },
-  { value: "TJK", label: "Таджикистан (TJK)" },
-  { value: "KGZ", label: "Кыргызстан (KGZ)" },
-  { value: "MDA", label: "Молдова (MDA)" },
-  { value: "ISR", label: "Израиль (ISR)" },
-  { value: "POL", label: "Польша (POL)" },
-  { value: "DEU", label: "Германия (DEU)" },
-  { value: "CZE", label: "Чехия (CZE)" },
-  { value: "ESP", label: "Испания (ESP)" },
-  { value: "ITA", label: "Италия (ITA)" },
-  { value: "HUN", label: "Венгрия (HUN)" },
-  { value: "PRT", label: "Португалия (PRT)" },
-  { value: "GRC", label: "Греция (GRC)" },
-  { value: "FRA", label: "Франция (FRA)" },
-  { value: "GBR", label: "Великобритания (GBR)" },
-  { value: "USA", label: "США (USA)" },
-  { value: "CAN", label: "Канада (CAN)" },
-  { value: "SRB", label: "Сербия (SRB)" },
-  { value: "MNE", label: "Черногория (MNE)" },
-  { value: "THA", label: "Таиланд (THA)" },
-  { value: "ARE", label: "ОАЭ (ARE)" },
+  ...ALL_COUNTRIES.map((c) => ({ value: c.value, label: `${c.label} (${c.value})` })),
 ];
 
 /**
