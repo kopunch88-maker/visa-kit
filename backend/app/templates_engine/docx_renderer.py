@@ -415,6 +415,35 @@ def _replace_marker_inline(p_element, marker: str, value: str):
             t.text = t.text.replace(marker, value)
 
 
+def _force_left_align_paragraph(p_element):
+    """
+    Pack 34.4 — гарантирует left-align параграфа.
+
+    Маркер-строка в bank_statement_template.docx унаследовала <w:jc w:val="both"/>
+    (justify) от исходника Алиева. Пока контент влезал в одну строку — justify
+    не проявлялся. Но для очень длинных строк (которые всё-таки переносятся
+    внутри ячейки) Word растягивает первую строку по ширине, оставляя хвост
+    одиноким на следующей строке.
+
+    Решение — насильно ставить <w:jc w:val="left"/> на ВСЕ параграфы клонов
+    строк описания. Это работает и для русской выписки, и для испанского
+    перевода (LLM-pipeline не трогает XML-форматирование).
+
+    Идемпотентно: если jc уже left — ничего не делает; если other — перезаписывает.
+    """
+    ppr = p_element.find('w:pPr', NS)
+    if ppr is None:
+        ppr = etree.SubElement(p_element, f'{W_NS}pPr')
+        # pPr должен быть первым элементом параграфа
+        p_element.remove(ppr)
+        p_element.insert(0, ppr)
+
+    jc = ppr.find('w:jc', NS)
+    if jc is None:
+        jc = etree.SubElement(ppr, f'{W_NS}jc')
+    jc.set(f'{W_NS}val', 'left')
+
+
 def _replace_marker_with_multiline(cell_element, p_element, marker: str, multiline_value: str):
     """
     Заменяет маркер на многострочное значение, разбивая на отдельные параграфы.
@@ -433,6 +462,8 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
 
     # Заменяем маркер в первом параграфе на первую строку
     _replace_marker_inline(p_element, marker, lines[0])
+    # Pack 34.4: страхуем left-align (на случай если когда-то контент перенесётся)
+    _force_left_align_paragraph(p_element)
 
     # Для остальных строк создаём копии параграфа
     parent_of_p = p_element.getparent()
@@ -485,6 +516,8 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
                 spacing.set(f'{W_NS}before', '40')
                 spacing.set(f'{W_NS}after', '80')
 
+        # Pack 34.4: страхуем left-align для каждого клона
+        _force_left_align_paragraph(new_p)
         parent_of_p.insert(insert_position, new_p)
         insert_position += 1
 
