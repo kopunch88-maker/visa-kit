@@ -8,7 +8,7 @@ import {
   ApplicationResponse,
   STATUS_TABS,
 } from "@/lib/api";
-import { ApplicationsList } from "@/components/admin/ApplicationsList";
+import { ApplicationsList, type SortMode } from "@/components/admin/ApplicationsList";
 import { ApplicationDetail } from "@/components/admin/ApplicationDetail";
 import { ImportPackageDialog } from "@/components/admin/ImportPackageDialog";
 
@@ -22,6 +22,22 @@ function AdminPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  // Pack 34.3 — режим сортировки списка (default / alphabet / submission_date)
+  // Сохраняется в localStorage чтобы выбор менеджера переживал перезагрузку.
+  const [sortMode, setSortMode] = useState<SortMode>(() => {
+    if (typeof window === "undefined") return "default";
+    const saved = window.localStorage.getItem("visa-kit-sort-mode");
+    if (saved === "default" || saved === "alphabet" || saved === "submission_date") {
+      return saved;
+    }
+    return "default";
+  });
+
+  // Pack 34.3 — persist sortMode в localStorage при смене
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("visa-kit-sort-mode", sortMode);
+  }, [sortMode]);
   const [showImportDialog, setShowImportDialog] = useState(false);
 
   async function loadApplications() {
@@ -189,10 +205,42 @@ function AdminPageContent() {
             })}
           </div>
 
+          {/* Pack 34.3 — переключатель сортировки */}
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-tertiary mr-1">Сортировка:</span>
+            {[
+              { id: "default" as const, label: "По умолчанию" },
+              { id: "alphabet" as const, label: "А → Я" },
+              { id: "submission_date" as const, label: "По дате подачи" },
+            ].map((opt) => {
+              const isActive = opt.id === sortMode;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => setSortMode(opt.id)}
+                  className={`px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
+                    isActive ? "text-primary font-medium" : "text-secondary hover:bg-secondary"
+                  }`}
+                  style={isActive ? { background: "var(--color-bg-secondary)" } : {}}
+                  title={
+                    opt.id === "default"
+                      ? "Огонь и чемодан сверху, новые снизу"
+                      : opt.id === "alphabet"
+                      ? "Внутри групп — по алфавиту"
+                      : "Внутри групп — ближайшая дата подачи выше"
+                  }
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
           <ApplicationsList
             applications={filteredApplications}
             selectedId={selectedId ? parseInt(selectedId) : null}
             onSelect={handleSelectApplication}
+            sortMode={sortMode}
           />
         </div>
 

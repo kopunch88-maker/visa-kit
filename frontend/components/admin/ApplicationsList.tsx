@@ -1,13 +1,19 @@
 "use client";
 
 // Pack 30.0
-import { Flame, Briefcase } from "lucide-react";
+import { Flame, Briefcase, Calendar } from "lucide-react";
 import { ApplicationResponse, STATUS_LABELS } from "@/lib/api";
+
+// Pack 34.3 — режимы сортировки списка
+export type SortMode = "default" | "alphabet" | "submission_date";
 
 interface Props {
   applications: ApplicationResponse[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  // Pack 34.3 — режим сортировки. Применяется поверх приоритетных групп
+  // огонь/чемодан/обычные (приоритет групп всегда сохраняется).
+  sortMode?: SortMode;
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
@@ -44,7 +50,71 @@ function formatRelativeTime(dateStr?: string): string {
   return `${Math.floor(days / 30)} мес назад`;
 }
 
-export function ApplicationsList({ applications, selectedId, onSelect }: Props) {
+// Pack 34.3 — форматирование даты подачи: "15.05.2026" или null
+function formatSubmissionDate(dateStr?: string): string | null {
+  if (!dateStr) return null;
+  // Дата приходит в ISO формате "2026-05-15" — преобразуем в "15.05.2026"
+  const parts = dateStr.split("T")[0].split("-");
+  if (parts.length !== 3) return dateStr;
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+// Pack 34.3 — миллисекунды от сегодня до даты (для сортировки "ближайшая выше").
+// Прошедшие даты получают Number.POSITIVE_INFINITY чтобы уйти в конец.
+// Заявки без даты тоже в конец.
+function distanceFromToday(dateStr?: string): number {
+  if (!dateStr) return Number.POSITIVE_INFINITY;
+  const d = new Date(dateStr).getTime();
+  if (Number.isNaN(d)) return Number.POSITIVE_INFINITY;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = d - today.getTime();
+  if (diff < 0) return Number.POSITIVE_INFINITY; // прошедшие — в конец
+  return diff;
+}
+
+// Pack 34.3 — применить sortMode сохраняя приоритет групп urgent/ready/rest.
+function applySortMode(
+  apps: ApplicationResponse[],
+  mode: SortMode,
+): ApplicationResponse[] {
+  if (mode === "default") return apps;
+
+  const urgent: ApplicationResponse[] = [];
+  const ready: ApplicationResponse[] = [];
+  const rest: ApplicationResponse[] = [];
+  for (const a of apps) {
+    if (a.is_urgent) urgent.push(a);
+    else if (a.is_ready_for_pickup) ready.push(a);
+    else rest.push(a);
+  }
+
+  if (mode === "alphabet") {
+    const byName = (a: ApplicationResponse, b: ApplicationResponse) =>
+      (a.applicant_name_native || a.internal_notes || a.reference || "")
+        .toLowerCase()
+        .localeCompare(
+          (b.applicant_name_native || b.internal_notes || b.reference || "").toLowerCase(),
+          "ru",
+        );
+    urgent.sort(byName);
+    ready.sort(byName);
+    rest.sort(byName);
+  } else if (mode === "submission_date") {
+    const byDate = (a: ApplicationResponse, b: ApplicationResponse) =>
+      distanceFromToday(a.submission_date) - distanceFromToday(b.submission_date);
+    urgent.sort(byDate);
+    ready.sort(byDate);
+    rest.sort(byDate);
+  }
+
+  return [...urgent, ...ready, ...rest];
+}
+
+export function ApplicationsList({ applications, selectedId, onSelect, sortMode = "default" }: Props) {
+  // Pack 34.3 — пересортировка на клиенте поверх приоритетных групп с бэка
+  const sortedApps = applySortMode(applications, sortMode);
+
   if (applications.length === 0) {
     return (
       <div
@@ -61,7 +131,7 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
 
   return (
     <div className="flex flex-col gap-2 max-h-[calc(100vh-220px)] overflow-y-auto">
-      {applications.map((app) => {
+      {sortedApps.map((app) => {
         const isSelected = app.id === selectedId;
         const statusLabel = STATUS_LABELS[app.status] || app.status;
         const colors = STATUS_COLORS[app.status] || STATUS_COLORS.draft;
@@ -126,8 +196,24 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
                 )}
                 <span className="truncate">{displayTitle}</span>
               </div>
-              <div className="text-xs text-tertiary font-mono whitespace-nowrap">
-                #{app.reference}
+              <div className="flex flex-col items-end gap-0.5 whitespace-nowrap">
+                <div className="text-xs text-tertiary font-mono">
+                  #{app.reference}
+                </div>
+                {/* Pack 34.3 — дата планируемой подачи */}
+                <div
+                  className="text-[10px] flex items-center gap-1"
+                  style={{
+                    color: app.submission_date
+                      ? "var(--color-text-tertiary)"
+                      : "var(--color-text-tertiary)",
+                    opacity: app.submission_date ? 0.85 : 0.45,
+                  }}
+                  title={app.submission_date ? "Планируемая дата подачи" : "Дата подачи не задана"}
+                >
+                  <Calendar className="w-3 h-3" />
+                  {formatSubmissionDate(app.submission_date) || "не задана"}
+                </div>
               </div>
             </div>
 
