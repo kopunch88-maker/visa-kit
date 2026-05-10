@@ -1,7 +1,7 @@
 "use client";
 
 // Pack 30.0
-import { Flame } from "lucide-react";
+import { Flame, Briefcase } from "lucide-react";
 import { ApplicationResponse, STATUS_LABELS } from "@/lib/api";
 
 interface Props {
@@ -114,6 +114,14 @@ export function ApplicationsList({ applications, selectedId, onSelect }: Props) 
                     className="w-3.5 h-3.5 flex-shrink-0"
                     style={{ color: "#f97316", fill: "#f97316" }}
                     aria-label="Срочно"
+                  />
+                )}
+                {/* Pack 34.2 — чемодан у заявок «Готово, можно забирать» */}
+                {app.is_ready_for_pickup && (
+                  <Briefcase
+                    className="w-3.5 h-3.5 flex-shrink-0"
+                    style={{ color: "#10b981", fill: "rgba(16, 185, 129, 0.15)" }}
+                    aria-label="Готово, можно забирать"
                   />
                 )}
                 <span className="truncate">{displayTitle}</span>

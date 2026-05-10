@@ -35,6 +35,7 @@ import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
 // Pack 30.0
 import { UrgentToggleButton } from "./UrgentToggleButton";
+import { ReadyForPickupToggleButton } from "./ReadyForPickupToggleButton";
 // Pack 27.0 — кнопка удаления в корзину
 import { DeleteButton } from "./DeleteButton";
 import { AdminClientDocuments } from "./AdminClientDocuments";
@@ -252,6 +253,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             {/* Pack 30.0 — огонёк рядом с именем клиента */}
             <div className="flex items-center gap-2 mb-0.5">
               <UrgentToggleButton application={application} onChanged={handleArchiveChanged} />
+              <ReadyForPickupToggleButton application={application} onChanged={handleArchiveChanged} />
               <h2 className="text-2xl font-bold text-primary leading-tight">
                 {fullNameRu}
               </h2>

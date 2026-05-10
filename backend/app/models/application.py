@@ -106,6 +106,8 @@ class Application(TimestampMixin, table=True):
     archived_at: Optional[datetime] = Field(default=None)
     # === Pack 30.0: флаг "срочно" ===
     is_urgent: bool = Field(default=False, index=True)
+    # === Pack 34.2: флаг "Готово, можно забирать" ===
+    is_ready_for_pickup: bool = Field(default=False, index=True)
     # Pack 27.0 — soft-delete с автоудалением через 7 дней
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 

@@ -24,7 +24,8 @@ from app.db.migrations import (
     apply_pack28_2_migration,
     apply_pack28_5_migration,
     apply_pack29_0_migration,
-    apply_pack30_0_migration,  # Pack 30.0
+    apply_pack30_0_migration,
+    apply_pack34_2_migration,  # Pack 30.0
 )
 
 
@@ -47,7 +48,8 @@ async def lifespan(app: FastAPI):
     apply_pack28_2_migration()  # npd_refill_task table + indexes (Pack 28.2)
     apply_pack28_5_migration()  # Pack 28.5 result_registration_date column
     apply_pack29_0_migration()  # Pack 29.0 company.contract_template_slug + backfill
-    apply_pack30_0_migration()  # Pack 30.0 application.is_urgent
+    apply_pack30_0_migration()
+    apply_pack34_2_migration()  # Pack 30.0 application.is_urgent
 
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)

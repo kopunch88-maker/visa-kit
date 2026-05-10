@@ -144,21 +144,26 @@ def list_applications(
             Application.is_archived == archived,
             Application.deleted_at.is_(None),
         )
-    # Pack 30.0: срочные сверху (is_urgent DESC), внутри группы по created_at DESC.
-    # Алфавитная сортировка urgent-блока делается ниже на уже обогащённых dict-ах,
-    # потому что applicant_name_native собирается в _enrich (через session.get на applicant).
+    # Pack 30.0 + Pack 34.2: трёхуровневая приоритетная сортировка
+    # Группа A: is_urgent=True (с чемоданом или без) — самый верх
+    # Группа B: is_urgent=False, is_ready_for_pickup=True — ниже
+    # Группа C: ни того ни другого — внизу
+    # Внутри A и B — алфавит по applicant_name_native (case-insensitive).
+    # Внутри C — created_at DESC (свежие выше).
     query = query.order_by(
         Application.is_urgent.desc(),
+        Application.is_ready_for_pickup.desc(),
         Application.created_at.desc(),
     )
     if status:
         query = query.where(Application.status == status)
     enriched = [_enrich(a, session) for a in session.exec(query).all()]
-    # Pack 30.0: внутри urgent-группы — алфавит по applicant_name_native (case-insensitive).
     urgent = [d for d in enriched if d.get("is_urgent")]
-    rest   = [d for d in enriched if not d.get("is_urgent")]
+    ready  = [d for d in enriched if not d.get("is_urgent") and d.get("is_ready_for_pickup")]
+    rest   = [d for d in enriched if not d.get("is_urgent") and not d.get("is_ready_for_pickup")]
     urgent.sort(key=lambda d: (d.get("applicant_name_native") or "").casefold())
-    return urgent + rest
+    ready.sort(key=lambda d: (d.get("applicant_name_native") or "").casefold())
+    return urgent + ready + rest
 
 
 @router.get("/{app_id}")
@@ -625,6 +630,36 @@ def toggle_urgent(
         "application_urgent_toggled",
         f"is_urgent set to {new_value}",
         {"is_urgent": new_value},
+    )
+    session.commit()
+    session.refresh(app)
+    return _enrich(app, session)
+
+
+# ============================================================================
+# Pack 34.2 — флаг "Готово, можно забирать" (toggle)
+# ============================================================================
+
+@router.post("/{app_id}/toggle-ready")
+def toggle_ready_for_pickup(
+    app_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Переключает флаг is_ready_for_pickup. Заявки с готовыми документами
+    показываются ниже срочных (приоритет огня), но выше обычных.
+    Внутри ready-группы — алфавит ФИО."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    new_value = not bool(getattr(app, "is_ready_for_pickup", False))
+    app.is_ready_for_pickup = new_value
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id,
+        "application_ready_for_pickup_toggled",
+        f"is_ready_for_pickup set to {new_value}",
+        {"is_ready_for_pickup": new_value},
     )
     session.commit()
     session.refresh(app)

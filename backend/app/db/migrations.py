@@ -754,3 +754,29 @@ def apply_pack30_0_migration() -> None:
             "ON application (is_urgent)"
         ))
     print("[migration] Pack 30.0: application.is_urgent ready")
+
+
+# ============================================================================
+# Pack 34.2 — флаг is_ready_for_pickup на Application («Готово, можно забирать»)
+# ============================================================================
+
+def apply_pack34_2_migration() -> None:
+    """Pack 34.2 миграция:
+       - ALTER TABLE application ADD COLUMN is_ready_for_pickup BOOLEAN
+         NOT NULL DEFAULT FALSE
+       - CREATE INDEX ix_application_is_ready_for_pickup
+       Идемпотентна — IF NOT EXISTS на обоих шагах.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_ready_for_pickup BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_ready_for_pickup "
+            "ON application (is_ready_for_pickup)"
+        ))
+    print("[migration] Pack 34.2: application.is_ready_for_pickup ready")
