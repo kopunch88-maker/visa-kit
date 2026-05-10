@@ -5,35 +5,29 @@ Pack 18.3 — Контекст для DOCX-шаблона `npd_certificate_templ
 Намеренно отделён от основного `context.build_context()` — справке не нужны
 банковская выписка, курсы ЦБ, акты, договоры и прочая обвязка пакета.
 
-Pack 18.9.0 (свежие изменения):
+Pack 33.8 (10.05.2026):
+- _pick_ifns() получил новый Tier A: матч по IfnsOffice.coverage_keywords
+  (точные lowercase подстроки в applicant.home_address). Это позволяет точно
+  выбирать районную инспекцию по адресу без зависимости от случайных совпадений
+  слов. Старая логика Pack 31.1 (общие слова >=4 букв в IfnsOffice.address)
+  оставлена как Tier B fallback для записей без coverage_keywords.
+
+Pack 18.9.0:
 - _pick_mfc() теперь сначала ищет МФЦ с is_universal=True. Если такой найден —
-  возвращает его для ВСЕХ клиентов независимо от region_code. Это означает
-  что в справке у всех клиентов будет один и тот же московский МФЦ
-  (Новоясеневский просп. д.1), а варьироваться будут только staff_names.
-- Если is_universal-запись отсутствует в БД (флаг убрали или не было
-  миграции 18.9.0) — возвращается старое поведение по region_code.
+  возвращает его для ВСЕХ клиентов независимо от region_code.
 
-Pack 18.3.4 (свежие изменения):
-- Восстановлен auto-fill Pack 18.3.1 (видимо был потерян при переписываниях).
-  Если у applicant'а пустые inn_registration_date или inn_kladr_code — генерим
-  на лету и сохраняем в БД. Поддержка ручного ввода ИНН менеджером.
-- Логика даты НПД теперь использует submission_date (дату подачи в консул)
-  как базу, диапазон 120-210 дней (4-7 месяцев). Раньше было contract_sign_date
-  и 30-90 дней — этого было НЕДОСТАТОЧНО для критерия консула «3 месяца
-  самозанятости на дату подачи». Теперь критерий проходит с запасом 30 дней.
-- Логика идентична _synthetic_npd_registration_date в pipeline.py (один
-  алгоритм для двух точек входа: inn-suggest И генерация справки).
+Pack 18.3.4:
+- Восстановлен auto-fill (Pack 18.3.1).
+- Логика даты НПД использует submission_date как базу, диапазон 120-210 дней.
 
-Логика подбора ИФНС/МФЦ (без изменений):
-- Берём region_code = applicant.inn_kladr_code[:2]. Если пусто — fallback
-  на applicant.inn[:2]. Если и ИНН пуст — поднимаем ValueError.
-- IfnsOffice: WHERE region_code=... AND is_active=True, ORDER BY
-  is_default DESC, code → берём первую.
-- MfcOffice: список всех is_active в регионе. Детерминистично
-  applicant.id % len(list).
-- mfc.staff_names: детерминистично applicant.id % len(staff_names).
-- Если ИФНС или МФЦ для региона не найдены — fallback на регион '77' (Москва).
-- Если и в Москве пусто — критическая ошибка конфигурации.
+Логика подбора ИФНС (Pack 33.8):
+- Берём region_code = applicant.inn_kladr_code[:2] (где выдан ИНН).
+- Tier A: ищем non-default ИФНС в регионе с непустым coverage_keywords;
+  если ЛЮБАЯ keyword содержится в applicant.home_address.lower() —
+  возвращаем эту инспекцию. Точный матч по районам.
+- Tier B (fallback Pack 31.1): среди non-default ищем по общим словам
+  >=4 букв в IfnsOffice.address. Сохранён для обратной совместимости.
+- Tier C: default-first ordering (УФНС региона).
 """
 from __future__ import annotations
 
@@ -55,14 +49,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _format_date_short(d) -> str:
-    """date(2026, 4, 21) → '21.04.2026'."""
+    """date(2026, 4, 21) -> '21.04.2026'."""
     if not d:
         return ""
     return f"{d.day:02d}.{d.month:02d}.{d.year}"
 
 
 def _format_datetime_ru(dt) -> str:
-    """datetime(2026, 4, 21, 10, 4) → '21.04.2026, 10:04'."""
+    """datetime(2026, 4, 21, 10, 4) -> '21.04.2026, 10:04'."""
     if not dt:
         return ""
     return f"{dt.day:02d}.{dt.month:02d}.{dt.year}, {dt.hour:02d}:{dt.minute:02d}"
@@ -71,7 +65,6 @@ def _format_datetime_ru(dt) -> str:
 def _full_name_caps(applicant: Applicant) -> str:
     """
     Q6: фамилия + имя + отчество (если есть), всё ЗАГЛАВНЫМИ.
-    Если отчества нет — только фамилия + имя.
     """
     parts = [
         (applicant.last_name_native or "").strip(),
@@ -85,11 +78,8 @@ def _full_name_caps(applicant: Applicant) -> str:
 
 def _resolve_region_code(applicant: Applicant) -> str:
     """
-    Pack 18.3 Q1: «по ИНН и адресу». ИНН и адрес после Pack 18.1 синхронизированы,
-    поэтому берём из inn_kladr_code (там и есть регион ИНН).
-
+    Pack 18.3 Q1: «по ИНН и адресу». Берём из inn_kladr_code (там и есть регион ИНН).
     Если inn_kladr_code пустой — fallback на inn[:2].
-    Если ИНН тоже пустой — ValueError (вызывающий endpoint вернёт 422).
     """
     kladr = (applicant.inn_kladr_code or "").strip()
     if len(kladr) >= 2:
@@ -115,49 +105,78 @@ def _pick_ifns(
     applicant: Optional[Applicant] = None,
 ) -> Optional[IfnsOffice]:
     """
-    Q4 + Pack 31.1: подбор ИФНС с учётом города из home_address самозанятого.
+    Q4 + Pack 31.1 + Pack 33.8: подбор ИФНС с учётом адреса самозанятого.
 
-    Логика:
-    1. Если задан applicant с home_address — ищем в регионе non-default ИФНС
-       у которой адрес содержит общий город с адресом клиента (Сочи, Адлер,
-       Краснодар и т.д.). Это позволяет выдавать МИФНС №8 жителю Сочи вместо
-       дефолтной УФНС по Краснодарскому краю.
-    2. Если совпадения нет (или applicant не передан) — старая логика:
-       default-first, иначе первая по коду.
+    Tier A (Pack 33.8) — coverage_keywords:
+      Среди non-default ИФНС региона ищем такую, у которой ЛЮБАЯ из
+      coverage_keywords является подстрокой applicant.home_address.lower().
 
-    Возвращает None если в регионе вообще нет ИФНС.
+    Tier B (Pack 31.1, legacy) — общие слова >=4 букв в address.
+
+    Tier C-prime (Pack 33.8) — если в регионе РОВНО ОДНА non-default запись,
+      возвращаем её. Покрывает кейс «парадокс Ся Инь»: ИНН выдан в регионе
+      X, но home_address в другом субъекте — выбираем единственную МИФНС
+      региона X, а не общерегиональную УФНС-управление.
+
+    Tier C (fallback) — default-first ordering.
     """
-    # Pack 31.1: пытаемся сматчить по городу из home_address
+    # --- Tier A: coverage_keywords (Pack 33.8) ---
     if applicant and applicant.home_address:
         addr_lower = applicant.home_address.lower()
-        non_default = session.exec(
+        non_default = list(session.exec(
             select(IfnsOffice)
             .where(IfnsOffice.region_code == region_code)
             .where(IfnsOffice.is_active == True)  # noqa: E712
             .where(IfnsOffice.is_default == False)  # noqa: E712
             .order_by(IfnsOffice.code)
-        ).all()
+        ).all())
+
+        for ifns in non_default:
+            keywords = ifns.coverage_keywords or []
+            for kw in keywords:
+                if not kw:
+                    continue
+                kw_lower = kw.strip().lower()
+                if kw_lower and kw_lower in addr_lower:
+                    log.info(
+                        "_pick_ifns Pack 33.8 Tier A: matched %s by keyword %r in addr",
+                        ifns.short_name, kw_lower,
+                    )
+                    return ifns
+
+        # --- Tier B: legacy Pack 31.1 — общие слова >=4 букв в address ---
         for ifns in non_default:
             if not ifns.address:
                 continue
             ifns_addr_lower = ifns.address.lower()
-            # Извлекаем имя города (после "г." или ", " перед запятой)
-            # Простой матч: ищем общие "большие" слова >=4 букв
             for word in ifns_addr_lower.replace(",", " ").split():
                 w = word.strip(".").strip()
                 if len(w) < 4:
                     continue
-                # Скипаем общие предлоги/сокращения
                 if w in {"улица", "переулок", "проспект", "шоссе", "наб", "пер"}:
                     continue
                 if w in addr_lower:
                     log.info(
-                        "_pick_ifns Pack 31.1: matched %s by city marker %r in addr",
+                        "_pick_ifns Pack 31.1 Tier B: matched %s by city marker %r in addr",
                         ifns.short_name, w,
                     )
                     return ifns
 
-    # Fallback (старая логика): default-first, иначе первая по коду
+        # --- Tier C-prime (Pack 33.8): если в регионе ровно одна non-default ---
+        # запись, возвращаем её. Это покрывает «парадокс Ся Инь»: ИНН выдан
+        # в регионе X, но home_address в другом субъекте РФ. У нас в этом
+        # регионе X есть только одна специфическая МИФНС — она и должна быть
+        # выбрана вместо общерегиональной УФНС-управление.
+        # Москва (с 5+ non-default) НЕ затронута — там нужен точный keyword-матч.
+        if len(non_default) == 1:
+            log.info(
+                "_pick_ifns Pack 33.8 Tier C-prime: exactly one non-default in "
+                "region %s, returning %s without address match",
+                region_code, non_default[0].short_name,
+            )
+            return non_default[0]
+
+    # --- Tier C: fallback — default-first, иначе первая по коду ---
     stmt = (
         select(IfnsOffice)
         .where(IfnsOffice.region_code == region_code)
@@ -172,15 +191,8 @@ def _pick_mfc(
 ) -> Optional[MfcOffice]:
     """
     Pack 18.9.0: сначала ищем универсальный МФЦ (is_universal=True).
-    Если найден — возвращаем его независимо от region_code (один МФЦ для всех клиентов).
-
-    Если не найден — старая логика Pack 18.0:
-    Q2 — детерминистично по applicant.id % len(list). Если в регионе нет МФЦ — None.
-
-    Этот fallback оставлен на случай если is_universal-запись будет отключена
-    или удалена — система автоматически вернётся к региональному выбору.
+    Иначе — региональный выбор (Pack 18.0).
     """
-    # Pack 18.9.0: сначала ищем универсальный МФЦ
     universal_stmt = (
         select(MfcOffice)
         .where(MfcOffice.is_universal == True)  # noqa: E712
@@ -196,7 +208,6 @@ def _pick_mfc(
         )
         return universal
 
-    # Старая логика — региональный выбор
     stmt = (
         select(MfcOffice)
         .where(MfcOffice.region_code == region_code)
@@ -213,7 +224,6 @@ def _pick_mfc(
 def _pick_mfc_employee(mfc: MfcOffice, applicant_id: int) -> str:
     """
     Q3: детерминистично applicant.id % len(staff_names).
-    Если staff_names пустой — fallback на placeholder.
     """
     names = mfc.staff_names or []
     if not names:
@@ -234,24 +244,10 @@ def _ensure_inn_registration_date(
 ) -> date:
     """
     Pack 18.3.4: auto-fill inn_registration_date (поддержка ручного ввода ИНН).
-
-    Если менеджер ввёл ИНН руками (не через ✨ + Принять модалку), у applicant'а
-    inn_registration_date останется пустым. При первой генерации справки эта
-    функция:
-    1. Генерит дату по той же схеме что pipeline.py (Pack 18.3.4):
-       база = submission_date (или fallback на contract_sign_date+90 / today+30)
-       минус random(120..210) дней
-    2. Сохраняет в БД (session.commit) — повторные генерации справки дают
-       стабильную дату.
-    3. Если inn_source был None — ставит "manual".
-
-    Логика синхронизирована с _synthetic_npd_registration_date в pipeline.py.
-    Любые изменения в одной функции должны зеркалиться в другой.
     """
     if applicant.inn_registration_date is not None:
         return applicant.inn_registration_date
 
-    # Базовая дата — submission_date / contract_sign_date+90 / today()+30
     if application.submission_date is not None:
         base = application.submission_date
     elif application.contract_sign_date is not None:
@@ -266,15 +262,12 @@ def _ensure_inn_registration_date(
     log.info(
         "Pack 18.3.4: applicant id=%s has no inn_registration_date, deriving "
         "%s (base=%s, days_before=%s) and writing back to DB",
-        applicant.id,
-        derived,
-        base,
-        days_before,
+        applicant.id, derived, base, days_before,
     )
 
     applicant.inn_registration_date = derived
     if not applicant.inn_source:
-        applicant.inn_source = "manual"  # ИНН видимо ввёлся руками
+        applicant.inn_source = "manual"
     session.add(applicant)
     session.commit()
     session.refresh(applicant)
@@ -287,9 +280,8 @@ def _ensure_inn_kladr_code(
     session: Session,
 ) -> str:
     """
-    Pack 18.3.4 (восстановлено из 18.3.1): если inn_kladr_code пустой,
-    генерируем заглушку из inn[:2] + 11 нулей (валидный 13-значный KLADR
-    на уровне субъекта) и сохраняем в БД.
+    Pack 18.3.4: если inn_kladr_code пустой, генерируем заглушку из
+    inn[:2] + 11 нулей и сохраняем в БД.
     """
     existing = (applicant.inn_kladr_code or "").strip()
     if len(existing) >= 2:
@@ -306,8 +298,7 @@ def _ensure_inn_kladr_code(
     log.info(
         "Pack 18.3.4: applicant id=%s has no inn_kladr_code, deriving %s from "
         "inn prefix and writing back to DB",
-        applicant.id,
-        derived,
+        applicant.id, derived,
     )
 
     applicant.inn_kladr_code = derived
@@ -331,15 +322,6 @@ def build_npd_certificate_context(
     """
     Собирает context для DOCX-шаблона `npd_certificate_template.docx`.
 
-    Pack 18.3.4: автоматически дозаполняет inn_registration_date и
-    inn_kladr_code если они пустые (для сценариев ручного ввода ИНН).
-    Эти поля сохраняются обратно в БД при первой генерации.
-
-    Аргументы:
-        application — заявка
-        session — DB session
-        today — для тестов; в проде = date.today()
-
     Возвращает плоский dict с 4 ключами: applicant, certificate, ifns, mfc.
     """
     if today is None:
@@ -352,13 +334,8 @@ def build_npd_certificate_context(
         )
     applicant = session.get(Applicant, applicant_id)
     if applicant is None:
-        raise ValueError(
-            f"Applicant id={applicant_id} not found"
-        )
+        raise ValueError(f"Applicant id={applicant_id} not found")
 
-    # Pack 18.3.4: только inn и passport_number обязательны на входе.
-    # inn_registration_date и inn_kladr_code дозаполняются автоматически
-    # через _ensure_* функции.
     missing: list[str] = []
     if not applicant.inn:
         missing.append("inn")
@@ -370,17 +347,14 @@ def build_npd_certificate_context(
             f"certificate: {', '.join(missing)}. Run inn-suggest and fill passport first."
         )
 
-    # Pack 18.3.4: auto-fill недостающих полей с записью в БД
     inn_registration_date = _ensure_inn_registration_date(applicant, application, session)
     _ensure_inn_kladr_code(applicant, session)
 
     # ---- 1. Регион + ИФНС + МФЦ ----
     region_code = _resolve_region_code(applicant)
-    # Pack 31.1: передаём applicant для подбора по городу из home_address
     ifns = _pick_ifns(session, region_code, applicant)
     mfc = _pick_mfc(session, region_code, applicant_id)
 
-    # Fallback на Москву если в регионе пусто
     if ifns is None:
         log.warning(
             "build_npd_certificate_context: no IfnsOffice for region_code=%s, "
@@ -426,7 +400,6 @@ def build_npd_certificate_context(
     cert_number = cert_number % 1_000_000_000
 
     # ---- 4. Код документа удостоверения личности ----
-    # 21 = паспорт РФ, 10 = паспорт иностранного гражданина (Pack 18.3.1)
     nat = (applicant.nationality or "").upper()
     passport_code = "21" if nat == "RUS" else "10"
 

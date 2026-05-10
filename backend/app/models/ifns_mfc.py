@@ -1,10 +1,17 @@
 """
 Pack 18.0 — справочники ИФНС и МФЦ для генерации справки КНД 1122035.
+Pack 33.8 (10.05.2026) — добавлено поле coverage_keywords для точного
+подбора ИФНС по адресу клиента.
 
 FIX 2: region_code как str (varchar(2)), не int.
 Причина: коды субъектов РФ это идентификаторы с лидирующими нулями (02, 05, 09, 20),
 не числа для арифметики. В self_employed_registry.region_code тоже varchar(2).
 Чтобы JOIN'иться без кастингов — везде str.
+
+Pack 33.8: coverage_keywords — JSON-список lowercase подстрок которые если
+встречаются в applicant.home_address.lower(), значит этот ИФНС обслуживает
+данного клиента. Используется в _pick_ifns для точного подбора районной
+инспекции (вместо матча по словам ≥4 букв в address из Pack 31.1).
 """
 from __future__ import annotations
 
@@ -31,6 +38,22 @@ class IfnsOffice(SQLModel, table=True):
     address: Optional[str] = Field(default=None, max_length=500)
     is_default: bool = Field(default=False)
     is_active: bool = Field(default=True)
+
+    # Pack 33.8: список lowercase ключевых слов для подбора по home_address.
+    # Если applicant.home_address.lower() содержит ЛЮБУЮ из этих подстрок —
+    # эта инспекция матчится. Примеры:
+    #   ИФНС №13 САО Москвы:      ["костякова", "тимирязевск", "савёловск",
+    #                              "коптево", "аэропорт", "бескудниковский"]
+    #   ИФНС №27 ЮЗАО Москвы:    ["лазарева", "бутово", "академический",
+    #                              "зюзино", "котловка", "черёмушки"]
+    #   МИФНС №14 по РТ (Казань): ["казань", "вахитовский"]
+    # Пустой список или None означает что эта запись НЕ матчится по адресу
+    # (используется только default-fallback). Задаётся через миграцию или admin UI.
+    coverage_keywords: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default="[]"),
+    )
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
