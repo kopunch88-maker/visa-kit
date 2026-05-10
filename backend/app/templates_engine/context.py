@@ -11,6 +11,14 @@ Pack 33.1 (10.05.2026): добавлен алиас fmt_date_quoted_ru = fmt_dat
 Шаблоны avtodom/hayat использовали имя fmt_date_quoted_ru, которого не было
 в контексте — Jinja падал с UndefinedError. Формат идентичен fmt_date_long_ru:
 «05» сентября 2025 г. Алиас, не дубликат — единая точка правды для формата.
+
+Pack 33.2 (10.05.2026): NBSP (\u00A0) внутри длинных русских дат вместо обычных
+пробелов. Word при выравнивании по ширине (justify) разрывал строку между
+"2026" и "г.", из-за чего "г." уезжало на следующую строку. NBSP — стандартный
+типографский неразрывный пробел — Word гарантированно не разорвёт по нему.
+Затронуто 3 функции: _format_date_ru, fmt_date_long_ru, fmt_date_human_ru.
+fmt_date_quoted_ru — это алиас на fmt_date_long_ru, поэтому правка тоже
+автоматически применяется и к нему.
 """
 
 import re
@@ -33,13 +41,14 @@ from app.services.bank_statement_generator import (
 
 
 def _format_date_ru(d):
-    """04.05.2025 → '«04» мая 2025 г.'"""
+    """04.05.2025 → '«04»\u00a0мая\u00a02025\u00a0г.'  (Pack 33.2: NBSP внутри даты)"""
     if not d:
         return ""
     months = {1: "января", 2: "февраля", 3: "марта", 4: "апреля",
               5: "мая", 6: "июня", 7: "июля", 8: "августа",
               9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"}
-    return f"«{d.day:02d}» {months[d.month]} {d.year} г."
+    # Pack 33.2: NBSP (\u00a0) между всеми частями даты — Word не разорвёт по ним
+    return f"«{d.day:02d}»\u00a0{months[d.month]}\u00a0{d.year}\u00a0г."
 
 
 # ============================================================================
@@ -251,7 +260,12 @@ def fmt_date_ru(d: date | None) -> str:
 def fmt_date_long_ru(d: date | None) -> str:
     if d is None:
         return ""
-    return f'«{d.day:02d}» {_MONTHS_GENITIVE_RU[d.month - 1]} {d.year} г.'
+    # Pack 33.2: NBSP (\u00a0) между всеми частями даты вместо обычных пробелов.
+    # Word при выравнивании по ширине разрывал по обычному пробелу — например,
+    # "2026 г." могло превратиться в "2026" в конце строки и "г." в начале
+    # следующей. NBSP запрещает разрыв.
+    # Алиас fmt_date_quoted_ru = fmt_date_long_ru унаследует этот фикс автоматически.
+    return f'«{d.day:02d}»\u00a0{_MONTHS_GENITIVE_RU[d.month - 1]}\u00a0{d.year}\u00a0г.'
 
 
 # Pack 33.1: алиас для шаблонов avtodom/hayat где автор использовал имя
@@ -263,7 +277,8 @@ fmt_date_quoted_ru = fmt_date_long_ru
 def fmt_date_human_ru(d: date | None) -> str:
     if d is None:
         return ""
-    return f"{d.day} {_MONTHS_GENITIVE_RU[d.month - 1]} {d.year} года"
+    # Pack 33.2: NBSP (\u00a0) между частями даты — см. fmt_date_long_ru.
+    return f"{d.day}\u00a0{_MONTHS_GENITIVE_RU[d.month - 1]}\u00a0{d.year}\u00a0года"
 
 
 def fmt_money(amount: Decimal | int | float | None) -> str:
