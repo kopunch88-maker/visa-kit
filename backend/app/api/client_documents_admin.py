@@ -215,6 +215,10 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
     return result
 
 
+# Pack 34.1 — нормализация degree (EN→RU + инженер по коду ОКСО)
+from app.services.degree_mapper import normalize_degree, extract_specialty_code
+
+
 def _build_education_from_diploma(session: Session, application_id: int) -> Optional[dict]:
     docs = session.exec(
         select(ApplicantDocument)
@@ -226,11 +230,16 @@ def _build_education_from_diploma(session: Session, application_id: int) -> Opti
         p = doc.parsed_data or {}
         if not p:
             continue
+        # Pack 34.1 — нормализуем degree (EN→RU + инженерные специальности
+        # с кодом ОКСО 07-29 получают «Инженер» вместо «Специалист»)
+        specialty_raw = p.get("specialty")
+        specialty_code = extract_specialty_code(specialty_raw)
+        degree_normalized = normalize_degree(p.get("degree"), specialty_code)
         record = {
             "institution": p.get("institution"),
             "graduation_year": p.get("graduation_year"),
-            "degree": p.get("degree"),
-            "specialty": p.get("specialty"),
+            "degree": degree_normalized,
+            "specialty": specialty_raw,
         }
         cleaned = {k: v for k, v in record.items() if not _is_empty(v)}
         if cleaned:

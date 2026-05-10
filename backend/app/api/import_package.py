@@ -1106,19 +1106,30 @@ def collect_ocr_data(documents: List["ApplicantDocument"]) -> dict:
     return result
 
 
+# Pack 34.1 — нормализация degree (EN→RU + инженер по коду ОКСО)
+from app.services.degree_mapper import normalize_degree, extract_specialty_code
+
+
 def build_education_from_diploma(documents: List["ApplicantDocument"]) -> Optional[dict]:
-    """Строит запись education из распознанного диплома."""
+    """Строит запись education из распознанного диплома.
+
+    Pack 34.1: нормализует degree через degree_mapper (EN→RU + инженерные
+    специальности дают «Инженер» вместо «Специалист»).
+    """
     for doc in documents:
         if (doc.doc_type == ApplicantDocumentType.DIPLOMA_MAIN
                 and doc.status == ApplicantDocumentStatus.OCR_DONE):
             p = doc.parsed_data or {}
             if not p:
                 continue
+            specialty_raw = p.get("specialty")
+            specialty_code = extract_specialty_code(specialty_raw)
+            degree_normalized = normalize_degree(p.get("degree"), specialty_code)
             record = {
                 "institution": p.get("institution"),
                 "graduation_year": p.get("graduation_year"),
-                "degree": p.get("degree"),
-                "specialty": p.get("specialty"),
+                "degree": degree_normalized,
+                "specialty": specialty_raw,
             }
             cleaned = {k: v for k, v in record.items() if not _is_empty(v)}
             if cleaned:

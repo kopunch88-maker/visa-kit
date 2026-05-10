@@ -958,9 +958,16 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                         color: "var(--color-text-primary)",
                       }}
                     >
-                      <option value="Бакалавр">Бакалавр</option>
+                      {/* Pack 34.1 — расширенный список степеней/квалификаций.
+                          «Инженер» — фактическая квалификация в большинстве
+                          российских инженерных дипломов (~80% по словам Кости).
+                          «Кандидат наук» — для PhD из OCR. */}
+                      <option value="Инженер">Инженер</option>
                       <option value="Специалист">Специалист</option>
+                      <option value="Бакалавр">Бакалавр</option>
                       <option value="Магистр">Магистр</option>
+                      <option value="Кандидат наук">Кандидат наук</option>
+                      <option value="Среднее специальное">Среднее специальное</option>
                     </select>
                   </div>
                   <div>

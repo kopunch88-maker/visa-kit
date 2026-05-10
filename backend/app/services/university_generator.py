@@ -30,6 +30,8 @@ from app.models.university import (
     PositionSpecialtyMap,
     UniversitySuggestion,
 )
+# Pack 34.1 — определяем инженерные специальности по коду ОКСО
+from app.services.degree_mapper import is_engineering_specialty_code
 
 log = logging.getLogger(__name__)
 
@@ -317,7 +319,14 @@ def suggest_education(
     )
 
     # 4. Собираем результат
-    degree = LEVEL_NAMES.get(specialty.level, "Бакалавр")
+    # Pack 34.1: для инженерных специальностей (код ОКСО 07-29) вместо
+    # «Бакалавр»/«Специалист» возвращаем «Инженер» — соответствует фактической
+    # квалификации в большинстве российских инженерных дипломов.
+    base_degree = LEVEL_NAMES.get(specialty.level, "Бакалавр")
+    if is_engineering_specialty_code(specialty.code):
+        degree = "Инженер"
+    else:
+        degree = base_degree
     specialty_text = f"{specialty.code} {specialty.name}"
 
     log.info(
