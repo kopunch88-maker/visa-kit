@@ -8,7 +8,7 @@
 > 5. **Перед SQL** — Правило 20 (dump схемы таблицы).
 > 6. **Финальная проверка DOCX** — ВСЕГДА в Word, не в LibreOffice (Правило 25).
 
-> **Дата последнего обновления:** 07.05.2026 (вечер, Pack 28 Часть 1: пул чистых самозанятых через rmsp-pp + EGRUL + NPD; +2 fix'а, +4 инцидента, +4 правила, переписан раздел 3.3)
+> **Дата последнего обновления:** 10.05.2026 (Сессия Pack 33.x: 10 паков задеплоено за день — page-break контрактов, NBSP в датах, honest 422 в /regen-work-history, Position seed для 21 specialty, LegendCompany seed для 22 specialty, динамические duties в employer_letter и актах, citizen_phrase в актах, IFNS coverage_keywords + 7 новых ИФНС записей; +Инциденты 21-23, +Правила 40-43)
 
 ---
 
@@ -190,6 +190,77 @@ Pack 18.3.4 ставил в справку КНД 1122035 синтетическ
 - Гибрид B+D (ставим B сразу, постепенно уточняем D в фоне)
 
 Пока дата остаётся синтетической как в Pack 18.3.4. Это безопасно потому что Часть 2 ещё не активирована — справки идут по legacy.
+
+---
+
+## Сессия 09.05.2026 — фикс 404 на «Подобрать опыт работы»
+
+**Контекст проблемы:**
+Костя нажал кнопку ✨ «Подобрать опыт работы» в `ApplicantDrawer` для заявки `?id=23` (Шахин Исмаил, Турция) — фронт показал «Не удалось подобрать опыт работы: 404: {"detail":"Not Found"}». По PROJECT_STATE Pack 19.1a (04.05.2026) и Pack 20.3 (05.05.2026) числились как «работают», но фактически с момента Pack 19.1a и до этой сессии в проде **была дырка**.
+
+**Расследование (~10 минут):**
+1. Через `project_knowledge_search` нашёл `frontend/lib/api.ts:regenerateWorkHistory()` — она бьёт в `POST /api/admin/applicants/{id}/regen-work-history`.
+2. Проверка через https://visa-kit-production.up.railway.app/docs (Ctrl+F `regen-work-history`): **0 совпадений**.
+3. Анализ `backend/app/api/inn_generation.py`: импорт `from app.services.work_history_generator import suggest_work_history` стоит на строке 75, но `@router.post("/{applicant_id}/regen-work-history", ...)` обёртки **нет**. В файле всего 3 endpoint'а: `inn-suggest`, `inn-accept`, `regen-address` (Pack 18.8). Endpoint забыли добавить ещё в Pack 19.1a.
+
+| Pack | Что | Результат |
+|---|---|---|
+| **30.0** | Точечная правка `backend/app/api/inn_generation.py`: добавлен импорт `WorkHistorySuggestion` в блок `from app.models import (...)` (модель уже была в `__all__`), дописан endpoint-обёртка `@router.post("/{applicant_id}/regen-work-history", response_model=WorkHistorySuggestion, ...)` в стиле соседнего `regen_address` (тот же `Depends(get_session)` + `_user=Depends(require_manager)`, 404 если applicant не найден, 422 с понятным сообщением если сервис вернул `None`). Сам сервис `suggest_work_history()` НЕ модифицирован. | ✅ В проде |
+
+**Применено через `apply_pack30_0.ps1`** (полная замена файла из template, бэкап в `.bak_pre_pack30_0_<timestamp>`, post-write verification по marker'у `# Pack 30.0 (09.05.2026)`).
+
+**Smoke-test пройден:** Костя зашёл в admin UI на applicant'е id=23, нажал ✨ «Подобрать опыт работы» — endpoint вернул `WorkHistorySuggestion` с записями.
+
+**Главные итоги 09.05.2026:**
+1. **Кнопка работает впервые с момента Pack 19.1a** (04.05.2026 — около 5 дней лежала сломанной). PROJECT_STATE был ошибочно помечен «работает» — на деле smoke-тестировали только сервисный слой через Python REPL/script, без HTTP-вызова через UI. Это породило Инцидент 20 и Правило 38.
+2. **Workflow выдачи команд уточнён:** в командах для копирования больше никаких `<you>` / `<username>` — только `$env:USERPROFILE`, `$PSScriptRoot`, реальные жёсткие пути или относительные от `D:\VISA\visa_kit`. PowerShell честно ругается «недопустимые знаки» на любые `<`/`>`.
+3. **`.ps1` патчер этого пака сделан в стиле Pack 29.4:** запуск одной командой без `-DryRun`/`-Apply` флагов, план + `Read-Host "Apply patch? Type 'yes'"` интерактивно, идемпотентность через marker.
+
+## Сессия 10.05.2026 — IFNS coverage, динамические duties в шаблонах, PR-Manager support, cleanup мусора в репо (10 паков за день)
+
+**Контекст:** Шёл прогон с применительно к новому клиенту Ся Инь (PR-Manager из КНР, заявка id=26). Всплыли наследия Алиева-геодезиста в нескольких шаблонах + дырки в seed-данных + проблема с однотипной УФНС для всех клиентов в каждом регионе.
+
+| Pack | Что | Результат |
+|---|---|---|
+| **33.0** | Page-break перед «Адреса и реквизиты Сторон» в контрактах через runtime postprocess в `_apply_page_break_before_requisites` в `docx_renderer.py:render_contract`. Не правит шаблоны, не риск регрессий. | ✅ В проде |
+| **33.1** | Алиас `fmt_date_quoted_ru = fmt_date_long_ru` в `context.py`. Фикс 500 у avtodom/hayat договоров где LLM-выписанный per-company шаблон ссылался на несуществующее имя. | ✅ В проде |
+| **33.2** | NBSP (`\u00A0`) внутри Russian long-form дат вместо обычных пробелов. Word justify больше не разрывает «2026 г.» через строку. | ✅ В проде |
+| **33.3** | (1) Honest 422 в `/regen-work-history` endpoint — 4 различные причины None теперь имеют свои human-readable сообщения. (2) PR specialty seed: 22 LegendCompany под код 42.03.01 в 7 регионах. | ✅ В проде |
+| **33.4** + 33.4.1 + 33.4.2 | Position seed для 21 осиротевшей специальности (Middle level, 7 duties каждая). Два hotfix: NOW()/NOW() для created_at/updated_at + явный profile_description (NOT NULL без DB DEFAULT — см. Инцидент 21). Итог: 21 Position row, осиротевших специальностей с 22 до 1. | ✅ В проде |
+| **33.5** | LegendCompany seed для 22 осиротевших специальностей. 154 записи (22 × 7: Москва=3, СПб=2, Татарстан=1, Краснодар=1). Total `legend_company`: 71 base + 22 PR + 154 = **247**. Все 30 специальностей покрыты компаниями. | ✅ В проде |
+| **33.6** | Динамические duties в `employer_letter_template.docx`. 11 захардкоженных абзацев P8-P18 геодезиста → Jinja for-loop `{%p for duty in position.duties or [] %}{{ duty }}{%p endfor %}`. SHA256 идемпотентность в патчере. | ✅ В проде |
+| **33.6.1** | Костя руками в Word поправил 5 per-company договоров (buki_vedi, factor_stroy, hayat, king_david, kns_grupp) + ещё мелочёвка в employer_letter. Push через `git add -A` случайно собрал 23 stray файла. | ✅ В проде, но потянуло 33.6.2 |
+| **33.6.2** | Cleanup 23 stray paths из git index. 22 удалены через `git rm --cached --pathspec-from-file=...` (1 кириллический файл оказался untracked). `.gitignore` расширен. См. Инциденты 22-23 для двух гнилых PowerShell-моментов. | ✅ В проде |
+| **33.7** | `act_template.docx`: те же 11 hardcoded duty-абзацев P9-P19 → Jinja for-loop. **Плюс** P6 преамбулы: «Г-н республики {{ applicant.nationality_ru_genitive }}» + «именуемый» → `{{ applicant.citizen_phrase }}` + `именуем{{ applicant.named_suffix }}` (тот же фикс что в договорах Pack 8.5). E2E проверено на RUS М, CHN Ж, TUR М. Один шаблон используется для всех 3 актов в пакете. | ✅ В проде |
+| **33.8** | IFNS coverage_keywords — новая JSONB колонка в `ifns_office` для точного матчинга районной инспекции по `applicant.home_address`. Новый `_pick_ifns` с 4 уровнями: Tier A (keywords) → Tier B (legacy слова ≥4 букв) → Tier C-prime (одна не-default в регионе) → Tier C (default-first). Seed: UPDATE 3 существующих (Сочи 2367, Москва 7728, СПб 7841) + INSERT 7 новых (Казань 1655 + Ростов 6194 + Москва 7713/7715/7724/7727/7731). Покрыло все 18 активных клиентов на 100% (локальный тест 16/16). | ✅ В проде |
+
+**Главные итоги 10.05.2026:**
+
+1. **Ся Инь PR-Manager unblocked.** Был блокером с воскресенья — её documenта генерировались с обязанностями геодезиста и неправильной преамбулой «Г-н республики». Теперь:
+   - Договор → корректная преамбула «Гражданка Китайской Народной Республики Ся Инь, именуемая...» (Pack 8.5 давно)
+   - Письмо работодателя → 7 PR-обязанностей вместо 11 геодезических (Pack 33.6)
+   - 3 акта → корректная преамбула + корректные duties (Pack 33.7)
+   - CV → DN-наниматель + правильные duties (Pack 25.7 + 20.3 давно)
+   - work_history через ✨ → 22 реалистичных PR-компании на выбор (Pack 33.3)
+   - Справка НПД → «Межрайонная ИФНС России №14 по Республике Татарстан» через Tier C-prime (Pack 33.8)
+
+2. **Captured legacy от Алиева — 3 точки.** В разных шаблонах разными способами просочились данные первого клиента (РУС М геодезист в Сочи):
+   - employer_letter_template.docx — 11 hardcoded duty-абзацев → Pack 33.6
+   - act_template.docx — те же 11 + hardcoded «Г-н республики» + male suffix → Pack 33.7
+   - contracts/by_company/* — «Г-н республики» (фиксили Pack 8.5)
+   - **invoice_template.docx чист** — не было захардкоженного блока duties, только `{{ position.title_ru_genitive }}` placeholder
+
+3. **IFNS architecture перешла с «общерегиональная УФНС-управление» на «районная МИФНС учёта»**. До 33.8 у 16/22 московских клиентов в справке стояла одна и та же УФНС России по г. Москве (управление, не инспекция учёта). Теперь — реальная районная по адресу проживания. Это **юридически правильно** и не насторожит UGE.
+
+4. **Cleanup сессии 33.6.2 — git hygiene.** 22 stray файла (`apply_pack*.ps1`, `*.bak_pre_pack*`, `CLAUDE.md.bak*`, `PROJECT_STATE.md.bak*`, `local_pool_filler.py`, `snrip_recon.py`) вычищены из git index. `.gitignore` расширен 12+ паттернами чтобы такое не повторялось. После Pack 33.7 `git status` показал ровно один modified file — впервые за неделю работы.
+
+5. **Push-to-prod продолжает работать стабильно.** За день 10 коммитов, 0 откатов, 0 регрессий. Auto-deploy `.ps1` через Downloads (Правило 34) + миграции через ad-hoc Python launcher против Railway switchyard proxy — связка отработала на потоке.
+
+**База на конец сессии (изменения от 33.x):**
+- `position`: 28 базовых (Pack 20.x) + 21 новых из 33.4 + manual PR id=45 = **~50 строк**
+- `legend_company`: 71 base + 22 PR (33.3) + 154 (33.5) = **247 строк**
+- `ifns_office`: 11 base (Pack 18.0 + Pack 31.0) + 7 новых (33.8) = **18 строк**, из них 9 с непустыми `coverage_keywords`
+- `specialty`: 30 строк, все имеют хотя бы одну Position и хотя бы 4 LegendCompany
 
 <a id="архитектура"></a>
 
@@ -1107,6 +1178,218 @@ if ($output -match "MARKER_OK") {
 
 Уникальный маркер вроде `=== PACK28_MIG_OK ===` точно не появится в логах других миграций.
 
+### Правило 38 — Smoke-test нового endpoint'а: всегда `/docs` + клик в UI
+
+**Что:** когда Pack добавляет новый HTTP endpoint — тест считается пройденным **только если**:
+1. Открыли `https://visa-kit-production.up.railway.app/docs`, нашли новый роут в Swagger (Ctrl+F).
+2. Сделали реальный клик в UI и видели зелёный ответ (или хотя бы 200 в DevTools Network).
+
+**Что НЕ считается smoke-тестом:**
+- ❌ Запуск сервисной функции через `python -c "from app.services... import foo; foo(...)"`
+- ❌ `pytest` (которого тут и нет)
+- ❌ `from app.main import app; print('OK')` import-test — он проверяет что модуль импортируется, не что endpoint зарегистрирован
+- ❌ Запись в PROJECT_STATE «работает в проде» на основе того что **импорт** в файле endpoint'а присутствует
+
+**Почему важно:** В этом проекте такой паттерн ловит инциденты подсекции «endpoint забыли зарегистрировать»:
+- **Инцидент 12** (Pack 27.0 Stage A) — endpoints не создались, кнопка `405 Method Not Allowed`
+- **Инцидент 20** (Pack 19.1a/20.3) — endpoint забыли с самого начала, **5 дней** в проде висел 404
+
+В обоих случаях импорт helper'ов / сервисов в файле уже стоял, поэтому проверка «из чата» через grep по импортам давала ложно-позитивный результат. Реальная регистрация endpoint'а проверяется только через Swagger или клик.
+
+**Шаблон проверки в конце каждого Pack-а:**
+```
+1. patch применён → git push → ждём ~2 мин Railway rebuild
+2. https://visa-kit-production.up.railway.app/docs → Ctrl+F новый роут
+3. Если есть → зайти в admin UI → жмякнуть кнопку → DevTools Network проверить 200
+4. Только после этого пишем в PROJECT_STATE «✅ В проде»
+```
+
+Эта проверка занимает 30 секунд и стоит того.
+
+### Правило 39 — Команды для пользователя: реальные пути, без `<placeholder>`, ps1 в стиле проекта
+
+**Что:** PowerShell-команды для копирования в терминал должны быть рабочими **из коробки**, без угловых-скобочных плейсхолдеров вроде `<you>`, `<username>`, `<your-folder>`. PowerShell честно ругается «**Путь содержит недопустимые знаки**» на любые `<` и `>`, и пользователь застревает.
+
+**Правильно:**
+```powershell
+cd $env:USERPROFILE\Downloads          # PowerShell сам подставит юзера
+cd D:\VISA\visa_kit                    # жёсткий путь, известный заранее
+```
+
+**Неправильно:**
+```powershell
+cd C:\Users\<you>\Downloads            # упадёт с "недопустимые знаки"
+cd C:\Users\<username>\Downloads       # то же самое
+```
+
+**Дополнительно про `.ps1` патчеры:**
+- Стиль проекта (Pack 29.4 как референс): запуск **одной командой без флагов**:
+  ```powershell
+  cd $env:USERPROFILE\Downloads
+  Unblock-File .\apply_pack30_0.ps1
+  .\apply_pack30_0.ps1
+  ```
+- НЕ требовать `-DryRun` / `-Apply` параметров если этого специально не нужно. Workflow Кости заточен на одну команду; план + подтверждение делать через `Read-Host` интерактивно.
+- Связь с Правилом 35 (UTF-8 BOM в `.ps1`) — эти два работают в паре: 35 защищает от cp1251-парсинга PowerShell, 39 защищает от того что пользователь вообще не сможет запустить даже корректный скрипт из-за placeholder'а в команде.
+
+## Правила Pack 33 (40-43) — НОВЫЕ 10.05.2026
+
+### 🔥 Правило 40 — `git add -A` категорически ЗАПРЕЩЁН если в `git status` есть untracked мусор
+
+**Корень:** Pack 33.6.1 (10.05.2026) — Костя делал commit изменений 5 per-company договоров и сделал `git add -A` для собирания всех правок. Git собрал не только намеренные правки, но и **23 stray файла** в корне репо: `apply_pack*.ps1` старые, `*.bak_pre_pack*` бэкапы, `CLAUDE.md.bak`, `PROJECT_STATE.md.bak_20260507_*`, `local_pool_filler.py`, `snrip_recon.py` и т.п. Все они закоммитились в один коммит. Repo раздулся, чувствительные backup'ы пошли в публичную истори[ю.
+
+**Правильный workflow:**
+```powershell
+# Перед коммитом ВСЕГДА сначала:
+git status        # посмотреть что untracked
+# Если untracked мусор есть — ИЛИ удалить локально ИЛИ добавить в .gitignore
+# Только потом add'ить точечно:
+git add path/to/file1.docx path/to/file2.py
+# НЕ использовать:
+# git add .
+# git add -A
+```
+
+**Связь с Инцидентом 22-23:** очищать постфактум через `git rm --cached --pathspec-from-file=...` можно, но это уже отдельный fix-Pack (Pack 33.6.2). На Windows PowerShell 5.1 + кириллических filename + cp1251 console encoding — это нетривиально (см. Правило 41).
+
+**Профилактика:** `.gitignore` после Pack 33.6.2 содержит паттерны `apply_pack*.ps1`, `*.bak_pre_pack*`, `CLAUDE.md.bak*`, `PROJECT_STATE.md.bak*`, `**/PATCH_*.md`, `cleanup_pack*.ps1`. Если эти паттерны пропали — восстановить и закоммитить НЕМЕДЛЕННО.
+
+### 🔥 Правило 41 — PowerShell 5.1 + UTF-8: `[Console]::OutputEncoding` ОБЯЗАТЕЛЬНО, через `New-Object` (НЕ `::new()`)
+
+**Симптом:** скрипт работает идеально с ASCII-путями, но падает или возвращает нули на путях с кириллицей / при чтении `git ls-files` через файловый редирект.
+
+**Корень:** на Windows PowerShell 5.1 (Windows 10/11 builtin) есть три gotcha:
+
+1. **Файловый редирект `>` mangles UTF-8.** `git ls-files -z > $file` прогоняет stdout через нативную консольную кодировку (cp866/cp1251 на ru-Windows). UTF-8 байты искажаются. Чтение файла как UTF-8 даёт неверные строки.
+   ```powershell
+   # ПЛОХО (Pack 33.6.2 v2-v3 — давало 0 matches на 23 path):
+   git ls-files -z > $tempFile
+   $bytes = [System.IO.File]::ReadAllBytes($tempFile)
+   $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+   
+   # ХОРОШО (Pack 33.6.2 v4):
+   $oldEnc = [Console]::OutputEncoding
+   [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+   try {
+       $all_tracked = git ls-files    # прямой capture в переменную
+   } finally {
+       [Console]::OutputEncoding = $oldEnc
+   }
+   ```
+
+2. **Generic constructor syntax `[Type[T]]::new(args)` — это PowerShell 7+.** PS 5.1 о нём не знает. Использовать `New-Object`:
+   ```powershell
+   # ПЛОХО (PS 7+ only):
+   $set = [System.Collections.Generic.HashSet[string]]::new($args, [StringComparer]::Ordinal)
+   $enc = [System.Text.UTF8Encoding]::new($false)
+   
+   # ХОРОШО (PS 5.1+):
+   $enc = New-Object System.Text.UTF8Encoding $false
+   # Для HashSet вообще лучше избежать — используй -contains (см. ниже)
+   ```
+
+3. **HashSet через `-contains` (PS 5.1 friendly).** Если нужен fast lookup в массиве — оператор `-contains` работает с PS 2.0, без generic-конструкторов:
+   ```powershell
+   # Заменяет HashSet.Contains():
+   $found = @($PathsToRemove | Where-Object { $all_tracked -contains $_ })
+   ```
+
+**Проверка для авто-сборщика `.ps1` (build-скрипт):**
+```python
+# Перед выпуском проверить что в коде .ps1 (не в комментариях) нет ::new(
+import re
+text = open('output.ps1', 'rb').read()[3:].decode('utf-8')
+code_lines = [l for l in text.split('\n') if not l.strip().startswith('#')]
+code = '\n'.join(code_lines)
+assert '::new(' not in code, "PS 7+ syntax leak — replace with New-Object"
+assert '-contains' in code or 'HashSet' not in code  # HashSet only if needed
+```
+
+### 🔥 Правило 42 — DOCX шаблоны: первый клиент оставляет следы в нескольких местах
+
+**Корень:** Шаблоны DOCX часто создаются «с реального документа первого клиента» (Алиев Е.К., RUS М, геодезист в Сочи). При шаблонизации параметризуют **очевидные** поля (имена, даты, числа), но оставляют **неочевидные**:
+
+- Hardcoded списки обязанностей (P9-P19 в employer_letter и act — по 11 геодезических фраз)
+- Hardcoded «Г-н республики {{ nationality }}» в преамбуле (нелепо для РФ, не учитывает род)
+- Hardcoded суффикс «именуемый» (только мужской род)
+- Hardcoded адрес/реквизиты ИФНС/МФЦ внутри текста (а не через `{{ ifns.full_name }}` плейсхолдер)
+
+**Цена ошибки:** ~6 паков потребовалось чтобы найти и починить все 3 точки (Pack 8.5 — citizen_phrase в договорах, Pack 33.6 — duties в employer_letter, Pack 33.7 — duties + citizen_phrase в актах).
+
+**Профилактика при добавлении/правке шаблона:**
+
+1. **Grep шаблона ПЕРЕД деплоем** на типичные «следы первого клиента»:
+   ```powershell
+   $tpl = "templates\docx\<new_template>.docx"
+   Copy-Item $tpl "$env:TEMP\check.zip" -Force
+   Expand-Archive "$env:TEMP\check.zip" "$env:TEMP\check_unpack" -Force
+   $xml = Get-Content "$env:TEMP\check_unpack\word\document.xml" -Raw -Encoding utf8
+   
+   # Опасные паттерны (Алиев + геодезист):
+   $patterns = @(
+       'Алиев', 'Елшад', 'геодез', 'камеральн', 'отрисовк',
+       'инженерно-топограф', 'аэрофотос', 'согласовател',
+       'Г-н республики', 'именуемый', 'Азербайджан'
+   )
+   foreach ($p in $patterns) {
+       $matches = [regex]::Matches($xml, $p)
+       if ($matches.Count -gt 0) {
+           Write-Host "[WARN] hardcoded '$p' found $($matches.Count) times" -ForegroundColor Yellow
+       }
+   }
+   ```
+
+2. **Сравнение шаблонов между собой.** Если в репо есть несколько связанных шаблонов (например `employer_letter`, `act`, `contract`) — найденный hardcoded паттерн в одном **почти наверняка** есть в других.
+
+3. **E2E тест на 3+ комбинациях** перед деплоем шаблона:
+   - RUS мужчина (как первый клиент, baseline)
+   - Иностранец мужчина (например CHN, проверяем citizen_phrase)
+   - Иностранец женщина (например TUR, проверяем именуемая/named_suffix)
+   
+   Если все 3 рендерятся семантически корректно — шаблон чист.
+
+**Связь с Правилом 28 (DOCX hardcode перед фиксом кода) и Правилом 18 (глобальный grep ПЕРЕД breaking changes).**
+
+### 🔥 Правило 43 — `INSERT` raw SQL: для NOT NULL колонок ВСЕГДА явно перечислять server defaults
+
+**Корень:** Pack 33.4 (10.05.2026) — попытка seed'ить 21 новую Position строку через `INSERT INTO position (...) VALUES (...)`. Перечислили основные колонки (title_ru, primary_specialty_id, level, etc.). Миграция упала с 3 разных ошибок подряд: `NOT NULL constraint violated` для `created_at`, `updated_at`, `profile_description`.
+
+**Почему:** SQLModel/SQLAlchemy на уровне **Python-модели** объявляет `default_factory=datetime.utcnow` и подобные defaults. Но эти defaults применяются **только** когда ORM делает `session.add(obj)` + `session.commit()`. При **raw SQL** `INSERT` через `conn.execute(text("INSERT ..."))` — Python-defaults не применяются. БД ожидает что значение придёт от SQL или от `DEFAULT` в `CREATE TABLE`. Если DDL не объявил `DEFAULT NOW()` на этой колонке (как в position table), а только `NOT NULL` — INSERT упадёт.
+
+**Двойственность сравнима с `legend_company`** где DDL содержит `created_at TIMESTAMP NOT NULL DEFAULT NOW()` — там же raw SQL INSERT работает без явного timestamp. То есть **поведение зависит от того что в схеме БД, а не от Python-модели**.
+
+**Правильный паттерн для raw SQL миграций:**
+
+```python
+# ПЛОХО (упадёт на position):
+conn.execute(text(
+    "INSERT INTO position (title_ru, primary_specialty_id, level) "
+    "VALUES (:t, :s, :l)"
+), {...})
+
+# ХОРОШО (явно всё):
+conn.execute(text(
+    "INSERT INTO position "
+    "(title_ru, primary_specialty_id, level, "
+    " profile_description, "      # NOT NULL без DB DEFAULT
+    " created_at, updated_at) "   # NOT NULL без DB DEFAULT
+    "VALUES "
+    "(:t, :s, :l, "
+    " :pd, "
+    " NOW(), NOW())"
+), {"t": ..., "s": ..., "l": ..., "pd": "fallback profile description"})
+```
+
+**Связь с Правилом 20 (dump схемы перед SQL).** Перед raw SQL INSERT — `\\d <table>` в psql или `DESCRIBE <table>` (или вытащить через `information_schema.columns`), посмотреть какие колонки `NOT NULL` и есть ли у них `column_default`. Те у которых `column_default IS NULL` И `is_nullable='NO'` — те **обязательно** перечислять в INSERT.
+
+**Дополнительно — diagnostic SQL для будущих миграций:**
+```sql
+SELECT column_name, is_nullable, column_default, data_type
+FROM information_schema.columns
+WHERE table_name = 'position'  -- или другая таблица
+ORDER BY ordinal_position;
+```
+
 
 ## DOCX-уроки (специально для Pack 16/20/25)
 
@@ -1316,6 +1599,50 @@ LLM-pipeline берёт русский CV и:
    - При permanent delete: R2 файлы (3 типа) + 7 связанных таблиц + сама application; applicant остаётся
    - После удаления в admin URL автоматически сбрасывается, выбирается первая активная заявка
 ✅ Git репо чистый — `.gitignore` 40+ паттернов, мусорные PROJECT_STATE копии не коммитятся
+✅ **Pack 30.0 — кнопка ✨ «Подобрать опыт работы» в ApplicantDrawer**:
+   - Backend endpoint `POST /admin/applicants/{id}/regen-work-history` зарегистрирован в `inn_generation.py` (раньше был 404, дырка с Pack 19.1a)
+   - Возвращает `WorkHistorySuggestion` с 1-3 записями work_history, заполненный duties (Pack 20.3 snapshot из Position)
+   - Сервис `suggest_work_history()` остался без изменений — Pack 30.0 — только endpoint-обёртка
+   - Frontend `regenerateWorkHistory()` без изменений (URL и сигнатура совпали, как и было задумано в Pack 19.1a)
+   - Smoke-test: верифицировано **HTTP-вызовом через UI** (не только сервисным слоем — см. Инцидент 20 почему это важно)
+✅ **Pack 33.0 — page-break перед «Адреса и реквизиты Сторон» в контрактах**:
+   - Runtime postprocess в `_apply_page_break_before_requisites` в `docx_renderer.py:render_contract`
+   - Не правит шаблоны, не требует изменений per-company шаблонов
+✅ **Pack 33.1 — алиас `fmt_date_quoted_ru`** в `context.py` — починен 500 у avtodom/hayat договоров
+✅ **Pack 33.2 — NBSP (`\u00A0`) в long-form датах** — Word justify больше не разрывает «2026 г.» через строку
+✅ **Pack 33.3 — honest 422 в `/regen-work-history` + PR specialty seed (22 PR-агентства)**:
+   - Endpoint возвращает 4 различные human-readable причины None (нет specialty, нет компаний, нет CareerTrack, etc.)
+   - 22 LegendCompany под код 42.03.01 (PR/Реклама и связи с общественностью) в 7 регионах
+✅ **Pack 33.4 — Position seed (21 specialty × Middle с реалистичными duties/tags/salary)**:
+   - 21 новая Position строка, специальности без должностей сократились с 22 до 1
+   - Hotfixes 33.4.1/33.4.2 для NOT NULL колонок без DB DEFAULT (см. Инцидент 21 + Правило 43)
+✅ **Pack 33.5 — LegendCompany seed для 22 specialty (154 фейковых компании в 4 регионах)**:
+   - Total `legend_company`: 71 base + 22 PR + 154 = **247 строк**
+   - Все 30 specialties покрыты ≥4 фейковыми компаниями в Москве/СПб/Татарстане/Краснодаре
+✅ **Pack 33.6 — динамические duties в `employer_letter_template.docx`**:
+   - 11 захардкоженных абзацев P8-P18 геодезиста → Jinja for-loop по `position.duties`
+   - Письмо корректно рендерится для любой специальности (PR Manager, журналист, инженер и т.д.)
+✅ **Pack 33.6.2 — cleanup 22 stray files + расширение `.gitignore`**:
+   - `apply_pack*.ps1`, `*.bak_pre_pack*`, `CLAUDE.md.bak*`, `PROJECT_STATE.md.bak*`, `local_pool_filler.py`, `snrip_recon.py` удалены из git index
+   - `.gitignore` теперь предотвращает попадание подобного мусора в коммиты
+   - После 33.6.2 `git status` показывает только реальные modifications
+✅ **Pack 33.7 — `act_template.docx`: dynamic duties + citizen_phrase/named_suffix**:
+   - 11 hardcoded duty-абзацев P9-P19 → Jinja for-loop (как в Pack 33.6 для employer_letter)
+   - P6 преамбулы: «Г-н республики {{ nationality_ru_genitive }}» → `{{ applicant.citizen_phrase }}` + «именуемый» → `именуем{{ applicant.named_suffix }}`
+   - E2E проверено для RUS М, CHN Ж, TUR М — все 3 рендерятся юридически корректно
+   - Один шаблон используется для всех 3 актов в пакете — одна правка покрывает sequence 1/2/3
+✅ **Pack 33.8 — IFNS coverage_keywords + 7 новых ИФНС записей**:
+   - Новая JSONB колонка `ifns_office.coverage_keywords` (`list[str]`) для точного матчинга районной инспекции по `applicant.home_address`
+   - Новый `_pick_ifns` с 4-tier логикой:
+     - **Tier A**: точный матч по `coverage_keywords` (подстрока в `home_address.lower()`)
+     - **Tier B**: legacy Pack 31.1 — общие слова ≥4 букв в `address` (для записей без keywords)
+     - **Tier C-prime**: если в регионе ровно одна не-default запись — возвращаем её (покрывает «парадокс Ся Инь»: ИНН в одном регионе, home_address в другом)
+     - **Tier C**: default-first ordering (УФНС-управление)
+   - **18 ifns_office записей**, из них 9 с непустыми coverage_keywords
+   - 7 новых: МИФНС №14 РТ (Казань), МИФНС №24 РО (Ростов), ИФНС №13/15/24/27/31 по г. Москве (САО/СВАО/ЮАО/ЮЗАО/ЗАО)
+   - 3 UPDATE: Сочи 2367 (МИФНС №8), Москва 7728 (ИФНС №28), СПб 7841 (МИФНС №25) — добавлены keywords
+   - **Локальный тест на 16 реальных сценариях клиентов**: 16/16 OK (12 москвичей через Tier A keywords, Ся Инь через Tier C-prime, Ведат+2 Сочи через Tier A "сочи", Бабараджабов Ростов через Tier A "ростов-на-дону")
+   - Все клиенты теперь получают **юридически корректную** районную МИФНС вместо общерегиональной УФНС-управление
 ✅ Vercel + Railway оба зелёные (визуально подтверждено)
 
 ---
@@ -1591,6 +1918,120 @@ url_params = {"m": "SupportExt", "sk": "SZ", "kladr": kladr_code}
 
 **Урок:** Внешние API могут урезаться без уведомления. Перед написанием pipeline на основе документации годовой давности — проверить **сырой ответ** API на 1-2 примерах. Это сэкономило бы 2-3 часа сегодняшней сессии.
 
+## Инцидент 20 — Pack 19.1a/20.3: endpoint забыли зарегистрировать (09.05.2026)
+
+**Что случилось:** Кнопка ✨ «Подобрать опыт работы» в `ApplicantDrawer` возвращала `404: {"detail":"Not Found"}`. По PROJECT_STATE Pack 19.1a (04.05.2026) и Pack 20.3 (05.05.2026) были помечены как «работают», но фактически с момента Pack 19.1a и до Pack 30.0 (09.05.2026) — около 5 дней — в проде была дырка: endpoint никогда не был зарегистрирован.
+
+**Корень:** В `backend/app/api/inn_generation.py` на строке 75 стоял импорт `from app.services.work_history_generator import suggest_work_history`. В `frontend/lib/api.ts` существовала функция `regenerateWorkHistory()`, бьющая в `/api/admin/applicants/{id}/regen-work-history`. Схема `WorkHistorySuggestion` была определена в `app/models/legend_company.py` и экспортирована через `app/models/__init__.py` (есть в `__all__`). **Всё кроме самого `@router.post(...)` обёртки** — её просто забыли дописать.
+
+Это в точности паттерн Инцидента 12 (Pack 27.0 Stage A: endpoints не создались, импорт helper'а есть), просто старше на месяц.
+
+**Почему не нашли раньше:** Smoke-test для Pack 20.3 в PROJECT_STATE сформулирован как «Position id=14 (Senior, 10 duties), id=13 (Middle, 10 duties), геодезист id=2 не выбрался ✅» — это валидация **сервисной функции**, а не **HTTP endpoint'а**. Видимо тестировали через `python -c "suggest_work_history(...)"` или прямо в `ipython` с импортом — без реального клика в UI. Менеджеры за месяц на Vedat (заявка 13) не обращались — она уже была в статусе DRAFTS_GENERATED, кнопку никто не жал. Проблема всплыла только когда дошли до новой заявки (Шахин Исмаил, applicant id=23).
+
+**Решение Pack 30.0:** Точечная правка двух мест в `inn_generation.py`:
+1. Добавлен `WorkHistorySuggestion` в блок `from app.models import (...)` (новая строка 60).
+2. Дописан `@router.post("/{applicant_id}/regen-work-history", ...)` в самый конец файла, сразу за `regen_address` (Pack 18.8) — тот же стиль (`Depends(get_session)`, `_user=Depends(require_manager)`), 404 при отсутствии applicant'а, 422 при `None` от сервиса с понятным сообщением что чинить.
+
+**Урок (см. Правило 38):** Когда фича помечается как «работает в проде» — smoke-test обязан включать **HTTP-вызов через UI**, а не только проверку сервисной функции через Python REPL. Импорт сервиса в файле endpoint'а ещё не означает что endpoint существует. Надёжный способ для будущих Pack-ов — после применения зайти на `/docs` (Swagger) и убедиться что новый роут реально появился в списке. Это занимает 10 секунд и ловит инциденты 12, 20 (а потенциально и 11) на корню.
+
+
+## Инцидент 21 — Position raw SQL INSERT упал 3 раза подряд на NOT NULL колонках без DB DEFAULT (Pack 33.4, 10.05.2026)
+
+**Что случилось:** Pack 33.4 пытался засеять 21 новую Position строку через миграционный raw SQL `INSERT INTO position (...) VALUES (...)`. Перечислили основные колонки (title_ru, primary_specialty_id, level, tags, salary_min/max и т.д.). Миграция упала **три раза подряд** с одной и той же ошибкой `psycopg2.errors.NotNullViolation` но **на разных колонках**:
+
+1. Первый прогон → `null value in column "created_at" violates not-null constraint`. Hotfix 33.4.1: добавили `created_at, updated_at` + `NOW(), NOW()` в INSERT.
+2. Второй прогон → `null value in column "updated_at" ...`. Ну вообще-то и `updated_at` мы тоже добавили в hotfix 33.4.1, но обнаружили что в реальности добавление шло только в `created_at`. Hotfix 33.4.1 fix-of-fix.
+3. Третий прогон → `null value in column "profile_description" violates not-null constraint`. Профиль_описание тоже NOT NULL. Hotfix 33.4.2: добавили генерацию fallback-строки `f"Описание профиля для должности {title_ru}"` для каждой Position.
+
+**Корень:** SQLModel-модель `Position` объявляет:
+```python
+created_at: datetime = Field(default_factory=datetime.utcnow)
+updated_at: datetime = Field(default_factory=datetime.utcnow)
+profile_description: str = Field(...)  # обязательное в Pydantic, но без default
+```
+
+Python-defaults применяются **только** через ORM (`session.add(position); session.commit()`). При **raw SQL** через `conn.execute(text("INSERT ..."))` Python-defaults не запускаются — БД ожидает что значение придёт из самого SQL или из `DEFAULT` в `CREATE TABLE`.
+
+В DDL `position` table колонки `created_at/updated_at/profile_description` имеют `NOT NULL` но **без `DEFAULT`**. Сравните с `legend_company` где DDL содержит `created_at TIMESTAMP NOT NULL DEFAULT NOW()` — там же raw SQL INSERT работает без явного timestamp.
+
+То есть **поведение зависит от того что в схеме БД, а не от Python-модели**. Это сюрприз для тех кто привык работать через ORM.
+
+**Решение** (Pack 33.4 финальная версия INSERT):
+```python
+conn.execute(text(
+    "INSERT INTO position "
+    "(title_ru, title_ru_genitive, primary_specialty_id, level, tags, "
+    " salary_min_rub, salary_max_rub, duties, "
+    " profile_description, "       # NOT NULL без DB DEFAULT
+    " created_at, updated_at) "    # NOT NULL без DB DEFAULT
+    "VALUES "
+    "(:t, :tg, :s, :l, CAST(:tags AS JSONB), "
+    " :smin, :smax, CAST(:d AS JSONB), "
+    " :pd, "
+    " NOW(), NOW())"
+), {...})
+```
+
+**Урок (Правило 43):** Перед raw SQL INSERT — проверить через `information_schema.columns` какие колонки `NOT NULL` без `column_default`. Они **обязательно** перечисляются в INSERT. Защититься от этого через ORM-вставку нельзя в миграционном скрипте — там скорость важна, batch-INSERT через raw SQL быстрее.
+
+## Инцидент 22 — `git add -A` потянул 23 stray файла в коммит Pack 33.6.1 (10.05.2026)
+
+**Что случилось:** Костя в Pack 33.6.1 руками доработал в Word 5 per-company договоров (buki_vedi, factor_stroy, hayat, king_david, kns_grupp) + ещё мелочёвка в employer_letter (полученном из Pack 33.6). Чтобы быстро закоммитить — сделал `git add -A && git commit && git push`. Однострочник стандартный, работает в любом репо. Но в этом repo `git status` помимо нужных правок показывал **23 untracked файла** в корне: старые `apply_pack15_6.ps1`, `apply_pack25_10_finish.py`, `apply_pack32_0.py` и т.п. из предыдущих сессий + `*.bak_pre_pack27_*` бэкапы + `CLAUDE.md.bak_old` + `PROJECT_STATE.md.bak_20260507_185904`. Они там валялись с момента когда Костя получал PS1-патчеры в Downloads и копировал/распаковывал в репо. `git add -A` собрал их все. Push прошёл — в коммит `db847c3` ушло 5 нужных docx + 23 мусора.
+
+**Корень:** Workflow Кости по умолчанию через Downloads (Правило 34) → распаковка прямо в `D:\VISA\visa_kit\` → запуск PS1 в корне репо. Файлы патчеров и backup'ы оставались в корне после применения. Не убирались — потому что не было `.gitignore` для них, и потому что они «вроде бы не мешают».
+
+**Восстановление:** Pack 33.6.2 — отдельный cleanup-Pack. Использовал `git rm --cached --pathspec-from-file=...` с UTF-8 pathspec файлом (см. Инцидент 23). 22 из 23 файлов удалены из индекса (один кириллический «Новый текстовый документ.txt» так и не был tracked — `git add -A` его не принял, видимо из-за специфики NTFS+кириллица+cp1251 PS console). `.gitignore` расширен 12 паттернами:
+```gitignore
+apply_pack*.ps1
+apply_pack*.py
+backend/apply_pack*.py
+backend/apply_pack*.ps1
+*.bak_pre_pack*
+CLAUDE.md.bak*
+PROJECT_STATE.md.bak*
+cleanup_pack*.ps1
+**/PATCH_*.md
+local_pool_filler.py
+snrip_recon.py
+*.txt.bak
+```
+
+**После Pack 33.6.2:** `git status` показывает только намеренные modifications. Следующие коммиты (33.7) — чистые.
+
+**Урок (Правило 40):** `git add -A` и `git add .` — категорически запрещены если в `git status` есть untracked мусор. Перед коммитом — `git status`, чистка untracked (либо локально удалить, либо добавить в .gitignore), затем точечный `git add <file1> <file2>`.
+
+## Инцидент 23 — PowerShell 5.1 + cp1251 console encoding испортил `git ls-files` для cleanup-скрипта (Pack 33.6.2 v2-v3, 10.05.2026)
+
+**Что случилось:** При написании cleanup-скрипта `cleanup_pack33_6_2.ps1` (см. Инцидент 22) был неочевидный затык. Скрипт должен был:
+1. Получить список ВСЕХ tracked файлов от `git ls-files`
+2. Найти пересечение с моими 23 paths-to-remove (включая кириллический)
+3. Выдать через `git rm --cached --pathspec-from-file=...`
+
+**Проблема:** запуск показывал `Of our 23 target paths, currently tracked: 0` — то есть **ни один** из моих 23 paths не нашёлся в выводе `git ls-files`. При том что Костя руками проверил `git ls-files | Select-String "CLAUDE.md.bak_old"` — файл там есть.
+
+**Корень (выявлен в v4 скрипта):** я писал вывод `git ls-files -z` через `>` редирект в temp файл, потом читал файл как UTF-8. На Windows PowerShell 5.1 этот редирект **прогоняет данные через `[Console]::OutputEncoding`**, которая по умолчанию = `cp866` или `cp1251`. UTF-8 байты от git преобразуются в cp1251 → файл повреждён. Когда я читаю обратно как UTF-8 — строки больше не совпадают побайтово с теми что в моём списке. ASCII paths и в cp1251 как ASCII же, **но** trailing whitespace/end-of-line bytes ломаются достаточно чтобы string equality дал false.
+
+**Решение (v4):** прямой capture в PS-переменную **без файлового редиректа**, с предварительной установкой `[Console]::OutputEncoding`:
+```powershell
+$oldOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
+
+try {
+    $all_tracked = git ls-files    # прямой capture, никаких файлов
+} finally {
+    [Console]::OutputEncoding = $oldOutputEncoding
+}
+
+# фильтрация через -contains (PS 5.1 friendly, без HashSet generic)
+$tracked = @($PathsToRemove | Where-Object { $all_tracked -contains $_ })
+```
+
+**Дополнительные грабли в этом же скрипте (v2 → v3):**
+- `[System.Collections.Generic.HashSet[string]]::new($args, [StringComparer]::Ordinal)` — это **PowerShell 7+ syntax**. PS 5.1 о нём не знает, падает с `Не удается найти перегрузку для "new" и количества аргументов: "2"`. Замена на `-contains` (Правило 41).
+- `New-Object System.Text.UTF8Encoding($false)` нельзя, надо `New-Object System.Text.UTF8Encoding $false` (PS 5.1 не принимает скобки в New-Object).
+
+**Урок (Правило 41):** На Windows PowerShell 5.1 + кириллица + git stdout — три gotcha: (1) `>` редирект mangles UTF-8, нужен `[Console]::OutputEncoding = UTF8Encoding` + прямой capture; (2) `::new()` generic constructor — это PS 7+, на PS 5.1 заменять на `New-Object`; (3) `HashSet<T>` через generic-конструктор — на PS 5.1 заменять на оператор `-contains` или просто массив.
+
 
 ---
 
@@ -1612,6 +2053,11 @@ curl https://visa-kit-production.up.railway.app/docs
 
 ---
 
-**Версия документа:** 3.3 (расширение 07.05.2026 вечер, +Pack 28 Часть 1, +2 fix'а, +Сессия 07.05.2026 в TL;DR, +переписан раздел 3.3 ИНН-генератор, +Правила 34-37, +Инциденты 16-19)
-**Базируется на:** PROJECT_STATE 3.2 (06.05.2026 поздний вечер)
-**Следующее обновление:** в конце следующей рабочей сессии (Pack 28 Часть 2 — переключение pipeline, cron, admin UI)
+**Версия документа:** 3.5 (расширение 10.05.2026, +Сессия 10.05.2026 в TL;DR с 10 Pack-ами 33.x, +Инциденты 21-23, +Правила 40-43, обновление раздела «Что работает»)
+**Базируется на:** PROJECT_STATE 3.4 (09.05.2026 — Pack 30.0 фикс endpoint)
+**Следующее обновление:** в конце следующей рабочей сессии. Открытые направления:
+- IFNS expansion в другие регионы (Башкортостан, Дагестан, Чечня, Нижний Новгород — пока нет клиентов, ИФНС только default)
+- CareerTrack seed для 21 новой специальности Pack 33.4 (4 уровня × 21 = 84 строки, без duties)
+- Полировка `profile_description` для Pack 33.4 Position rows (сейчас fallback-строка)
+- Hardening fallback в `work_history_generator.py` (отложено из Pack 33.4 — нужен полный файл от пользователя)
+- Pack 28 Часть 2 — переключение pipeline, cron, admin UI для NPD pool
