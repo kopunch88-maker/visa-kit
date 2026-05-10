@@ -38,6 +38,15 @@ title_ru / duties / salary_rub_default / tags.
 - Re-run: DELETE WHERE marker → INSERT заново. Не зацепит вручную
   созданные Position (как id=45 PR Manager) если у них этого маркера нет.
 
+Pack 33.4.1 fix (10.05.2026):
+- created_at / updated_at в таблице position — NOT NULL без DB-level
+  DEFAULT (модель Position использует Python-side default через
+  TimestampMixin, что не работает при raw SQL INSERT). Исправлено:
+  добавлены явные NOW() в VALUES().
+- Это отличие от legend_company — у неё CREATE TABLE задаёт
+  `DEFAULT NOW()` в SQL, поэтому в Pack 33.3 миграция работала
+  без явного указания timestamp'ов.
+
 Запуск:
   cd D:\\VISA\\visa_kit\\backend
   python -m app.scripts.migration_pack33_4
@@ -561,11 +570,13 @@ def run() -> None:
                     INSERT INTO position (
                         title_ru, title_ru_genitive, title_es,
                         duties, salary_rub_default, tags,
-                        is_active, primary_specialty_id, level
+                        is_active, primary_specialty_id, level,
+                        created_at, updated_at
                     ) VALUES (
                         :title_ru, :title_genitive, :title_es,
                         CAST(:duties AS JSON), :salary, CAST(:tags AS JSON),
-                        TRUE, :spec_id, 2
+                        TRUE, :spec_id, 2,
+                        NOW(), NOW()
                     )
                 """),
                 {
