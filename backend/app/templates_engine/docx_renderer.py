@@ -14,9 +14,20 @@ Pack 16.4 changes:
   параграф между таблицей операций и таблицей подписи, чтобы подпись
   поместилась сразу после операций (без перевода на 2-ю страницу
   если на 1-й есть место).
+
+Pack 33.0 changes (10.05.2026):
+- Постпроцессинг render_contract: блок «Адреса и реквизиты Сторон» всегда
+  начинается с новой страницы через <w:pageBreakBefore/>. Word сам
+  решает, где физически разорвать страницу — никаких пустых параграфов
+  и пробелов. Применяется ко ВСЕМ шаблонам из contracts_registry
+  (default + 7 company-specific). Идемпотентно: если флаг уже стоит,
+  повторно не добавляется. Защита от пустой первой страницы: если
+  заголовок реквизитов — самый первый непустой параграф документа,
+  разрыв НЕ ставится. См. _apply_page_break_before_requisites.
 """
 
 import io
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -68,6 +79,112 @@ W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
 
 
+# ============================================================================
+# Pack 33.0 — page break before "Адреса и реквизиты Сторон"
+# ============================================================================
+
+# Регэксп ищет заголовок раздела реквизитов в любом виде, который встречался
+# в шаблонах: "8. Адреса и реквизиты Сторон", "Адреса и реквизиты сторон",
+# "Реквизиты и адреса сторон", "Реквизиты Сторон" и т.д. Не зависит от
+# номера раздела (8., 9., и т.д.) и регистра.
+_REQUISITES_HEADING_RE = re.compile(
+    r"(адреса\s+и\s+реквизиты|реквизиты\s+и\s+адреса|реквизиты\s+сторон)",
+    re.IGNORECASE,
+)
+
+
+def _ensure_page_break_before(p_element) -> bool:
+    """
+    Добавляет <w:pageBreakBefore/> в pPr параграфа.
+    Возвращает True если добавлено, False если уже было.
+    pPr должен быть первым дочерним элементом <w:p>;
+    pageBreakBefore должен идти в начале pPr (по схеме OOXML).
+    """
+    ppr = p_element.find("w:pPr", NS)
+    if ppr is None:
+        ppr = etree.Element(f"{W_NS}pPr")
+        p_element.insert(0, ppr)
+
+    if ppr.find("w:pageBreakBefore", NS) is not None:
+        return False
+
+    page_break = etree.Element(f"{W_NS}pageBreakBefore")
+    ppr.insert(0, page_break)
+    return True
+
+
+def _apply_page_break_before_requisites(docx_bytes: bytes) -> bytes:
+    """
+    Pack 33.0 — постпроцессинг отрендеренного договора.
+
+    Находит первый параграф верхнего уровня документа (НЕ внутри таблицы),
+    текст которого матчится на _REQUISITES_HEADING_RE («Адреса и реквизиты
+    Сторон» и подобные), и добавляет ему <w:pageBreakBefore/>.
+
+    Логика:
+      1. Идём по прямым детям <w:body> (только <w:p>, не лезем в таблицы)
+      2. Считаем сколько было непустых параграфов ДО найденного заголовка
+      3. Если найденный заголовок — самый первый непустой параграф документа
+         (count == 0), разрыв НЕ ставим (иначе пустая страница в начале)
+      4. Если в pPr уже есть pageBreakBefore — ничего не делаем (идемпотентно)
+      5. Если заголовок не найден — возвращаем bytes без изменений
+         (например, шаблон с другой структурой или одностраничный)
+
+    Все случаи безопасны: при ошибке/отсутствии заголовка возвращается
+    исходный документ без модификаций.
+    """
+    try:
+        doc = Document(io.BytesIO(docx_bytes))
+    except Exception:
+        # Если по какой-то причине не парсится — возвращаем как есть
+        return docx_bytes
+
+    body = doc.element.body
+    meaningful_paragraphs_before = 0
+    target_p = None
+
+    # Идём только по прямым детям body (параграфы верхнего уровня).
+    # Таблицы пропускаем — заголовок раздела 8 в шаблонах всегда отдельный <w:p>,
+    # а не строка таблицы. Если у кого-то иначе — фикс просто не сработает,
+    # документ отдастся без модификации.
+    for child in body.iterchildren():
+        tag = etree.QName(child).localname
+        if tag != "p":
+            continue
+
+        # Собираем весь текст параграфа из всех <w:t>
+        ts = child.findall(".//w:t", NS)
+        text = "".join(t.text or "" for t in ts)
+        stripped = text.strip()
+
+        if not stripped:
+            # Пустые параграфы (включая остатки от подстановки) пропускаем
+            # и НЕ считаем их «значимыми». Это защищает от ситуации,
+            # когда шаблон начинается с пустых отступов.
+            continue
+
+        if _REQUISITES_HEADING_RE.search(stripped):
+            target_p = child
+            break
+
+        meaningful_paragraphs_before += 1
+
+    if target_p is None:
+        # Заголовок не нашли — возвращаем как есть
+        return docx_bytes
+
+    if meaningful_paragraphs_before == 0:
+        # Заголовок — самый первый непустой параграф, разрыв создаст
+        # пустую первую страницу. Не трогаем.
+        return docx_bytes
+
+    _ensure_page_break_before(target_p)
+
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
 def _render(template_name: str, context: dict) -> bytes:
     template_path = TEMPLATES_DIR / template_name
     if not template_path.exists():
@@ -108,6 +225,10 @@ def render_contract(application: Application, session: Session) -> bytes:
 
     Pack 29.3.1 fix: Application не имеет relationship 'company',
     только foreign key company_id. Загружаем Company явно через session.
+
+    Pack 33.0: после рендера применяем _apply_page_break_before_requisites —
+    раздел «Адреса и реквизиты Сторон» всегда стартует с новой страницы.
+    Применяется ко всем шаблонам из contracts_registry детерминированно.
     """
     if not application.company_id:
         raise ValueError(
@@ -126,7 +247,9 @@ def render_contract(application: Application, session: Session) -> bytes:
 
     context = build_context(application, session)
     relative_path = resolve_contract_template_path(company)
-    return _render_from_repo_path(relative_path, context)
+    rendered = _render_from_repo_path(relative_path, context)
+    # Pack 33.0
+    return _apply_page_break_before_requisites(rendered)
 
 
 def render_act(application: Application, session: Session, sequence_number: int) -> bytes:
