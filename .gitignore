@@ -74,3 +74,31 @@ backend/visa_kit_backend.egg-info/
 
 # Pack patcher backups
 *.bak_pre_pack30_0*
+
+# === Pack 33.6.2 cleanup - prevent stray files in repo ===
+
+# Local one-shot pack patchers (must NOT be committed)
+apply_pack*.ps1
+apply_pack*.py
+backend/apply_pack*.py
+backend/apply_pack*.ps1
+
+# Pack patcher .bak files (broader than the existing 30_0-only pattern)
+*.bak_pre_pack*
+
+# Backups of CLAUDE.md / PROJECT_STATE.md
+CLAUDE.md.bak*
+PROJECT_STATE.md.bak*
+
+# Cleanup launchers (this generator and any future)
+cleanup_pack*.ps1
+
+# PATCH-style notes (transient)
+**/PATCH_*.md
+
+# Local diag utilities at repo root
+local_pool_filler.py
+snrip_recon.py
+
+# Random empty text files (Windows "New Text Document.txt" etc.)
+*.txt.bak
