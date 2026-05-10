@@ -47,6 +47,15 @@ Pack 33.4.1 fix (10.05.2026):
   `DEFAULT NOW()` в SQL, поэтому в Pack 33.3 миграция работала
   без явного указания timestamp'ов.
 
+Pack 33.4.2 fix (10.05.2026):
+- profile_description в position — NOT NULL без DEFAULT (пропустил
+  при первом фиксе). Добавлен fallback-текст в INSERT, генерируемый
+  динамически из title_ru. Менеджер может заменить вручную через
+  админку (как у Position id=45 PR Manager — там полный markdown).
+- Полный список NOT NULL колонок: created_at, updated_at, title_ru,
+  title_es, salary_rub_default, profile_description, is_active.
+  Все они теперь явно указаны в INSERT.
+
 Запуск:
   cd D:\\VISA\\visa_kit\\backend
   python -m app.scripts.migration_pack33_4
@@ -564,18 +573,29 @@ def run() -> None:
             spec_id = specialty_id_map[spec_code]
             # Маркер pack_33_4_seed добавляется в начало tags для идемпотентности
             tags_with_marker = [PACK_MARKER] + list(tags)
+            # Pack 33.4.2 fix: profile_description NOT NULL без default — заполняем
+            # коротким fallback-текстом. Менеджер может позже заменить вручную
+            # для конкретной специальности (как у Position id=45 PR Manager).
+            profile_desc = (
+                f"{title_ru} среднего уровня (Middle) по направлению профессиональной "
+                f"подготовки. Должность создана автоматически Pack 33.4 для покрытия "
+                f"специальности в генераторе work_history. Подробное описание профиля "
+                f"может быть добавлено вручную через админку."
+            )
 
             conn.execute(
                 text("""
                     INSERT INTO position (
                         title_ru, title_ru_genitive, title_es,
                         duties, salary_rub_default, tags,
-                        is_active, primary_specialty_id, level,
+                        profile_description, is_active,
+                        primary_specialty_id, level,
                         created_at, updated_at
                     ) VALUES (
                         :title_ru, :title_genitive, :title_es,
                         CAST(:duties AS JSON), :salary, CAST(:tags AS JSON),
-                        TRUE, :spec_id, 2,
+                        :profile_desc, TRUE,
+                        :spec_id, 2,
                         NOW(), NOW()
                     )
                 """),
@@ -586,6 +606,7 @@ def run() -> None:
                     "duties": json.dumps(duties, ensure_ascii=False),
                     "salary": salary,
                     "tags": json.dumps(tags_with_marker, ensure_ascii=False),
+                    "profile_desc": profile_desc,
                     "spec_id": spec_id,
                 },
             )
