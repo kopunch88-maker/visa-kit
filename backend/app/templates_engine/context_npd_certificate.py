@@ -387,6 +387,12 @@ def build_npd_certificate_context(
     rng = Random(applicant_id or 0)
     days_back = rng.randint(14, 21)
     issued_date = today - timedelta(days=days_back)
+    # Pack 35.1: МФЦ не работают в выходные — сдвигаем на предыдущий рабочий
+    # (суббота → пятница, воскресенье → пятница). Сдвиг НАЗАД, чтобы не
+    # «омолодить» справку и не нарушить порядок submission_date.
+    # weekday(): 0=пн ... 4=пт, 5=сб, 6=вс.
+    while issued_date.weekday() >= 5:
+        issued_date -= timedelta(days=1)
     issued_hour = rng.randint(9, 17)
     issued_minute = rng.randint(0, 59)
     issued_datetime = datetime(
