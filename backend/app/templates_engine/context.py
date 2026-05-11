@@ -694,20 +694,39 @@ def _full_name_native(applicant: Applicant) -> str:
     return ""
 
 
+def _nbsp_initials(value: str | None) -> str:
+    """Pack 35.11: заменить обычный пробел перед инициалами на NBSP.
+
+    Применяется к строкам вида «Иванов И.А.», «Василевская А.В.» —
+    Word не должен разрывать строку между фамилией и инициалом.
+
+    Логика: ищем последний пробел перед `<буква>.` паттерном и меняем на NBSP.
+    Если паттерн не найден — возвращаем значение как есть.
+    """
+    if not value:
+        return value or ""
+    import re
+    # Паттерн: пробел перед заглавной буквой с точкой (один или несколько инициалов)
+    # Примеры match: " И.", " И.А.", " А.В."
+    return re.sub(r" (?=[А-ЯA-ZЁ]\.(?:[А-ЯA-ZЁ]\.)*$)", chr(0xa0), value)
+
+
 def _initials_native(applicant: Applicant) -> str:
     """
     Сокращённая форма (Иванов И.И.).
     Pack 14 fix: fallback на latin (Yuksel V.).
     """
     if applicant.last_name_native and applicant.first_name_native:
-        result = f"{applicant.last_name_native} {applicant.first_name_native[0]}."
+        # Pack 35.11: NBSP между фамилией и инициалом (Word не разрывает строку)
+        result = f"{applicant.last_name_native} {applicant.first_name_native[0]}."
         if applicant.middle_name_native:
             result += f"{applicant.middle_name_native[0]}."
         return result
 
     # Fallback на latin
     if applicant.last_name_latin and applicant.first_name_latin:
-        return f"{applicant.last_name_latin} {applicant.first_name_latin[0]}."
+        # Pack 35.11: NBSP между фамилией и инициалом (latin fallback)
+        return f"{applicant.last_name_latin} {applicant.first_name_latin[0]}."
 
     return ""
 
@@ -1251,7 +1270,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "postal_address_line2": _company_postal_line2(company),
             "director_full_name_ru": company.director_full_name_ru,
             "director_full_name_genitive_ru": company.director_full_name_genitive_ru,
-            "director_short_ru": company.director_short_ru,
+            "director_short_ru": _nbsp_initials(company.director_short_ru),
             "director_position_ru": company.director_position_ru,
             "bank_name": company.bank_name,
             "bank_account": company.bank_account,
