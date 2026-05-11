@@ -400,6 +400,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         passport_number: passport_number.trim(),
         passport_issue_date,
         passport_issuer: passport_issuer.trim(),
+        // Pack 35.3.1: русифицированный вариант органа выдачи паспорта
+        passport_issuer_ru: passport_issuer_ru.trim() || null,
         birth_date,
         birth_place_latin: birth_place_latin.trim(),
         birth_country: birth_country || null,  // Pack 18.10
