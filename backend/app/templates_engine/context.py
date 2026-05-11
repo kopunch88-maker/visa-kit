@@ -970,7 +970,7 @@ def _enrich_bank_with_statement_fields(
     return bank_data
 
 
-def _build_bank_context(application: Application, company: Company | None) -> dict:
+def _build_bank_context(application: Application, company: Company | None, applicant: Applicant | None = None) -> dict:
     if application.bank_transactions_override:
         try:
             data = deserialize_from_storage(application.bank_transactions_override)
@@ -1033,17 +1033,25 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
     npd_rate = application.bank_npd_rate or DEFAULT_NPD_RATE
     monthly_fee = application.bank_monthly_fee or DEFAULT_BANK_FEE_PER_MONTH
 
-    # Pack 25.9.1: applicant нужен для СБП-переводов (имя получателя + телефон РФ).
-    # Реальные поля: first_name_native + last_name_native (full_name_ru НЕ существует).
-    _applicant = getattr(application, "applicant", None)
+    # Pack 35.4: applicant теперь передаётся параметром (не через ленивый relationship).
+    # Это критично т.к. application.applicant иногда не подгружен в сессии
+    # (зависит от того как application пришёл в build_context).
+    # Pack 25.9.1: реальные поля: first_name_native + last_name_native.
+    # Pack 35.4 fallback: если русские поля пустые — пробуем латинские
+    # (для иностранцев, у которых менеджер ещё не вписал русские).
     _applicant_full_name_ru = None
     _applicant_phone = None
-    if _applicant is not None:
-        _first = getattr(_applicant, "first_name_native", None) or ""
-        _last = getattr(_applicant, "last_name_native", None) or ""
+    if applicant is not None:
+        _first = (applicant.first_name_native or "").strip()
+        _last = (applicant.last_name_native or "").strip()
         _full = f"{_first} {_last}".strip()
+        if not _full:
+            # Fallback на латинские поля (имя + фамилия)
+            _first_l = (applicant.first_name_latin or "").strip()
+            _last_l = (applicant.last_name_latin or "").strip()
+            _full = f"{_first_l} {_last_l}".strip()
         _applicant_full_name_ru = _full or None
-        _applicant_phone = getattr(_applicant, "phone", None)
+        _applicant_phone = applicant.phone
 
     result = generate_default_transactions(
         submission_date=base_date,
@@ -1177,7 +1185,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
 
     monthly_docs = _generate_monthly_documents(application)
     eur_data = _build_eur_data(application) if application.salary_rub else None
-    bank_data = _build_bank_context(application, company)
+    bank_data = _build_bank_context(application, company, applicant)
     # Pack 16.2: добавляем поля для шапки выписки
     bank_data = _enrich_bank_with_statement_fields(bank_data, application)
 
