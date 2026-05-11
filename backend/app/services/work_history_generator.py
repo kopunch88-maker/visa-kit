@@ -77,6 +77,15 @@ LEVELS_BY_COUNT: dict[int, list[list[int]]] = {
     3: [[3, 2, 1], [4, 3, 2]],        # Senior+Middle+Junior или Lead+Senior+Middle
 }
 
+# Pack 34.8: для одиночек (подача без семьи) запрещаем Senior (3) и Lead (4).
+# Бизнес-правило: «без семьи в CV не может быть Главный/Ведущий».
+# Используется когда applicant.applications не содержит family_members.
+LEVELS_BY_COUNT_SOLO: dict[int, list[list[int]]] = {
+    1: [[2]],                         # Middle на единственной записи
+    2: [[2, 1]],                      # Middle + Junior
+    3: [[2, 1, 1]],                   # Middle + Junior + Junior
+}
+
 # Длительность последней работы (в годах) — минимум 3.5 для DN-визы.
 LAST_JOB_YEARS_RANGE = (3.5, 5.0)
 
@@ -474,13 +483,68 @@ def _years_to_days(years: float) -> int:
 # === Main entry point ===
 # ============================================================================
 
+def _is_solo_applicant(applicant: Applicant) -> bool:
+    """
+    Pack 34.8: True если клиент подаётся в одиночку (нет members семьи)
+    ни в одной из активных заявок.
+
+    Активная заявка = не архивная, не удалённая. Если хотя бы одна заявка
+    содержит family_members — клиент НЕ одиночка, возвращаем False.
+
+    Если у applicant нет ни одной заявки — считаем одиночкой (default True).
+    Это самый безопасный default: не выдадим «Главного инженера» там, где
+    мы ещё не знаем что подача семейная.
+
+    Защищается от исключений (по аналогии с _get_position_for_matching).
+    """
+    try:
+        apps = list(applicant.applications or [])
+    except Exception as e:
+        log.warning(
+            "_is_solo_applicant: error reading applications "
+            "(applicant_id=%s): %r — defaulting to solo=True",
+            applicant.id, e,
+        )
+        return True
+
+    active_apps = [
+        a for a in apps
+        if not getattr(a, "is_archived", False)
+        and not getattr(a, "deleted_at", None)
+    ]
+    if not active_apps:
+        return True
+
+    for app in active_apps:
+        try:
+            members = list(app.family_members or [])
+        except Exception:
+            members = []
+        if members:
+            log.info(
+                "_is_solo_applicant: applicant_id=%s has family in application_id=%s "
+                "(%d members) → not solo",
+                applicant.id, app.id, len(members),
+            )
+            return False
+
+    return True
+
+
 def _pick_count(rng: random.Random) -> int:
     counts, weights = zip(*COUNT_DISTRIBUTION)
     return rng.choices(counts, weights=weights, k=1)[0]
 
 
-def _pick_levels(count: int, rng: random.Random) -> list[int]:
-    options = LEVELS_BY_COUNT.get(count, [[3]])
+def _pick_levels(count: int, rng: random.Random, is_solo: bool = False) -> list[int]:
+    """
+    Pack 34.8: при is_solo=True использует LEVELS_BY_COUNT_SOLO (только
+    Junior/Middle), иначе LEVELS_BY_COUNT (Senior/Lead разрешены).
+    """
+    if is_solo:
+        options = LEVELS_BY_COUNT_SOLO.get(count, [[2]])
+    else:
+        options = LEVELS_BY_COUNT.get(count, [[3]])
     return rng.choice(options)
 
 
@@ -515,8 +579,15 @@ def suggest_work_history(
     region_code = _get_region_code(applicant)
 
     # 3. Count + levels
+    # Pack 34.8: для одиночек (нет family_members) используем только Junior/Middle.
+    is_solo = _is_solo_applicant(applicant)
     count = _pick_count(rng)
-    levels = _pick_levels(count, rng)
+    levels = _pick_levels(count, rng, is_solo=is_solo)
+    if is_solo:
+        log.info(
+            "work_history generator: applicant_id=%s is solo → Junior/Middle only",
+            applicant.id,
+        )
 
     # 4. Companies
     companies, fallback_used = _pick_companies_for_track(
