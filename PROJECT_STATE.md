@@ -8,7 +8,7 @@
 > 5. **Перед SQL** — Правило 20 (dump схемы таблицы).
 > 6. **Финальная проверка DOCX** — ВСЕГДА в Word, не в LibreOffice (Правило 25).
 
-> **Дата последнего обновления:** 11.05.2026 — вечер (Сессия Pack 35.x: 8 паков подряд — bank statement NPD-фикс с предыдущим месяцем, NPD-справка/апостиль строго в рабочих днях, applicant.passport_issuer_ru локализация органа выдачи паспорта для русских договоров (БД+сервис+OCR auto-apply+context fallback), кнопка ✨ Сгенерировать в ApplicantDrawer + hotfix 35.3.1, _build_bank_context принимает applicant явно (фикс «Получатель: Получатель»), Pack 35.5 двойной — СБП-получатель в bank_transactions.py второй путь + условный сдвиг месяца назад (январский акт до договора), 35.5.1 hotfix якоря без cp1251 docstring; +Инциденты 26-29, +Правила 48-52)
+> **Дата последнего обновления:** 11.05.2026 — поздний вечер (Сессия Pack 35.x: **15 паков** — утром 0-5.1 + вечером 6-10. Утром: bank statement NPD-фикс, NPD/апостиль в рабочих днях, passport_issuer_ru локализация, ✨ кнопка Сгенерировать + hotfix, _build_bank_context принимает applicant, СБП-получатель в bank_transactions.py + условный сдвиг, 35.5.1 cp1251 hotfix. Вечером: 35.6 log.exception в render endpoint, 35.7 _generate_fresh_bank_context принимает applicant (фикс NameError render_act у Шахина), 35.8 кнопка «Отменить зависшие переводы» в TranslationPanel + endpoint /cancel-stuck, 35.9+35.9.1+35.9.2 разбиение шапки «город+дата» на 2 параграфа в испанских переводах через post-processing в docx_translator.translate_docx, 35.10 копирование rPr в split-функции + латинские инициалы в подписи через name_substitution; +Инциденты 26-34, +Правила 48-57)
 
 ---
 
@@ -314,6 +314,37 @@ Pack 18.3.4 ставил в справку КНД 1122035 синтетическ
 7. **PowerShell `\` continuation ≠ bash.** Многострочные команды через `\` в PowerShell ломаются — каждая строка после `\` интерпретируется как отдельная команда. Писать одну команду на строку или каждый `git add` отдельной строкой (см. Правило 48 ниже).
 
 **Файлы patcher'ов:** `apply_pack35_0_bank_npd_fix.py`, `apply_pack35_1_npd_business_days.py`, `apply_pack35_2_passport_issuer_ru.py`, `apply_pack35_3_passport_issuer_ru_button.py` + `apply_pack35_3_1_hotfix_save.py`, `apply_pack35_4_sbp_recipient_fix.py`, `apply_pack35_5_dual_fix.py` + `apply_pack35_5_1_hotfix.py`.
+
+---
+
+## Сессия 11.05.2026 — поздний вечер — Pack 35.x продолжение: NameError у Шахина → крутящиеся переводы → шапка/инициалы в испанских переводах (7 паков)
+
+**Контекст:** Сразу после Pack 35.5.1 Костя начал тестить пакет Шахина (TUR, factor_stroy) — клиент готов к подаче. Каскадно вылезло 3 проблемы которые потащили серию из 7 паков: (1) скачивание актов 500'ит с `NameError: applicant is not defined`, (2) у Шахина 10 переводов застряли в `IN_PROGRESS` без воркера (зомби-записи), (3) в скачанных переводах шапка «город + дата» рисуется криво (склейка из таба/пробелов одной строкой, или с придуманным «ciudad de», или Madrid Moscú) и в подписи `SAHIN И.` вместо `SAHIN I.` (кириллический инициал).
+
+| Pack | Что | Результат |
+|---|---|---|
+| **35.6** | Диагностический патч: в `backend/app/api/applications.py:553` `except Exception as e:` блок render endpoint'а добавлен `log.exception(f"Failed to render {file_id}")` перед `raise HTTPException`. Раньше traceback поглощался excepton'ом и в HTTP-ответ уходила только `NameError: applicant is not defined` без файла:строки. После Pack 35.6 в Railway Deploy logs виден полный stack trace. | ✅ В проде, диагностический — оставлен на будущее |
+| **35.7** | Hotfix к Pack 35.4. В `_build_bank_context` (в `context.py`) Pack 35.4 правильно добавил `applicant` параметром. Но внутри функции есть **делегирующий вызов** на `_generate_fresh_bank_context(application, company)` (строка 1014) — БЕЗ `applicant`. А внутри `_generate_fresh_bank_context` тело использует `applicant` (Pack 35.4 правил резолв СБП-имени). Pack 35.4 изменил тело функции, но забыл изменить её **сигнатуру и точку делегирования**. У большинства клиентов это не падало (override был непустой → branch с `bank_transactions_override` через `_deserialize` отрабатывал раньше). У Шахина override был сброшен через SQL → пошли в fresh branch → `NameError`. Stack trace из Pack 35.6 показал точное место: `context.py:1014`. **2 правки в `context.py`**: (1) сигнатура `_generate_fresh_bank_context(application, company)` → `(application, company, applicant=None)`, (2) делегирующий вызов в `_build_bank_context` теперь передаёт `applicant`. | ✅ В проде, рендер актов работает |
+| **35.8** | Кнопка «Отменить зависшие переводы» в `TranslationPanel`. **3 файла**: (a) новый endpoint `POST /admin/applications/{id}/translations/cancel-stuck` в `backend/app/api/translations.py` — `DELETE FROM translation WHERE application_id=X AND status IN (PENDING, IN_PROGRESS)`. (b) функция `cancelStuckTranslations` в `frontend/lib/api.ts` рядом с `deleteAllTranslations`. (c) в `TranslationPanel.tsx` импорт `XCircle` из lucide, handler `handleCancelStuck` с confirm-диалогом, кнопка с иконкой `XCircle` рядом с «Переводим... X из Y» (видна только если `isActive=true`). Логика: менеджер видит крутилку → клик «Отменить» → confirm → запись удаляется → UI возвращается к «Переводов ещё нет» с кнопкой «Перевести пакет». | ✅ В проде |
+| **35.9** | Post-processing шапки «город + дата» в испанских переводах. В русском акте параграф `[4]` имеет структуру: `<w:tab w:val="right" pos="10466"/>` в `<w:tabs>` + `<w:tab/>` в run → «г. Москва [tab] «28» февраля 2026 г.» одной строкой по краям. В русском договоре: `<w:jc=center>` + одна `<w:t>` с большим блоком пробелов посередине. При переводе LLM сохраняет структуру параграфа → испанский получает «Moscú [tab/spaces] «28» de febrero de 2026» одной строкой. Костя хочет в испанских: **город сверху, дата снизу**, обе слева. **Новая функция** `_split_city_date_paragraphs(doc)` в `docx_translator.py` — после перевода обходит все параграфы (включая textbox-ы), ищет регекс `«?\d{1,2}»?\s+de\s+\w+\s+de\s+\d{4}` (испанская дата) в тексте, если до даты остался короткий текст (≤30 chars) и это не «Contrato n.º X de fecha Y» — разбивает параграф на 2: город и дата, оба left-aligned, без табов и justify. **НО** patcher 35.9 patch 2 не нашёл якорь `doc.save(out)` (нашёл с пустой строкой между циклом и save) и **молча пропустил** добавление вызова — функция была определена, но никогда не вызывалась. | ✅ Функция определена, вызов добавлен в 35.9.2 |
+| **35.9.1** | Hotfix 1 к 35.9: попытка добавить вызов `_split_city_date_paragraphs(doc)` в финальную ветку `translate_docx`. Якорь был `for ...\n        _set_paragraph_text(...)\n    out = io.BytesIO()` (без пустой строки) — снова не нашёл. Идемпотентность patcher'а сработала: попытка применить ничего не сломала, но и не добавила вызов. | ❌ Не сматчил якорь |
+| **35.9.2** | Hotfix 2 к 35.9: правильный якорь **с пустой строкой** между циклом `_set_paragraph_text` и `out = io.BytesIO()`. На Windows PowerShell в выводе `Get-Content` строка 711 пустая — это и стало ключом. Якорь нашёлся, вызов вставлен. **Структура:** после цикла перевода всех параграфов, перед сохранением в bytes — `try: splits = _split_city_date_paragraphs(doc); log.info(f"split city+date paragraphs: {splits}")` обёрнуто в try/except чтобы не сломать перевод при exception в детекторе. | ✅ В проде, шапка разбивается на 2 параграфа |
+| **35.10** | Два фикса в одном Pack. **(A) Шрифт в шапке.** В Pack 35.9 функция `_split_city_date_paragraphs` создавала новые `<w:r>` через `OxmlElement('w:r')` без `<w:rPr>` — Word применял default стиль документа (мельче чем `sz` параграфа). 3 правки: (1) перед удалением старых runs сохраняем `<w:rPr>` первого run через `deepcopy` в `saved_rPr`, (2) при создании `r_city` добавляем `r_city.append(_deepcopy(saved_rPr))`, (3) то же для `r_date`. Теперь шрифт/размер/жирность наследуются. **(B) Латинские инициалы в подписи.** В шаблоне подпись: `{{ applicant.initials_native }}` → русский «Шахин И.» (для Шахина: last_native=Шахин, first_native=Исмаил, first_native[0]=И). При переводе name_substitution заменяет «Шахин»→«SAHIN», но «И.» остаётся → в испанском «SAHIN И.». В `_build_applicant_subs` (`name_substitution.py`) добавлены 4 пары перед `return pairs`: (1) `«{last_native} {first_native[0]}.»` → `«{last_latin} {first_latin[0]}.»` («Шахин И.» → «SAHIN I.»), (2) `«{last_latin} {first_native[0]}.»` → `«{last_latin} {first_latin[0]}.»` (если фамилия уже подменилась раньше), (3-4) аналогично с middle initial. | ✅ В проде, верифицировано на Шахине: «Moscú / «28» de febrero de 2026» 2 строки нормальный размер, «_____/ SAHIN I.» латиница |
+
+**Главные уроки сессии:**
+
+1. **`NameError` из endpoint'а — это каскадный фикс.** Pack 35.4 правил `_build_bank_context` (одну функцию), но забыл что она делегирует на `_generate_fresh_bank_context` (другую функцию) с прежней сигнатурой. У большинства клиентов случайно работало (другая branch), но у Шахина с пустым override → крах. Правило: при signature changes на функции **всегда** grep-ить ВСЕ вызовы и проверять что параметры передаются (Правило 54).
+2. **Translation worker зомби — реальная проблема.** Когда воркер падает с exception до записи статуса в БД — запись `IN_PROGRESS` живёт вечно. UI крутит крутилку без таймаута. Лечение: либо UPDATE/DELETE через SQL (с правильными UPPERCASE статусами), либо кнопка «Отменить» в UI (Pack 35.8). Воркер сам **не** ставит FAILED по таймауту — это open backlog для будущего auto-timeout.
+3. **Railway Query UI multi-statement — silent drop.** `SELECT count(*); SELECT min(id)...` показывает результат только **последнего** SELECT, не показывая что первый тоже выполнялся. Это съело 20 минут диагностики (Правило 55).
+4. **SQLModel enum mapping — UPPERCASE в DB, lowercase в JSON.** Костя SQL'ил `WHERE status IN ('pending', 'in_progress')` — 0 строк. В JSON API возвращалось `"status": "in_progress"` — выглядит lowercase. На самом деле в Postgres `translation.status` enum хранится UPPERCASE (`PENDING`, `IN_PROGRESS`), а Pydantic/FastAPI serializer на отдаче lowercase'ит. Для SQL — uppercase (Правило 53).
+5. **id в URL ≠ application.id (повторение).** На `/admin?id=23` параметр — `application.id` (с прошлого Pack 35.x подтверждено). Но в этой сессии я снова на этом споткнулся: думал что Image 4 показывает Демира (applicant.id=23), но Шахин — application.id=23. Закрепили окончательно.
+6. **Patcher должен `sys.exit(1)` при ❌ якоре, а не `print + pass`.** В Pack 35.9 patch 2 написал `print("❌ якорь не найден")` без `sys.exit(1)`. Patcher завершился «успешно», функция объявлена, но вызов не добавлен. Костя git'нул и push'нул, в проде вызов отсутствовал → перевод не разбивал шапку. Правило 56: любой ❌ якорь в patcher'е → `sys.exit(1)`.
+7. **`<w:r>` без `<w:rPr>` = Word применяет default стиль документа.** Когда создаёшь run через `OxmlElement('w:r')` и кладёшь туда `<w:t>` — без явного `<w:rPr>` Word возьмёт стиль из `pPr/rPr` параграфа или из `styles.xml`. Часто это не то что хотелось. Правило 57: при создании нового run из старого ВСЕГДА копировать `<w:rPr>` через `deepcopy`.
+8. **Pack 35.9 → 35.9.1 → 35.9.2 — series of «якорь не сматчил».** Я три раза написал якорь чуть отличающийся от файла (пустая строка, разные отступы, разная структура `out = io.BytesIO`). Это дорого по итерациям. Решение на будущее: в patcher'е использовать **короткие уникальные подстроки** (одна-две строки кода с уникальным сочетанием), не пытаться скопировать большой блок 1:1.
+
+**Файлы patcher'ов:** `apply_pack35_6_log_traceback.py`, `apply_pack35_7_fresh_bank_applicant.py`, `apply_pack35_8_cancel_stuck.py`, `apply_pack35_9_split_city_date.py`, `apply_pack35_9_1_split_call.py`, `apply_pack35_9_2_split_call.py`, `apply_pack35_10_font_and_initials.py`.
+
+---
 
 ---
 
@@ -1578,6 +1609,92 @@ git add backend/app/db/migrations.py backend/app/main.py backend/app/models/appl
 
 **Правило:** в коде где есть `session` — всегда `session.get(Applicant, application.applicant_id) if application.applicant_id else None`. Никаких `getattr(application, "applicant", None)`. Если функция не имеет `session` — передавать уже извлечённый объект как параметр (как Pack 35.4: `_build_bank_context(application, company, applicant)`).
 
+### 🔥 Правило 53 — SQLModel enum: в Postgres UPPERCASE, в JSON API lowercase
+
+Это съело 30 минут в Pack 35.8 диагностике. SQLModel enum в нашем проекте (`TranslationStatus`, и др.) хранится в Postgres как **UPPERCASE** строки: `PENDING`, `IN_PROGRESS`, `DONE`, `FAILED`. Но Pydantic serializer на отдаче через FastAPI **lowercase'ит** их в JSON: `"status": "in_progress"`. Когда видишь lowercase в Network DevTools — это **не** означает что в БД lowercase.
+
+**Симптом:** `UPDATE translation SET status='failed' WHERE status IN ('pending', 'in_progress')` — 0 rows affected. Думаешь записей нет, на деле SQL не сматчил из-за регистра.
+
+**Правило:**
+- При SQL-операциях через Railway Query консоль с enum-колонками — **всегда UPPERCASE**: `WHERE status IN ('PENDING', 'IN_PROGRESS')`
+- Проверить регистр в схеме: `SELECT id, status FROM translation LIMIT 5` — увидишь как реально хранится
+- Для других enum'ов (Application.status, ApplicantDocument.status и пр.) — то же самое: смотри SELECT, не доверяй виду в Network DevTools
+
+### 🔥 Правило 54 — При signature change функции — grep ВСЕХ вызовов и точек делегирования
+
+В Pack 35.4 я добавил параметр `applicant` в `_build_bank_context(application, company)` → `(application, company, applicant)`. Изменил тело **ОДНОЙ** функции. Но забыл что эта функция **делегирует** на `_generate_fresh_bank_context(application, company)` внутри своего тела (строка 1014). У `_generate_fresh_bank_context` тоже использовался `applicant` в теле (Pack 35.4 правил резолв СБП-имени), но в её сигнатуре `applicant` отсутствовал. Каскадный `NameError` на любых клиентах с пустым `bank_transactions_override`.
+
+У Шахина пустой override = NameError при render_act. У других клиентов override непустой → попадали в раннюю branch с `_deserialize` → не доходили до сломанной функции. **5 дней баг был незаметен**, пока Шахин не выпал.
+
+**Правило (важнее чем кажется):**
+- При signature change функции (добавление/удаление параметра): `grep -r "<имя_функции>(" backend/` — увидеть **ВСЕ** вызовы
+- Для каждой вызывающей функции — проверить что она передаёт новый параметр
+- Если она его не имеет — она тоже становится кандидатом на signature change (Правило применяется рекурсивно)
+- В Python нет compile-time проверки этого; в TypeScript есть, но Python — нет, поэтому ловится только в runtime у конкретных клиентов
+
+### 🔥 Правило 55 — Railway Query UI выполняет multi-statement, но показывает результат только последнего
+
+Костя выполнил `SELECT count(*) FROM translation; SELECT min(id), max(id), count(*) FROM translation;` — Railway UI показал `0 rows`. Я подумал что нет записей. На самом деле:
+- `count(*)` отработал (вернул скаляр)
+- `min(id), max(id), count(*)` отработал тоже
+- UI показал **только второй** результат (3 столбца, но визуально как «empty») и **сразу замаскировал** факт что было два запроса
+
+**Симптом:** Сделал SELECT с двумя statement'ами через `;` — увидел `No Results / 0 rows`. На самом деле один из statement'ов мог вернуть данные.
+
+**Правило:**
+- В Railway Query UI выполнять **только один SELECT за раз**.
+- Если хочется батч диагностики — делать `SELECT (...) AS a, (...) AS b` через scalar subquery в одной выборке.
+- Или выполнять по очереди, копируя/переключая SQL.
+- Этот же UI и для UPDATE/DELETE — обычно работает, но всё равно лучше по одному statement'у для уверенности.
+
+### 🔥 Правило 56 — Patcher при ❌ якоре ВСЕГДА `sys.exit(1)`, не `print + pass`
+
+В Pack 35.9 patch 2 у меня было:
+```python
+if PATTERN_OLD in src:
+    src = src.replace(...)
+    print("[OK]")
+else:
+    print("[2] ❌ якорь doc.save(out) не найден")
+    # БЕЗ sys.exit(1)
+```
+
+Patcher завершился с exit code 0 (как «успех»). Pack 35.9 patch 1 (определение функции) применился, но patch 2 (вызов в `translate_docx`) — нет. В Railway logs ничего не сломалось, перевод работал как до 35.9 (просто без разбиения шапки). Костя думал что 35.9 в проде, на деле — нет.
+
+**Правило:**
+- Любой ❌ якоря в patcher'е → **обязательно** `sys.exit(1)` с явным сообщением.
+- В выводе patcher'а **последняя строка** должна быть либо «=== Pack X.Y применён ===» либо traceback/error.
+- Если patcher отрабатывает с warning'ами но без exit'а — пользователь не заметит частичного применения. Лучше падать жёстко.
+- Для частичных патчей (применилось 2 из 3) — либо откатить уже применённые и упасть, либо детально логировать в самом конце «применено 2/3, патч N упал» как INFO.
+
+### 🔥 Правило 57 — При создании новых `<w:r>` через python-docx ВСЕГДА копировать `<w:rPr>` из исходного run
+
+В Pack 35.9 `_split_city_date_paragraphs` создавала новые `<w:r>` через `OxmlElement('w:r')`. Без `<w:rPr>` Word применяет **default стиль** документа (часто sz из `styles.xml` который меньше чем sz параграфа из `pPr/rPr`). В Acta sz=24 в `pPr/rPr`, но default sz=20 → шапка визуально мельче тела.
+
+**Правило:**
+```python
+from copy import deepcopy
+# Перед удалением старых runs:
+old_runs = list(p_elem.findall(qn('w:r')))
+saved_rPr = None
+if old_runs:
+    first_rPr = old_runs[0].find(qn('w:rPr'))
+    if first_rPr is not None:
+        saved_rPr = deepcopy(first_rPr)
+
+# При создании нового run:
+new_r = OxmlElement('w:r')
+if saved_rPr is not None:
+    new_r.append(deepcopy(saved_rPr))  # ОБЯЗАТЕЛЬНО deepcopy!
+new_t = OxmlElement('w:t')
+new_t.text = "Moscú"
+new_r.append(new_t)
+```
+
+**Почему deepcopy:**  `<w:rPr>` нельзя переиспользовать между runs — XML element не может иметь двух родителей. `deepcopy` создаёт независимую копию.
+
+**Связь с DOCX-уроком 12:** Pack 34.5 NBSP-фикс тоже работал с runs, но не создавал новые — только модифицировал текст в существующих `<w:t>`. Поэтому проблемы не было. Pack 35.9 был первый случай создания run'ов с нуля.
+
 ## DOCX-уроки (специально для Pack 16/20/25)
 
 1. **`<w:trHeight w:val="442"/>` БЕЗ `hRule="auto"`** = минимум 442 twips (~7.4mm), Word растянет если контент больше. С `hRule="auto"` Word **сжимает** короткие строки. У Алиева в эталоне нет hRule.
@@ -2405,6 +2522,134 @@ WHERE apl.last_name_latin = 'XIA' OR apl.last_name_native = 'Ся';
 **Уроки:**
 - **(Правило 49)** id в URL ≠ application.id обязательно. Всегда сначала диагностический SELECT с JOIN, чтобы увидеть структуру.
 - **Не угадывать SQL ID** — Правило 20 (не угадывать имена колонок) расширяется на «не угадывать значения id, всегда find by name».
+
+
+## Инцидент 30 — Translation worker зомби: записи в IN_PROGRESS висят навсегда (11.05.2026 поздний вечер)
+
+**Что случилось:** У Шахина (TUR, application_id=23) 10 переводов застряли в `status=IN_PROGRESS` с `started_at=09:58:42`, а Костя обнаружил это в 16:00 — **6+ часов в подвешенном состоянии**. UI рисует крутилку «Переводим… 0 из 10» без таймаута. На фронте `summary.is_active=true`, `summary.has_any=true` — компонент TranslationPanel не показывает кнопку «Перевести пакет» (она доступна только при `!hasAny`).
+
+**Корень:** воркер перевода (`run_translate_package` через FastAPI BackgroundTasks) упал с `NameError: applicant is not defined` ВНУТРИ `build_context` (через цепочку `_build_bank_context` → `_generate_fresh_bank_context` — тот самый баг Pack 35.4 без 35.7 hotfix). Воркер делал rollback транзакции и сам **умер тихо**, не успев обновить `translation.status='FAILED'`. Запись зависает в `IN_PROGRESS`. Auto-timeout не предусмотрен — нет cron, нет таймаута в самом worker'е.
+
+**Диагностический путь:**
+1. SELECT по `application_id=23 AND status IN ('pending', 'in_progress')` — 0 rows (lowercase не сматчил)
+2. SELECT по `id IN (136..145)` (id'шники из Network response) — нашлись 10 записей с UPPERCASE статусами
+3. UPDATE с UPPERCASE — успешно
+4. После сброса (DELETE WHERE status IN ('PENDING', 'IN_PROGRESS')) — UI вернулся в «Переводов нет», кнопка «Перевести пакет» появилась
+5. Запуск повторного перевода — после Pack 35.7 worker уже не падает, переводы доходят до DONE
+
+**Решение:** 3 паттерна:
+1. **Тушение пожара (одна заявка):** SQL DELETE на конкретный application_id с UPPERCASE статусами
+2. **Постоянная кнопка в UI (Pack 35.8):** «Отменить зависшие переводы» — менеджер сам сбрасывает без SQL
+3. **Auto-timeout (open backlog):** в воркере добавить `try/finally` с timeout-job: если перевод занимает >5 минут — пометить FAILED. Не сделано в этой сессии.
+
+**Уроки:**
+- **(Правило 53)** SQL enum в UPPERCASE — пришлось познать это на 30 минутах диагностики
+- **(Правило 56)** Patcher должен sys.exit(1) — был ещё один симптом этой же проблемы: если воркер падает тихо, диагностика возможна только через Railway logs, которые видны только если log.exception() вызван явно
+- **Backlog:** добавить auto-timeout в воркер перевода как **must-have** перед прод-нагрузкой 50 заявок/мес
+
+## Инцидент 31 — Pack 35.4 каскадный NameError: signature change без обновления делегирующей функции (11.05.2026 вечер)
+
+**Что случилось:** Шахин в работе у Кости как срочный клиент. Клик «Скачать акт» в админке → 500 Internal Server Error `{"detail":"Failed to render act_3: NameError: name 'applicant' is not defined"}`. До этого пакет скачивался нормально (несколько дней назад). Pack 35.4 (СБП-получатель) применился ~часом раньше.
+
+**Каскадный путь crash'а:**
+1. `applications.py:553 download_single_file` → `render_act(application, session, 3)`
+2. `docx_renderer.py:306 render_act` → `build_context(application, session)`
+3. `context.py:1174 build_context` → `applicant = session.get(Applicant, ...)` (OK, applicant загружен)
+4. `context.py:1188 build_context` → `bank_data = _build_bank_context(application, company, applicant)` (Pack 35.4 правильно передаёт applicant)
+5. `context.py:982 _build_bank_context` (override branch) → `return _generate_fresh_bank_context(application, company)` ← **ЗАБЫЛ applicant**
+6. `context.py:1017 _generate_fresh_bank_context` — функция использует `applicant.X` внутри (Pack 35.4 правил резолв СБП-имени) **БЕЗ applicant параметра в сигнатуре**
+7. Python runtime: `NameError`
+
+**Почему не вылезло у всех клиентов:** Большинство имеют непустой `bank_transactions_override`. Branch на строке 970-980 (override deserialization) отрабатывает раньше → не доходит до `_generate_fresh_bank_context`. У Шахина override был сброшен SQL'ем в Pack 35.5 диагностике → пошёл в fresh branch → crash.
+
+**Решение — Pack 35.7:** 2 точечные правки в `context.py`:
+1. Сигнатура `_generate_fresh_bank_context(application, company)` → `(application, company, applicant=None)`
+2. Делегирующий вызов внутри `_build_bank_context` теперь передаёт `applicant`
+
+После push'а на Railway — render актов Шахина работает.
+
+**Уроки:**
+- **(Правило 54)** При signature change функции — grep ВСЕХ вызовов
+- **(Правило 56)** Pack 35.6 (log.exception) был обязательным шагом для диагностики — без traceback'а я не нашёл бы точное место за 5 минут
+- **Тишина бага у других клиентов — это случайное везение,** не валидация. Если бы кто-то ещё клиента подавал в эти часы — тоже бы упало.
+
+## Инцидент 32 — Railway Query UI silently drops multi-statement SQL (11.05.2026 вечер)
+
+**Что случилось:** Я попросил Костю выполнить:
+```sql
+SELECT count(*) FROM translation;
+SELECT min(id), max(id), count(*) FROM translation;
+```
+
+В Railway Query UI вернулось `No Results / 0 rows`. Я предположил «таблица пустая, переводы не созданы».
+
+**На самом деле:** Railway UI выполнил оба SELECT'а, но показал результат только последнего (3 columns vs 1 column от первого — UI не справился, и вывел «empty»). Записи в таблице были — 145+ строк включая 10 зомби-записей у Шахина.
+
+Костя через `SELECT id FROM translation WHERE id IN (136..145)` нашёл существующие записи — это **запоздалое** подтверждение что таблица не пуста.
+
+**Симптом:** Multi-statement через `;` в Railway Query UI — нельзя верить «empty» результату, если ты ожидал данные.
+
+**Решение:** в этой сессии — выполнять SELECT по одному. На будущее — Правило 55.
+
+**Уроки:**
+- **(Правило 55)** Railway Query — один SELECT за раз
+- **Не доверять «No Results» если ожидаешь данные** — всегда проверять через альтернативный запрос
+- **psql вместо Railway Web UI** для сложных запросов — Railway даёт credentials, можно подключить локальный psql и видеть нормальные результаты
+
+## Инцидент 33 — Pack 35.9 patcher проглотил fail: функция определена, вызов не добавлен (11.05.2026 поздний вечер)
+
+**Что случилось:** Pack 35.9 patcher имел 2 части — (patch 1) добавление функции `_split_city_date_paragraphs`, (patch 2) её вызов в `translate_docx`. Patch 1 успешно отработал. Patch 2 не нашёл якорь `doc.save(out)` (различия в пустых строках между блоками) и завершился через `print("[2] ❌ якорь...")` БЕЗ `sys.exit(1)`.
+
+Patcher показал в выводе:
+```
+[1] OK — _split_city_date_paragraphs добавлена
+[2] ❌ якорь doc.save(out) не найден
+```
+
+И **вышел с exit code 0** (success). Костя закоммитил и запушил. В Railway деплой прошёл успешно. **Но в самом переводе** функция никогда не вызывалась — была определена как «мертвый код». Костя скачал испанский акт — шапка всё ещё в одну строку.
+
+Пришлось писать Pack 35.9.1 (попытка добавить вызов с новым якорем — снова не сматчил из-за пустой строки), потом Pack 35.9.2 (правильный якорь с пустой строкой). Это +30 минут отладки.
+
+**Решение:** Правило 56 — patcher при ❌ якоре ВСЕГДА `sys.exit(1)`. Pack 35.9.2 содержит уже правильный exit с правильным якорем.
+
+**Уроки:**
+- **(Правило 56)** Любой ❌ → `sys.exit(1)`. Никаких «print + pass».
+- **Проверка применения** на Railway: после push'а grep'ать что новый код **реально вызывается**, не только что он присутствует в файле. Можно через `Select-String -Path file.py -Pattern "новая_функция\("` — если в файле есть **определение** функции, но нет её **вызова** — значит нерабочая.
+
+## Инцидент 34 — Кириллический инициал в подписи: «SAHIN И.» вместо «SAHIN I.» (11.05.2026 поздний вечер)
+
+**Что случилось:** В скачанном испанском акте Шахина подпись `_____/ SAHIN И.`. Фамилия SAHIN — латиница (через name_substitution), а инициал `И.` — кириллица. У Ся Инь та же история: `_____/ XIA И.`.
+
+**Корень:** в шаблоне `act_template.docx` (русский) подпись стоит `{{ applicant.initials_native }}`. Функция `_initials_native(applicant)` для Шахина (last_native=Шахин, first_native=Исмаил, first_native[0]=И) возвращает `"Шахин И."`. Для русского документа это **правильно**.
+
+При переводе на испанский, `name_substitution.py:_build_applicant_subs` создаёт пары замен:
+- `("Шахин", "SAHIN")` — замена фамилии (Pack 15.2)
+- `("Исмаил", "ISMAYIL")` — замена имени
+- `("Шахин Исмаил", "SAHIN ISMAYIL")` — замена полной формы
+
+Но **нет** пары `("Шахин И.", "SAHIN I.")` или `("И.", "I.")`. Когда substitution применяется к строке `"Шахин И."`, замена `"Шахин"→"SAHIN"` срабатывает (получаем `"SAHIN И."`), но `И.` остаётся кириллицей — substitution словарь его не покрывает. Голый `"И."` нельзя добавить — это false-positive риск (заденет другие места в тексте, например цитаты).
+
+**Решение — Pack 35.10 (B часть):** в `_build_applicant_subs` добавлены 4 целевых пары для подписи:
+```python
+if last_native and first_native and last_latin and first_latin:
+    ru_init = first_native[0]   # "И"
+    lat_init = first_latin[0]   # "I" 
+    # «Шахин И.» → «SAHIN I.» — если фамилия ещё не подменилась
+    pairs.append((f"{last_native} {ru_init}.", f"{last_latin} {lat_init}."))
+    # «SAHIN И.» → «SAHIN I.» — если фамилия уже подменилась ранее
+    pairs.append((f"{last_latin} {ru_init}.", f"{last_latin} {lat_init}."))
+    # С middle initial если есть (для русских с отчеством)
+    if middle_native and middle_latin:
+        pairs.append((f"{last_native} {ru_init}.{middle_native[0]}.", f"{last_latin} {lat_init}.{middle_latin[0]}."))
+        pairs.append((f"{last_latin} {ru_init}.{middle_native[0]}.", f"{last_latin} {lat_init}.{middle_latin[0]}."))
+```
+
+Точечный паттерн `{LASTNAME} {init}.` — комбинация уникальная, не задевает обычный текст где `И.` может встретиться в другом контексте.
+
+**Уроки:**
+- **substitution словарь должен покрывать ВСЕ форматы которые рендерятся в шаблоне.** Если есть `{{ applicant.initials_native }}` — обязана быть пара для инициалов.
+- **Думать о порядке применения пар.** Pack 15.x уже применял `"Шахин"→"SAHIN"` раньше чем мог бы матчить `"Шахин И."`. Решение: добавить **обе** пары: ru_full и lat_partial (когда фамилия уже подменилась).
+- **Не использовать голые инициалы** в substitution — они слишком короткие и универсальные, дадут false-positive.
 
 
 ---
