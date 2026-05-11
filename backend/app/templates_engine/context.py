@@ -979,7 +979,7 @@ def _build_bank_context(application: Application, company: Company | None, appli
             period_start = data["period_start"]
             period_end = data["period_end"]
         except (KeyError, ValueError):
-            return _generate_fresh_bank_context(application, company)
+            return _generate_fresh_bank_context(application, company, applicant)
 
         total_income = sum(
             (t["amount"] for t in transactions if t["amount"] > 0),
@@ -1011,10 +1011,10 @@ def _build_bank_context(application: Application, company: Company | None, appli
             "total_expense_formatted": fmt_amount_signed(total_expense),
         }
 
-    return _generate_fresh_bank_context(application, company)
+    return _generate_fresh_bank_context(application, company, applicant)
 
 
-def _generate_fresh_bank_context(application: Application, company: Company | None) -> dict:
+def _generate_fresh_bank_context(application: Application, company: Company | None, applicant: Applicant | None = None) -> dict:
     # Pack 16.2: используем contract_sign_date как fallback если submission_date None.
     # Это позволяет генерировать выписку до того как менеджер выставит дату подачи.
     base_date = application.submission_date or application.contract_sign_date
