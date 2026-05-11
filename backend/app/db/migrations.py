@@ -780,3 +780,29 @@ def apply_pack34_2_migration() -> None:
             "ON application (is_ready_for_pickup)"
         ))
     print("[migration] Pack 34.2: application.is_ready_for_pickup ready")
+
+
+# ============================================================================
+# Pack 35.2 — applicant.passport_issuer_ru (локализованное название органа)
+# ============================================================================
+
+def apply_pack35_2_migration() -> None:
+    """Pack 35.2 миграция:
+       - ALTER TABLE applicant ADD COLUMN passport_issuer_ru VARCHAR(256)
+       Идемпотентна — IF NOT EXISTS / column check.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        if not _column_exists(conn, "applicant", "passport_issuer_ru"):
+            try:
+                conn.execute(text(
+                    "ALTER TABLE applicant ADD COLUMN passport_issuer_ru VARCHAR(256)"
+                ))
+                log.info("[migration:pack35_2] Added applicant.passport_issuer_ru")
+            except Exception as e:
+                log.warning(f"[migration:pack35_2] Add column failed: {e}")
+        else:
+            log.debug("[migration:pack35_2] applicant.passport_issuer_ru already exists")
+    print("[migration] Pack 35.2: applicant.passport_issuer_ru ready")

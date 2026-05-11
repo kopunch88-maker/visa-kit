@@ -86,6 +86,11 @@ class Applicant(TimestampMixin, table=True):
     passport_issue_date: Optional[date] = Field(default=None)
     passport_expiry_date: Optional[date] = Field(default=None)
     passport_issuer: Optional[str] = Field(default=None, max_length=128)
+    # Pack 35.2: локализованное название органа для русских документов
+    # (договор/акт/счёт). Заполняется автоматически из passport_issuer +
+    # nationality через services.passport_issuer_ru.resolve_passport_issuer_ru.
+    # Менеджер может править вручную в админке.
+    passport_issuer_ru: Optional[str] = Field(default=None, max_length=256)
 
     inn: Optional[str] = Field(default=None, max_length=12)
 

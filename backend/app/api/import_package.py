@@ -1333,6 +1333,24 @@ def _auto_apply_ocr_to_applicant(application_id: int):
             session.add(applicant)
             log.info(f"Auto-apply: updated existing Applicant id={applicant.id}")
 
+        # Pack 35.2: авто-заполнить passport_issuer_ru на основе issuer + nationality
+        try:
+            from app.services.passport_issuer_ru import resolve_passport_issuer_ru
+            current_ru = getattr(applicant, "passport_issuer_ru", None)
+            if not current_ru or not str(current_ru).strip():
+                issuer = getattr(applicant, "passport_issuer", None)
+                nat = getattr(applicant, "nationality", None)
+                resolved = resolve_passport_issuer_ru(issuer, nat)
+                if resolved:
+                    applicant.passport_issuer_ru = resolved
+                    session.add(applicant)
+                    log.info(
+                        f"Pack 35.2: auto-filled passport_issuer_ru="
+                        f"{resolved!r} (issuer={issuer!r}, nat={nat!r})"
+                    )
+        except Exception as e:
+            log.warning(f"Pack 35.2 auto-fill failed: {e}")
+
         # Помечаем все документы как applied
         for d in docs:
             d.applied_to_applicant = True

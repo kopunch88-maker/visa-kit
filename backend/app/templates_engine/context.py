@@ -1203,7 +1203,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "passport_formatted": passport_data["formatted"],
             "passport_issue_date": applicant.passport_issue_date,
             "passport_issue_date_str": fmt_date_ru(applicant.passport_issue_date),
-            "passport_issuer": applicant.passport_issuer or "",
+            "passport_issuer": _resolve_passport_issuer_for_template(applicant),
             "inn": applicant.inn or "",
             "home_address": abbreviate_address(applicant.home_address or ""),
             "home_address_line1": _bank_statement_address_line1(applicant),
@@ -1312,3 +1312,29 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "fmt_money_kop": fmt_money_kop,
         "fmt_amount_signed": fmt_amount_signed,
     }
+
+
+# === Pack 35.2: passport_issuer_ru с резолвом на лету ===
+def _resolve_passport_issuer_for_template(applicant) -> str:
+    """
+    Pack 35.2: возвращает passport_issuer для подстановки в русские шаблоны.
+
+    Логика:
+      1. Если у applicant заполнено passport_issuer_ru — используем его.
+      2. Иначе — резолвим passport_issuer + nationality на лету (БД не трогаем).
+      3. Если и резолв не дал ничего — fallback на passport_issuer как есть.
+    """
+    from app.services.passport_issuer_ru import resolve_passport_issuer_ru
+
+    existing_ru = (getattr(applicant, "passport_issuer_ru", None) or "").strip()
+    if existing_ru:
+        return existing_ru
+
+    resolved = resolve_passport_issuer_ru(
+        applicant.passport_issuer, applicant.nationality
+    )
+    if resolved:
+        return resolved
+
+    return applicant.passport_issuer or ""
+

@@ -1695,6 +1695,7 @@ export const FIELD_LABELS: Record<string, string> = {
   passport_number: "Номер паспорта",
   passport_issue_date: "Дата выдачи паспорта",
   passport_issuer: "Кем выдан",
+  passport_issuer_ru: "Кем выдан (рус., для договора)",
   home_address: "Адрес регистрации",
   home_country: "Страна",
 };

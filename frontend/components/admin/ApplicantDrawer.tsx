@@ -560,6 +560,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             </div>
             <Field label="Кем выдан" value={passport_issuer} onChange={setPassportIssuer}
               placeholder="Ministry of Internal Affairs / ГУ МВД..." />
+            {/* Pack 35.2: русифицированный вариант для договоров/актов/счетов */}
+            <Field label="Кем выдан (рус., для договора)"
+              value={(applicant as any)?.passport_issuer_ru || ""}
+              onChange={(v: string) => {
+                if (applicant) (applicant as any).passport_issuer_ru = v;
+              }}
+              placeholder="МВД Азербайджана / посольством КНР в России" />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
             {/* Pack 18.10 — страна рождения (для Pais в MI-T, отдельно от гражданства) */}
