@@ -11,6 +11,8 @@ import {
 import {
   ApplicantResponse,
   updateApplicant,
+  // Pack 35.3 — резолвер русифицированного названия органа выдачи паспорта
+  resolvePassportIssuerRu,
   transliterateLatToRu,
   BankResponse,
   listBanks,
@@ -77,6 +79,11 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [passport_number, setPassportNumber] = useState(applicant.passport_number || "");
   const [passport_issue_date, setPassportIssueDate] = useState(applicant.passport_issue_date || "");
   const [passport_issuer, setPassportIssuer] = useState(applicant.passport_issuer || "");
+  // Pack 35.3 — русифицированный вариант + флаг загрузки при кнопке генерации
+  const [passport_issuer_ru, setPassportIssuerRu] = useState(
+    (applicant as any).passport_issuer_ru || ""
+  );
+  const [resolvingIssuerRu, setResolvingIssuerRu] = useState(false);
   const [birth_date, setBirthDate] = useState(applicant.birth_date || "");
   const [birth_place_latin, setBirthPlaceLatin] = useState(applicant.birth_place_latin || "");
   // Pack 18.10 — страна рождения (отдельно от гражданства)
@@ -334,7 +341,27 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     }
   }
 
-  async function handleSave() {
+  // Pack 35.3 — кнопка генерации рядом с «Кем выдан (рус., для договора)»
+  async function handleResolvePassportIssuerRu() {
+    setResolvingIssuerRu(true);
+    setError(null);
+    try {
+      const result = await resolvePassportIssuerRu(passport_issuer, nationality);
+      if (result.resolved) {
+        setPassportIssuerRu(result.resolved);
+      } else {
+        setError(
+          "Поле «Кем выдан» пустое — нечего резолвить. Заполни сначала английский вариант."
+        );
+      }
+    } catch (e) {
+      setError(`Не удалось получить русский вариант: ${(e as Error).message}`);
+    } finally {
+      setResolvingIssuerRu(false);
+    }
+  }
+
+    async function handleSave() {
     setError(null);
     if (!last_name_native?.trim() || !first_name_native?.trim()) {
       setError("Фамилия и Имя на русском обязательны (хотя бы транслитом).");
@@ -560,13 +587,35 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             </div>
             <Field label="Кем выдан" value={passport_issuer} onChange={setPassportIssuer}
               placeholder="Ministry of Internal Affairs / ГУ МВД..." />
-            {/* Pack 35.2: русифицированный вариант для договоров/актов/счетов */}
-            <Field label="Кем выдан (рус., для договора)"
-              value={(applicant as any)?.passport_issuer_ru || ""}
-              onChange={(v: string) => {
-                if (applicant) (applicant as any).passport_issuer_ru = v;
-              }}
-              placeholder="МВД Азербайджана / посольством КНР в России" />
+            {/* Pack 35.2 + Pack 35.3: русифицированный вариант для договоров/актов/счетов */}
+            <Field
+              label="Кем выдан (рус., для договора)"
+              value={passport_issuer_ru}
+              onChange={setPassportIssuerRu}
+              placeholder="МВД Азербайджана / посольством КНР в России"
+              actionButton={
+                <button
+                  type="button"
+                  onClick={handleResolvePassportIssuerRu}
+                  disabled={resolvingIssuerRu}
+                  className="text-xs px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
+                  style={{ background: "var(--color-accent)" }}
+                  title="Сгенерировать на основе английского варианта и гражданства"
+                >
+                  {resolvingIssuerRu ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Генерация...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3 h-3" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              }
+            />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
             {/* Pack 18.10 — страна рождения (для Pais в MI-T, отдельно от гражданства) */}

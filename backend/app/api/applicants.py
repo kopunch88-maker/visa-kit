@@ -107,6 +107,8 @@ _PATCHABLE_FIELDS = {
     "birth_country",  # Pack 18.10
     "nationality", "sex",
     "passport_number", "passport_issue_date", "passport_expiry_date", "passport_issuer",
+    # Pack 35.3: русифицированный вариант органа выдачи для русских документов
+    "passport_issuer_ru",
     "inn",
     # Pack 17 — INN auto-generation поля
     "inn_registration_date",
@@ -305,3 +307,35 @@ def create_empty_applicant_for_application(
 
     return _enrich(applicant, session)
 
+
+
+
+# ============================================================================
+# Pack 35.3 — resolve passport_issuer_ru endpoint
+# ============================================================================
+
+@router.post("/resolve-passport-issuer-ru")
+def resolve_passport_issuer_ru_endpoint(
+    payload: dict = Body(...),
+    _user=Depends(require_manager),
+) -> dict:
+    """
+    Pack 35.3: возвращает русифицированное название органа выдачи паспорта.
+
+    Не сохраняет ничего в БД — просто резолвит и возвращает результат.
+    Менеджер видит результат в поле, может поправить, потом сохраняет
+    через PATCH /api/admin/applicants/{id} с полем passport_issuer_ru.
+
+    Body:
+      {"issuer": "EMBASSY OF P.R.CHINA IN RUSSIA", "nationality": "CHN"}
+    Returns:
+      {"resolved": "посольством КНР в России"}
+      или {"resolved": null} если issuer пустой.
+    """
+    from app.services.passport_issuer_ru import resolve_passport_issuer_ru
+
+    issuer = (payload.get("issuer") or "").strip()
+    nationality = (payload.get("nationality") or "").strip().upper() or None
+
+    resolved = resolve_passport_issuer_ru(issuer, nationality)
+    return {"resolved": resolved}

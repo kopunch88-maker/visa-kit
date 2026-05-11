@@ -1026,6 +1026,7 @@ export async function updateApplicant(
     passport_number: string;
     passport_issue_date: string;
     passport_issuer: string;
+    passport_issuer_ru: string;
     birth_date: string;
     birth_place_latin: string;
     email: string;
@@ -2607,3 +2608,33 @@ export async function refillRegion(
   return res.json();
 }
 
+
+
+
+// ============================================================================
+// Pack 35.3 — Resolve passport_issuer_ru
+// ============================================================================
+
+export async function resolvePassportIssuerRu(
+  issuer: string,
+  nationality: string | null,
+): Promise<{ resolved: string | null }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/resolve-passport-issuer-ru`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        issuer: issuer || "",
+        nationality: nationality || null,
+      }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`resolvePassportIssuerRu failed: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}

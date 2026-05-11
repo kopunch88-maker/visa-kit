@@ -229,6 +229,8 @@ class ApplicantCreate(SQLModel):
     passport_issue_date: Optional[date] = None
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
+    # Pack 35.3: русифицированное название органа для русских документов
+    passport_issuer_ru: Optional[str] = None
     inn: Optional[str] = None
     # Pack 17: INN auto-generation
     inn_registration_date: Optional[date] = None
