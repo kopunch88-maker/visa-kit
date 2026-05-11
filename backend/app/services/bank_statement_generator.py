@@ -182,6 +182,15 @@ def _adjust_to_business_day(d: date) -> date:
     return d
 
 
+def _adjust_to_previous_business_day(d: date) -> date:
+    """Pack 35.0: если дата выпала на выходной, сдвигаем НАЗАД на ближайший будний.
+    Используется для НПД — налоговая практика: «успеть до 22-го» означает уплатить
+    в последний рабочий день до 22-го, а не позже."""
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def _last_day_of_month(year: int, month: int) -> int:
     return monthrange(year, month)[1]
 
@@ -321,9 +330,18 @@ def generate_default_transactions(
     kwikpay_default = kwikpay_default.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     # Определяем месяцы внутри периода (для генерации зарплат / налогов / комиссий).
-    # Берём ВСЕ месяцы, которые хотя бы частично попадают в [period_start, period_end].
+    # Pack 35.0: стартуем с ПРЕДЫДУЩЕГО месяца к period_start. Причина — доход за
+    # месяц X приходит в (X+1), НПД за X платится в (X+1), комиссия в (X+2). Если
+    # начинать перебор с месяца period_start — теряем месяц X-1, чьи производные
+    # транзакции (доход/НПД) уже попадают в начало периода. Лишние месяцы хвоста
+    # и головы отфильтруются по `if period_start <= date <= period_end` дальше.
     months = []
-    cur = date(period_start.year, period_start.month, 1)
+    # Сдвигаемся на 1 месяц назад относительно period_start
+    _start = period_start
+    if _start.month == 1:
+        cur = date(_start.year - 1, 12, 1)
+    else:
+        cur = date(_start.year, _start.month - 1, 1)
     while cur <= period_end:
         months.append((cur.year, cur.month))
         # шагаем на следующий месяц
@@ -387,12 +405,12 @@ def generate_default_transactions(
                 "currency": "RUR",
             })
 
-        # 3. НПД (~18-22 числа месяца, следующего за месяцем дохода)
-        # т.е. за январь налог в феврале, но нам надо из месяца "получения" дохода (next)
-        # Точнее: доход за месяц X пришёл в (X+1), налог за X платится тоже в (X+1) ~20 числа
-        npd_day = random.randint(18, 25)
+        # 3. НПД — Pack 35.0: диапазон 17-22 (плательщики НПД успевают «до 22 числа»),
+        # сдвиг на ПРЕДЫДУЩИЙ рабочий день если 22-е выходной (налоговая логика:
+        # лучше уплатить заранее, чем просрочить). За месяц X налог платится в (X+1).
+        npd_day = random.randint(17, 22)
         try:
-            npd_date = _adjust_to_business_day(date(next_y, next_m, npd_day))
+            npd_date = _adjust_to_previous_business_day(date(next_y, next_m, npd_day))
         except ValueError:
             npd_date = None
         if npd_date and period_start <= npd_date <= period_end:
