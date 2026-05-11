@@ -113,6 +113,38 @@ def _ensure_page_break_before(p_element) -> bool:
     return True
 
 
+def _force_left_align_in_table(table_element) -> int:
+    """
+    Pack 34.6 — пробегает по всем <w:p> внутри таблицы и насильно ставит
+    <w:jc w:val="left"/>. Если jc отсутствует — создаёт.
+
+    Используется для таблицы реквизитов сторон в разделе 8 договора:
+    параграфы в шаблоне имеют jc=both (justify), и после Pack 34.5 (NBSP
+    в адресах) Word слишком сильно растягивает оставшиеся обычные пробелы.
+
+    Возвращает количество изменённых параграфов.
+    Идемпотентно: повторный запуск не меняет уже left-параграфы.
+    """
+    modified = 0
+    for p in table_element.findall(".//w:p", NS):
+        ppr = p.find("w:pPr", NS)
+        if ppr is None:
+            ppr = etree.Element(f"{W_NS}pPr")
+            p.insert(0, ppr)
+
+        jc = ppr.find("w:jc", NS)
+        if jc is None:
+            jc = etree.SubElement(ppr, f"{W_NS}jc")
+            jc.set(f"{W_NS}val", "left")
+            modified += 1
+        else:
+            current = jc.get(f"{W_NS}val")
+            if current != "left":
+                jc.set(f"{W_NS}val", "left")
+                modified += 1
+    return modified
+
+
 def _apply_page_break_before_requisites(docx_bytes: bytes) -> bytes:
     """
     Pack 33.0 — постпроцессинг отрендеренного договора.
@@ -179,6 +211,25 @@ def _apply_page_break_before_requisites(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
     _ensure_page_break_before(target_p)
+
+    # Pack 34.6 — найти первую таблицу ПОСЛЕ заголовка реквизитов
+    # и сделать все её параграфы left-aligned. Это убирает justify-артефакт
+    # «растянутых пробелов» когда NBSP (Pack 34.5) уменьшил число точек
+    # разрыва на строке.
+    requisites_table = None
+    found_heading = False
+    for child in body.iterchildren():
+        if child is target_p:
+            found_heading = True
+            continue
+        if not found_heading:
+            continue
+        if etree.QName(child).localname == "tbl":
+            requisites_table = child
+            break
+
+    if requisites_table is not None:
+        _force_left_align_in_table(requisites_table)
 
     out = io.BytesIO()
     doc.save(out)
