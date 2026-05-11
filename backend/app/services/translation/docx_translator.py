@@ -709,6 +709,14 @@ async def translate_docx(
     for (paragraph_idx, _original), translated_text in zip(targets, all_translations):
         _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
 
+    # Pack 35.9: разбить шапку «город + дата» на 2 параграфа
+    try:
+        splits = _split_city_date_paragraphs(doc)
+        if splits > 0:
+            log.info(f"[Pack 35.9] split city+date paragraphs: {splits}")
+    except Exception as e:
+        log.warning(f"[Pack 35.9] split city+date failed: {e}")
+
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
