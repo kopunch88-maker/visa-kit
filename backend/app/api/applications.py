@@ -551,6 +551,9 @@ def download_single_file(
     except HTTPException:
         raise
     except Exception as e:
+        # Pack 35.6: логируем traceback чтобы Railway Deploy Logs показал точную строку
+        import logging
+        logging.getLogger(__name__).exception(f"Failed to render {file_id}")
         raise HTTPException(500, f"Failed to render {file_id}: {type(e).__name__}: {e}")
 
     # encode имя файла для Content-Disposition (русские буквы)
