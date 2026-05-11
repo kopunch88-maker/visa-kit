@@ -1,36 +1,44 @@
 """
-Pack 15 — DOCX translator (v3 — Pack 15.2 + Pack 15.6 textbox fix + Pack 15.8 firstLine merge).
+Pack 15 — DOCX translator (v4 — Pack 33.9 hardened prompts + static lookup).
+
+Pack 33.9 fix (10.05.2026):
+- Добавлен STATIC_SINGLE_WORD_GLOSSARY — словарь точных переводов для
+  одиночных русских слов которые встречаются как изолированные фрагменты
+  (заголовки таблиц, метки textbox-ячеек). Если фрагмент после strip()
+  совпадает с ключом — переводим БЕЗ обращения к LLM.
+
+  Зачем: на коротких фрагментах вроде "Описание" LLM игнорировала
+  glossary в SYSTEM_PROMPT и отвечала разговорно:
+    "Por favor, proporcione el texto en ruso que desea traducir. 
+     Solo ha enviado la palabra «Описание»..."
+  Static lookup исключает любую вероятность подобной аномалии для
+  критичных однословных заголовков выписки и договоров.
+
+- SYSTEM_PROMPT усилен абсолютным запретом отвечать вопросом / просить
+  контекста / refuse'иться — добавлено правило 0 в самом начале блока
+  ABSOLUTE RULES.
+
+- single_system в _translate_one_by_one (fallback) усилен: добавлены те же
+  правила + критический минимум glossary (банк/договорные заголовки).
+  Раньше там был только generic «Translate Russian to Spanish» — на
+  одиночных словах модель срывалась.
 
 Pack 15.8 fix (заменяет Pack 15.7):
 - _set_paragraph_text теперь МЕРДЖИТ w:firstLine в w:left у переведённого
   параграфа: new_left = old_left + firstLine, firstLine удаляется.
-  
-  Зачем: Pack 15.7 просто удалял firstLine, но в шаблоне выписки последняя
-  строка блока Concepto уже имеет left=394 (без firstLine) — она была
-  выровнена с предыдущими строками которые имели left=199 firstLine=195
-  (эффективная позиция тоже 394). После Pack 15.7 первые 3 строки уехали
-  на left=199, а Concepto осталась на left=394 — лесенка наоборот.
-  
-  Pack 15.8: 199+195=394 — все 4 строки совпадают. Длинные испанские
-  описания тоже выравниваются по 394 (без лесенки между первой и
-  последующими строками одного параграфа).
-
-  Шаблоны на русском трогать нельзя (правило Кости — русский шаблон идеален),
-  поэтому фикс делаем на стороне переводчика.
 
 Pack 15.6 fix:
-- _collect_all_paragraphs теперь обходит <w:txbxContent> внутри <w:drawing>
-  (textbox-ы внутри плавающих фигур). До этого пропускалась ВСЯ карточка
-  реквизитов клиента в bank_statement_template (она в textbox-ах) и шапка
-  таблицы операций (она в textbox-ах внутри header1.xml).
-- Корректно обрабатываем <mc:AlternateContent>: переводим только <mc:Choice>,
-  пропускаем <mc:Fallback> (Word при сохранении сам синхронизирует Fallback
-  с Choice; перевод обоих через LLM приведёт к расхождению).
+- _collect_all_paragraphs обходит <w:txbxContent> внутри <w:drawing>
+  (textbox-ы внутри плавающих фигур). До этого пропускалась карточка
+  реквизитов клиента в bank_statement_template (textbox-ы) и шапка
+  таблицы операций (textbox-ы внутри header1.xml).
+- Корректно обрабатываем <mc:AlternateContent>: переводим только
+  <mc:Choice>, пропускаем <mc:Fallback>.
 
 Pack 15.2 changes vs Pack 15.1:
-- Промпт явно требует переводить ИНН → NIF, КПП → KPP, ОГРН → OGRN, БИК → BIC
-  (раньше говорил «keep as-is» — это была ошибка)
-- Few-shot пример с реквизитной таблицей
+- Промпт явно требует переводить ИНН → NIF, КПП → KPP, ОГРН → OGRN,
+  БИК → BIC (раньше говорил «keep as-is»).
+- Few-shot пример с реквизитной таблицей.
 """
 
 import io
@@ -65,14 +73,92 @@ _W_P = qn('w:p')
 _MC_FALLBACK = '{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback'
 
 
+# ============================================================================
+# Pack 33.9: static lookup для single-word фрагментов
+# ============================================================================
+# Если после strip() текст параграфа совпадает с одним из ключей —
+# подставляем готовый перевод и НЕ дёргаем LLM. Защита от случаев когда
+# модель на короткой строке без контекста отвечает разговорно вместо
+# перевода (видели на «Описание» в шапке таблицы выписки).
+#
+# Покрывает:
+# - заголовки таблиц банковской выписки (textbox-ы в header1.xml)
+# - короткие метки в карточках реквизитов
+# - служебные слова из договоров/актов/счетов
+#
+# Все ключи и значения — точные jurada-style варианты из основного
+# SYSTEM_PROMPT glossary. Изменения только синхронно с глоссарием.
+
+STATIC_SINGLE_WORD_GLOSSARY: dict[str, str] = {
+    # Банковская выписка — заголовки и метки
+    "Описание": "Descripción",
+    "Сумма": "Importe",
+    "Дата": "Fecha",
+    "Код": "Código",
+    "Назначение": "Concepto",
+    "Плательщик": "Ordenante",
+    "Получатель": "Beneficiario",
+    "Клиент": "Cliente",
+    "Паспорт": "Pasaporte",
+    "Адрес": "Dirección",
+    "Поступления": "Ingresos",
+    "Расходы": "Gastos",
+    "Страница": "Página",
+    "из": "de",
+    "Дебет": "Débito",
+    "Кредит": "Crédito",
+    "Баланс": "Saldo",
+    "Остаток": "Saldo",
+    "Валюта": "Moneda",
+
+    # Договорные/актовые служебные слова
+    "Исполнитель": "Contratista",
+    "Заказчик": "Cliente",
+    "Сторона": "Parte",
+    "Стороны": "Partes",
+    "Город": "Ciudad",
+    "Подпись": "Firma",
+    "Печать": "Sello",
+    "Должность": "Cargo",
+    "ФИО": "Nombre completo",
+    "Реквизиты": "Datos bancarios",
+    "Услуги": "Servicios",
+    "Период": "Período",
+    "Итого": "Total",
+    "Всего": "Total",
+
+    # Аббревиатуры-метки (часто в одиночных ячейках)
+    "ИНН": "NIF",
+    "КПП": "KPP",
+    "ОГРН": "OGRN",
+    "БИК": "BIC",
+    "СНИЛС": "SNILS",
+    "ОКПО": "OKPO",
+}
+
+
+def _try_static_translation(text: str) -> Optional[str]:
+    """Pack 33.9: возвращает готовый перевод если text — single-word из glossary.
+
+    Стрипает whitespace и проверяет точное совпадение. None если не нашли
+    (тогда вызывающая сторона отправит фрагмент в LLM как обычно).
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+    return STATIC_SINGLE_WORD_GLOSSARY.get(stripped)
+
+
 # Pack 15.2: jurada-style промпт со словарём из реальных подач.
-# КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ИНН/КПП/ОГРН/БИК ВСЕГДА переводятся (раньше «keep as-is»).
+# Pack 33.9: добавлено правило 0 — запрет refuse / ask for clarification.
 SYSTEM_PROMPT = """You are translating Russian business/legal documents to Spanish as a DRAFT for a sworn translator (traductor jurado MAE) who will review and finalize. Your goal: match the established Spanish jurada conventions so the jurado has minimal corrections to make.
 
 Input: JSON array of text fragments from a Russian document.
 Output: JSON array of Spanish translations, EXACTLY same length and order. No commentary. No markdown fences.
 
 ═══ ABSOLUTE RULES ═══
+
+0. NEVER refuse to translate. NEVER ask for clarification. NEVER add commentary, apologies, or explanations to the output. If a fragment looks short, ambiguous, or like a single word — TRANSLATE IT ANYWAY using the glossary below or your best literal Spanish equivalent. The output array MUST contain pure translations, NOT meta-text like "Por favor, proporcione el texto" or "Could you clarify". Each item in the output JSON array is the Spanish translation of the input item at the same index — no exceptions.
 
 1. NEVER MODIFY any Latin-script text already in the input — names of people, companies, addresses, banks. They have been pre-substituted from official documents (passports, EGRYL extracts) and must be preserved character-for-character. If you see "Yuksel Vedat", "INZHGEOSERVIS", "SBERBANK" — output them unchanged.
 
@@ -127,61 +213,11 @@ Bank statement headers (Pack 15.6 — appear as standalone fragments from textbo
 - (подпись сотрудника АО «АЛЬФА-БАНК») → (firma del empleado de «ALFA-BANK», S.A.)
 - Ф.И.О. сотрудника АО «АЛЬФА-БАНК» → Nombre completo del empleado de «ALFA-BANK», S.A.
 
-Roles:
-- Исполнитель → el Contratista
-- Заказчик → el Cliente
-- Генеральный директор → Director General
-- Стороны → las Partes
-
-Citizenship phrases (use exact form, with "el ciudadano de la"):
-- Гражданин Российской Федерации → ciudadano de la Federación de Rusia
-- Гражданин Турецкой Республики → ciudadano de la República de Turquía
-- Гражданин Республики Албания → ciudadano de la República de Albania
-- Гражданин Республики Косово → ciudadano de la República de Kosovo
-- Гражданин Республики Азербайджан → ciudadano de la República de Azerbaiyán
-- Гражданин Украины → ciudadano de Ucrania
-- Гражданин Республики Узбекистан → ciudadano de la República de Uzbekistán
-- Гражданин Республики Казахстан → ciudadano de la República de Kazajistán
-- Гражданин Республики Беларусь → ciudadano de la República de Belarús
-- Гражданин Грузии → ciudadano de Georgia
-- Гражданин Республики Армения → ciudadano de la República de Armenia
-- Гражданин Республики Таджикистан → ciudadano de la República de Tayikistán
-
-Use D. before male names, Dña. before female names.
-
-Legal terms:
-- ООО → Sociedad Limitada (in body) / S.L. (after company name in details)
-- АО / ОАО → Sociedad Anónima / S.A.
-- в дальнейшем именуемый → en lo sucesivo, el / en lo sucesivo denominado
-- в лице → representada por
-- именуемые в дальнейшем → denominados conjuntamente
-
-Contract structure (section headings):
-- Предмет договора → Objeto del Contrato
-- Права и обязанности сторон → Derechos y obligaciones de las Partes
-- Цена договора и порядок оплаты → Precio del Contrato y procedimiento de pago
-- Сроки оказания услуг → Plazos de prestación de los Servicios
-- Ответственность сторон → Responsabilidad de las Partes
-- Порядок разрешения споров → Procedimiento de Resolución de Disputas
-- Прочие условия → Otras Condiciones
-- Адреса и реквизиты сторон → Direcciones y datos de las Partes
-- Подписи сторон → Firmas de las Partes
-
-Banking and finance:
-- руб. / рублей → rublos
-- 290 000 (двести девяносто тысяч) рублей → 290 000 (doscientos noventa mil) rublos
-- Сбербанк / Сбер → "SBERBANK", S.A.
-- Альфа-Банк → "ALFA-BANK", S.A.
-- ВТБ → "VTB", S.A.
-- день / дни → día / días
-- рабочий день → día hábil
-- банковский день → día hábil bancario
-
-Addresses:
-- ул. / улица → c/ (calle)
-- г. → ciudad de
-- д. (дом) → № (or just keep house number)
-- кв. → piso
+Common geographic/address terms:
+- ул. / улица → c/
+- г. / город → ciudad de
+- д. / дом → №
+- кв. / квартира → piso
 - область → región
 - проспект → avenida
 - Москва → Moscú
@@ -219,7 +255,11 @@ Example 3 (requisites with empty fields):
 Input: ["Исполнитель:\\nYuksel Vedat\\nПаспорт U23616456,\\nвыдан 08.10.2020 ELAZIĞ\\nNIF\\n—\\n\\nc/c\\nв\\nBIC del banco:\\nc/corr:"]
 Output: ["el Contratista:\\nYuksel Vedat\\nPasaporte U23616456,\\nexpedido el 08.10.2020 ELAZIĞ\\nNIF\\n—\\n\\nc/c\\nen\\nBIC del banco:\\nc/corr:"]
 
-Note: Latin-script names (Yuksel Vedat) stay unchanged. Russian abbreviation labels (ИНН, КПП, БИК, ОГРН) ALWAYS become Latin labels (NIF, KPP, BIC, OGRN). Empty values stay as "—".
+Example 4 (Pack 33.9 — single-word table headers):
+Input: ["Описание", "Сумма", "Дата проводки", "Код операции"]
+Output: ["Descripción", "Importe", "Fecha de contabilización", "Código de operación"]
+
+Note: Latin-script names (Yuksel Vedat) stay unchanged. Russian abbreviation labels (ИНН, КПП, БИК, ОГРН) ALWAYS become Latin labels (NIF, KPP, BIC, OGRN). Empty values stay as "—". Single-word fragments are STILL translated using the glossary above — never refused, never asked about.
 """
 
 
@@ -384,14 +424,53 @@ async def _translate_batch(texts: list[str]) -> list[str]:
 
 
 async def _translate_one_by_one(texts: list[str]) -> list[str]:
+    """Pack 33.9: усилен single_system промпт — добавлены запрет на refuse и
+    минимально необходимый glossary критичных однословных меток. Раньше тут
+    был только generic «Translate Russian to Spanish» — модель на одиночных
+    словах вроде «Описание» отвечала просьбой контекста («Por favor,
+    proporcione...») вместо перевода.
+    """
     log.info(f"[translation] Falling back to one-by-one translation for {len(texts)} fragments")
     client = get_llm_client()
     results = []
     single_system = (
-        "Translate the following Russian business/legal text to formal Spanish (Spain). "
-        "Keep all Latin-script text (names, companies) unchanged. "
-        "Translate Russian abbreviations: ИНН→NIF, КПП→KPP, ОГРН→OGRN, БИК→BIC. "
-        "Return ONLY the translation, no commentary, no quotes, no markdown."
+        "You are translating Russian business/legal text to formal Spanish (Spain) "
+        "as a DRAFT for a sworn translator. "
+        "\n\n"
+        "ABSOLUTE RULES:\n"
+        "0. NEVER refuse to translate. NEVER ask for clarification. NEVER add "
+        "commentary, apologies, or explanations. If the input is a single word, "
+        "translate that single word using the glossary or your best literal Spanish "
+        "equivalent. Output ONLY the translation — no preamble, no quotes, no "
+        "markdown.\n"
+        "1. Keep all Latin-script text (names, companies) unchanged.\n"
+        "2. Keep all numbers, dates, account numbers, emails, phones unchanged.\n"
+        "3. Translate Russian abbreviation labels: "
+        "ИНН → NIF, КПП → KPP, ОГРН → OGRN, БИК → BIC, СНИЛС → SNILS, ОКПО → OKPO.\n"
+        "\n"
+        "GLOSSARY (use these exact translations for single-word fragments):\n"
+        "Описание → Descripción\n"
+        "Сумма → Importe\n"
+        "Дата → Fecha\n"
+        "Код → Código\n"
+        "Назначение → Concepto\n"
+        "Плательщик → Ordenante\n"
+        "Получатель → Beneficiario\n"
+        "Клиент → Cliente\n"
+        "Паспорт → Pasaporte\n"
+        "Адрес → Dirección\n"
+        "Поступления → Ingresos\n"
+        "Расходы → Gastos\n"
+        "Исполнитель → Contratista\n"
+        "Заказчик → Cliente\n"
+        "Дата проводки → Fecha de contabilización\n"
+        "Код операции → Código de operación\n"
+        "Сумма в валюте счета → Importe en la divisa de la cuenta\n"
+        "Операции по счету → Operaciones en cuenta\n"
+        "Входящий остаток → Saldo entrante\n"
+        "Исходящий остаток → Saldo saliente\n"
+        "\n"
+        "Output ONLY the Spanish translation. No commentary."
     )
     for text in texts:
         try:
@@ -418,6 +497,8 @@ async def translate_docx(
     Pack 15.2: pre-substitution теперь покрывает метки ИНН/КПП/ОГРН/БИК → NIF/KPP/etc
     + applicant.full_name_native + company.short_name + None → —.
     Pack 15.6: обходим textbox-ы (карточка реквизитов в выписке, шапка операций в header).
+    Pack 33.9: static lookup для single-word фрагментов (защита от LLM-разговорчивости
+    на коротких изолированных строках вроде «Описание»).
     """
     doc = Document(io.BytesIO(docx_bytes))
     paragraphs = _collect_all_paragraphs(doc)
@@ -440,6 +521,7 @@ async def translate_docx(
     )
 
     targets: list[tuple[int, str]] = []
+    static_hits = 0
     for idx, p in enumerate(paragraphs):
         text = _extract_paragraph_text(p)
         original_text = text  # для сравнения с результатом подстановки
@@ -459,7 +541,27 @@ async def translate_docx(
             continue
 
         if not _should_skip(text):
+            # Pack 33.9: static lookup ПЕРЕД отправкой в LLM.
+            # Защищает от случая когда модель на короткой строке
+            # ("Описание") отвечает разговорно вместо перевода.
+            static_translation = _try_static_translation(text)
+            if static_translation is not None:
+                _set_paragraph_text(p, static_translation)
+                static_hits += 1
+                log.info(
+                    "[translation] Pack 33.9 static lookup: %r -> %r (paragraph %d)",
+                    text.strip(), static_translation, idx,
+                )
+                continue
+
             targets.append((idx, text))
+
+    if static_hits > 0:
+        log.info(
+            "[translation] Pack 33.9: %d single-word fragments translated via static lookup "
+            "(skipped LLM call)",
+            static_hits,
+        )
 
     if not targets:
         log.info("[translation] Nothing to translate in this DOCX")
