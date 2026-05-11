@@ -1804,6 +1804,16 @@ export async function deleteAllTranslations(applicationId: number): Promise<void
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
 }
 
+/** Pack 35.8: отменить зависшие переводы (PENDING/IN_PROGRESS) — для очистки крутилок. */
+export async function cancelStuckTranslations(applicationId: number): Promise<{ cancelled: number }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/cancel-stuck`,
+    { method: "POST", headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 /** Скачать ZIP всех успешно переведённых документов. */
 export async function downloadTranslationsZip(applicationId: number): Promise<Blob> {
   const res = await fetch(

@@ -412,3 +412,37 @@ def delete_all_translations(
     session.commit()
 
     log.info(f"[translations] Deleted {len(translations)} translations for app {app_id}")
+
+# ============================================================================
+# Pack 35.8 — отмена зависших переводов
+# ============================================================================
+
+@router.post("/{app_id}/translations/cancel-stuck", status_code=200)
+def cancel_stuck_translations(
+    app_id: int,
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Удалить все переводы заявки в status PENDING/IN_PROGRESS.
+
+    Используется когда воркер crashed и оставил зомби-записи —
+    менеджер кликает «Отменить» в UI, записи удаляются, после чего
+    можно жать «Перевести пакет» заново.
+    """
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    stmt = select(Translation).where(
+        Translation.application_id == app_id,
+        Translation.status.in_([TranslationStatus.PENDING, TranslationStatus.IN_PROGRESS]),
+    )
+    stuck = session.exec(stmt).all()
+    count = len(stuck)
+    for tr in stuck:
+        session.delete(tr)
+    session.commit()
+
+    log.info(f"[Pack 35.8] cancelled {count} stuck translations for application {app_id}")
+    return {"cancelled": count}
+

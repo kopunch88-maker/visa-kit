@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Languages, Download, RefreshCw, Loader2, Check, AlertCircle,
-  Trash2, Clock, Package,
+  Trash2, Clock, Package, XCircle,
 } from "lucide-react";
 import {
   startPackageTranslation,
   startSingleTranslation,
   getTranslations,
   deleteAllTranslations,
+  cancelStuckTranslations,
   downloadTranslationsZip,
   downloadTranslationFile,
   TranslationItem,
@@ -126,6 +127,25 @@ export function TranslationPanel({ applicationId }: Props) {
     setError(null);
     try {
       await deleteAllTranslations(applicationId);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Pack 35.8: отменить зависшие переводы (PENDING/IN_PROGRESS).
+  // Используется когда воркер crashed и оставил «крутилки» на UI.
+  async function handleCancelStuck() {
+    if (!confirm("Отменить зависшие переводы? Записи в очереди будут удалены, можно будет запустить заново.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cancelStuckTranslations(applicationId);
+      if (result.cancelled === 0) {
+        setError("Нет зависших переводов для отмены");
+      }
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -277,10 +297,22 @@ export function TranslationPanel({ applicationId }: Props) {
           )}
 
           {isActive && (
-            <span className="text-sm text-tertiary flex items-center gap-1.5">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Переводим… {summary!.done + summary!.failed} из {summary!.total}
-            </span>
+            <>
+              <span className="text-sm text-tertiary flex items-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Переводим… {summary!.done + summary!.failed} из {summary!.total}
+              </span>
+              <button
+                onClick={handleCancelStuck}
+                disabled={busy}
+                className="px-2 py-1 rounded-md text-xs border text-danger hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1"
+                style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+                title="Отменить зависшие переводы (если воркер упал)"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Отменить
+              </button>
+            </>
           )}
         </div>
       </div>
