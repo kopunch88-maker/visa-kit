@@ -214,18 +214,67 @@ def _build_company_subs(company: Optional[Company]) -> list[tuple[str, str]]:
 
     # Pack 15.2: short_name (например «ИНЖГЕОСЕРВИС») — ВАЖНО, в шаблоне в
     # реквизитной таблице используется именно short_name.
+    # Pack 34.9: вместо голого ядра подставляем сокращённую полную форму
+    # ('Sociedad Limitada "X"') — это юридически корректнее, чем просто бренд
+    # в кавычках. Применяется во всех испанских переводах.
     if short_name and re.search(r"[А-Яа-я]", short_name):
-        es_core = _extract_company_core(full_es) if full_es else ""
-        if es_core:
-            pairs.append((short_name, es_core))
+        es_short_full = _shorten_opf_es(full_es) if full_es else ""
+        if es_short_full:
+            pairs.append((short_name, es_short_full))
         else:
-            # Fallback: GOST-транслит short_name
+            # Fallback: GOST-транслит short_name (когда full_es пустой)
             translit = transliterate_name(short_name)
             if translit:
                 pairs.append((short_name, translit.upper()))
 
     return pairs
 
+
+# ============================================================================
+# Pack 34.9 — сокращение испанской ОПФ для короткой формы подстановки
+# ============================================================================
+# Используется в _build_company_subs (Пара 2) — для company.short_name
+# вместо голого ядра в кавычках подставляется сокращённая полная форма.
+# Применяется ко всем испанским переводам (договор, акты, счета, employer
+# letter, CV, выписка) — потому что substitutions общие для всех типов.
+#
+# Pack 34.4 в bank_statement_generator.py — симметрия для русского:
+#   «Общество с ограниченной ответственностью» → «ООО»
+# Pack 34.9 — для испанского:
+#   «Sociedad de Responsabilidad Limitada» → «Sociedad Limitada»
+#   «Sociedad Anónima Abierta/Cerrada» → «Sociedad Anónima»
+#
+# Длинная форма (full_name_ru → full_name_es) НЕ затрагивается — она
+# остаётся «Sociedad de Responsabilidad Limitada ...» как сейчас.
+
+_OPF_SHORTEN_ES_MAP = [
+    # Порядок: более длинные паттерны раньше
+    (r"^\s*Sociedad\s+de\s+Responsabilidad\s+Limitada\s+", "Sociedad Limitada "),
+    (r"^\s*Sociedad\s+An[óo]nima\s+(?:Abierta|P[úu]blica)\s+", "Sociedad Anónima "),
+    (r"^\s*Sociedad\s+An[óo]nima\s+(?:Cerrada|Privada)\s+", "Sociedad Anónima "),
+]
+
+
+def _shorten_opf_es(full_name_es: str) -> str:
+    """
+    Pack 34.9: сокращает испанскую ОПФ в начале названия компании.
+
+    >>> _shorten_opf_es('Sociedad de Responsabilidad Limitada "FAKTOR STROY"')
+    'Sociedad Limitada "FAKTOR STROY"'
+    >>> _shorten_opf_es('Sociedad Limitada "X"')
+    'Sociedad Limitada "X"'
+    >>> _shorten_opf_es('Sociedad Anónima Abierta "Y"')
+    'Sociedad Anónima "Y"'
+    >>> _shorten_opf_es('')
+    ''
+    """
+    if not full_name_es:
+        return full_name_es
+    for pattern, replacement in _OPF_SHORTEN_ES_MAP:
+        new_name, count = re.subn(pattern, replacement, full_name_es, count=1, flags=re.IGNORECASE)
+        if count:
+            return new_name
+    return full_name_es
 
 def _extract_company_core(es_name: str) -> str:
     """Достаёт «ядро» названия компании из испанского варианта."""
