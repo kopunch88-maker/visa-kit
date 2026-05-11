@@ -487,6 +487,130 @@ async def _translate_one_by_one(texts: list[str]) -> list[str]:
     return results
 
 
+
+# ============================================================================
+# Pack 35.9: разбиение шапки «город + дата» на 2 параграфа
+# ============================================================================
+
+_SPANISH_DATE_RE = re.compile(
+    r'«?\s*\d{1,2}\s*»?\s+de\s+\w+\s+de\s+\d{4}',
+    re.IGNORECASE,
+)
+
+
+def _split_city_date_paragraphs(doc) -> int:
+    """
+    После перевода ищет параграфы вида «город ... дата» (с табом или большим
+    блоком пробелов) и разбивает на 2 параграфа: город и дата, оба слева.
+
+    Покрывает:
+    - Акт: <w:jc=both> + <w:tab w:val="right"> + <w:tab/> в runs
+    - Договор: <w:jc=center> + строка с 3+ подряд пробелами
+
+    Не трогает:
+    - Параграфы без испанской даты (русские шаблоны, тело документа)
+    - Параграфы где до даты слишком много текста (>30 chars) — это не шапка
+    - Параграфы где упоминается «Contrato» (это ссылка на договор-номер, не шапка)
+
+    Returns: количество разбитых параграфов.
+    """
+    from docx.oxml.ns import qn
+    from copy import deepcopy
+
+    splits = 0
+
+    # Собираем все параграфы (включая textbox-ы)
+    all_paragraphs = _collect_all_paragraphs(doc)
+
+    for paragraph in all_paragraphs:
+        try:
+            text = paragraph.text
+        except Exception:
+            continue
+
+        if not text or not text.strip():
+            continue
+
+        # Не трогаем «Contrato n.º X de fecha Y» — это ссылка на договор
+        if "Contrato" in text and "de fecha" in text:
+            continue
+
+        # Ищем испанскую дату
+        date_match = _SPANISH_DATE_RE.search(text)
+        if not date_match:
+            continue
+
+        date_str = date_match.group(0).strip()
+        before_date = text[:date_match.start()].strip()
+
+        # Если до даты слишком много текста — это не шапка
+        if len(before_date) > 30:
+            continue
+
+        # Если до даты ничего — параграф только с датой, не трогаем
+        if not before_date:
+            continue
+
+        # Это шапка «город + дата». Разбиваем.
+        p_elem = paragraph._element
+
+        # Сохраняем pPr оригинала для клонирования стиля (но почистим)
+        old_pPr = p_elem.find(qn('w:pPr'))
+
+        # Удаляем все runs из оригинального параграфа
+        for r in list(p_elem.findall(qn('w:r'))):
+            p_elem.remove(r)
+        # Удаляем все hyperlinks если есть
+        for hl in list(p_elem.findall(qn('w:hyperlink'))):
+            p_elem.remove(hl)
+
+        # Очищаем форматирование pPr: убираем tabs, меняем jc на left
+        if old_pPr is not None:
+            # Удаляем <w:tabs>
+            tabs_elem = old_pPr.find(qn('w:tabs'))
+            if tabs_elem is not None:
+                old_pPr.remove(tabs_elem)
+            # Меняем <w:jc> на left
+            jc_elem = old_pPr.find(qn('w:jc'))
+            if jc_elem is not None:
+                jc_elem.set(qn('w:val'), 'left')
+            # Убираем firstLine indent (если есть)
+            ind_elem = old_pPr.find(qn('w:ind'))
+            if ind_elem is not None:
+                # Не удаляем целиком — может остаться полезный отступ
+                if ind_elem.get(qn('w:firstLine')):
+                    del ind_elem.attrib[qn('w:firstLine')]
+
+        # Создаём новый run с городом
+        from docx.oxml import OxmlElement
+        r_city = OxmlElement('w:r')
+        t_city = OxmlElement('w:t')
+        t_city.text = before_date
+        t_city.set(qn('xml:space'), 'preserve')
+        r_city.append(t_city)
+        p_elem.append(r_city)
+
+        # Создаём НОВЫЙ параграф для даты, копируя pPr оригинала
+        new_p = OxmlElement('w:p')
+        if old_pPr is not None:
+            new_p.append(deepcopy(old_pPr))
+        r_date = OxmlElement('w:r')
+        t_date = OxmlElement('w:t')
+        t_date.text = date_str
+        t_date.set(qn('xml:space'), 'preserve')
+        r_date.append(t_date)
+        new_p.append(r_date)
+
+        # Вставляем новый параграф сразу после оригинального
+        p_elem.addnext(new_p)
+
+        splits += 1
+        log.info(f"[Pack 35.9] split city+date: {before_date!r} / {date_str!r}")
+
+    return splits
+
+
+
 async def translate_docx(
     docx_bytes: bytes,
     substitutions: Optional[SubstitutionDict] = None,
