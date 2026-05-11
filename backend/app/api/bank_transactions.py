@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.db.session import get_session
-from app.models import Application, Company
+from app.models import Application, Applicant, Company
 from app.services.bank_statement_generator import (
     generate_default_transactions,
     serialize_for_storage,
@@ -141,6 +141,24 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
     npd_rate = application.bank_npd_rate or DEFAULT_NPD_RATE
     monthly_fee = application.bank_monthly_fee or DEFAULT_BANK_FEE_PER_MONTH
 
+    # Pack 35.5: достаём applicant для СБП-переводов (имя получателя + телефон РФ).
+    # Без этого форматтер получит None → СБП-получатель станет «Получатель» вместо «Инь С.».
+    _applicant_full_name_ru = None
+    _applicant_phone = None
+    if application.applicant_id:
+        _applicant = session.get(Applicant, application.applicant_id)
+        if _applicant is not None:
+            _first = (_applicant.first_name_native or "").strip()
+            _last = (_applicant.last_name_native or "").strip()
+            _full = f"{_first} {_last}".strip()
+            if not _full:
+                # Fallback на латинские поля (для иностранцев без транслитерации)
+                _first_l = (_applicant.first_name_latin or "").strip()
+                _last_l = (_applicant.last_name_latin or "").strip()
+                _full = f"{_first_l} {_last_l}".strip()
+            _applicant_full_name_ru = _full or None
+            _applicant_phone = _applicant.phone
+
     return generate_default_transactions(
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
@@ -153,6 +171,10 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
         npd_rate=npd_rate,
         bank_fee=monthly_fee,
         seed=application.id,
+        # Pack 35.5: пробрасываем applicant в генератор
+        applicant_full_name_ru=_applicant_full_name_ru,
+        applicant_phone=_applicant_phone,
+        statement_date_override=getattr(application, "bank_statement_date", None),
     )
 
 

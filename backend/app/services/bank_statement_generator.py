@@ -336,12 +336,23 @@ def generate_default_transactions(
     # транзакции (доход/НПД) уже попадают в начало периода. Лишние месяцы хвоста
     # и головы отфильтруются по `if period_start <= date <= period_end` дальше.
     months = []
-    # Сдвигаемся на 1 месяц назад относительно period_start
-    _start = period_start
-    if _start.month == 1:
-        cur = date(_start.year - 1, 12, 1)
+    # Pack 35.5: сдвигаем на 1 месяц назад от period_start ТОЛЬКО если
+    # contract_sign_date < period_start. Логика: если договор подписан ДО
+    # начала периода — производные транзакции за месяц «X-1» могут
+    # попасть в начало периода (доход X-1 приходит ~6 числа period_start).
+    # Если договор подписан ВНУТРИ периода — никаких актов за X-1 быть не
+    # может (договора ещё не было), стартуем от месяца contract_sign_date.
+    if contract_sign_date and contract_sign_date < period_start:
+        # Pack 35.0 логика — для договоров подписанных ДО начала периода
+        _start = period_start
+        if _start.month == 1:
+            cur = date(_start.year - 1, 12, 1)
+        else:
+            cur = date(_start.year, _start.month - 1, 1)
     else:
-        cur = date(_start.year, _start.month - 1, 1)
+        # Pack 35.5: договор внутри периода — стартуем с месяца подписания
+        _csd = contract_sign_date or period_start
+        cur = date(_csd.year, _csd.month, 1)
     while cur <= period_end:
         months.append((cur.year, cur.month))
         # шагаем на следующий месяц
