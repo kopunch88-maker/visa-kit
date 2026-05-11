@@ -8,7 +8,7 @@
 > 5. **Перед SQL** — Правило 20 (dump схемы таблицы).
 > 6. **Финальная проверка DOCX** — ВСЕГДА в Word, не в LibreOffice (Правило 25).
 
-> **Дата последнего обновления:** 11.05.2026 (Сессия Pack 34.x: 7 паков за вечер — full ISO country list, Инженер degree + OCR EN→RU + engineering OKSO mapping, ReadyForPickup briefcase toggle с 3-tier sorting, submission_date в карточке + sort mode switcher с localStorage, shorten OPF в bank statement + left-align safety net, NBSP в русских адресах для устойчивого word wrap, force left-align в таблице реквизитов договора, merge address line1+line2 в 11 контрактных шаблонах; +Инциденты 24-25, +Правила 44-47)
+> **Дата последнего обновления:** 11.05.2026 — вечер (Сессия Pack 35.x: 8 паков подряд — bank statement NPD-фикс с предыдущим месяцем, NPD-справка/апостиль строго в рабочих днях, applicant.passport_issuer_ru локализация органа выдачи паспорта для русских договоров (БД+сервис+OCR auto-apply+context fallback), кнопка ✨ Сгенерировать в ApplicantDrawer + hotfix 35.3.1, _build_bank_context принимает applicant явно (фикс «Получатель: Получатель»), Pack 35.5 двойной — СБП-получатель в bank_transactions.py второй путь + условный сдвиг месяца назад (январский акт до договора), 35.5.1 hotfix якоря без cp1251 docstring; +Инциденты 26-29, +Правила 48-52)
 
 ---
 
@@ -287,6 +287,35 @@ Pack 18.3.4 ставил в справку КНД 1122035 синтетическ
 6. **PowerShell `>>` склеивает несколько команд в одну сессию параллельно**, и провал первой команды маскируется зелёным выводом следующей. Patcher должен явно дождаться завершения через `Write-Host` маркер или просто запускаться отдельно от build.
 
 **Файлы patcher'ов:** `apply_pack34_0_country_options.py`, `apply_pack34_1_engineer_degree.py`, `apply_pack34_2_ready_for_pickup.py` + `apply_pack34_2_1_hotfix.py`, `apply_pack34_3_submission_date_sort.py`, `apply_pack34_4_bank_alignment.py`, `apply_pack34_5_nbsp_addresses.py`, `apply_pack34_6_contract_requisites_left_align.py`, `apply_pack34_7_merge_address_lines.py`.
+
+---
+
+## Сессия 11.05.2026 — вечер — Pack 35.x: банковская выписка корректность + локализация passport_issuer для иностранцев (8 паков)
+
+**Контекст:** В выписке Шахина (TUR) — только 2 поступления и 2 НПД вместо ожидаемых 3+3, потому что генератор начинал перебор с месяца period_start, теряя месяц X-1 чьи производные транзакции попадают в начало периода. У Ся Инь (CHN) — паспорт «выдан EMBASSY OF P.R.CHINA IN RUSSIA» в русских договорах, что некрасиво. Плюс ещё мелкое: справки НПД и апостиль иногда выпадали на выходные. Сессия раскрутилась в 8 паков с двумя hotfix'ами, потому что после Pack 35.0 у Ся Инь возник обратный косяк (январский акт до договора), а 35.4 чинил только один из двух путей рендера выписки.
+
+| Pack | Что | Результат |
+|---|---|---|
+| **35.0** | `bank_statement_generator.py`: генератор стартует с **предыдущего** месяца относительно `period_start` чтобы производные транзакции за X-1 (доход ~6 числа period_start.month) попали в начало периода. Pack 35.0 также: (a) НПД сужен с 18-25 на 17-22 (плательщики НПД успевают «до 22 числа», норма налоговой), (b) новая функция `_adjust_to_previous_business_day` для НПД (сдвиг **назад** на ближайший будний при попадании на выходной). Verify на выписке Шахина: 3 поступления + 3 НПД (17.02, 17.03, 22.04 — все будни). | ✅ В проде (но требует фикс 35.5 для договоров внутри периода) |
+| **35.1** | `context_npd_certificate.py`: после `issued_date = today - random(14..21)` добавлен while-цикл со сдвигом на предыдущий рабочий день при попадании на выходной. `context_apostille.py` не трогали — там `_add_business_days(issued_date, 5..7)` уже корректно пропускает выходные, и базовая дата теперь приходит выравненной. Симуляция на 20 кейсах: старая логика 5/20 справок на выходной, новая — 0/20. | ✅ В проде |
+| **35.2** | Локализация органа выдачи паспорта для русских договоров/актов/счетов. **8 файлов**: миграция `apply_pack35_2_migration()` (ADD COLUMN `applicant.passport_issuer_ru VARCHAR(256)`), регистрация в lifespan, поле в SQLModel, **новый** `backend/app/services/passport_issuer_ru.py` с словарями COUNTRY_GENITIVE_RU (60+ стран), COUNTRY_DIPLOMATIC_RU (CHN→КНР etc.), COUNTRY_KEYWORDS (упорядоченный — длинные/специфичные сначала, RUSSIA в конце чтобы не перехватывать «...IN RUSSIA» в посольствах); функция `resolve_passport_issuer_ru(issuer, nationality)` распознаёт EMBASSY/CONSULATE/MIA/M.I.A./MFA. В `context.py` хелпер `_resolve_passport_issuer_for_template(applicant)` — берёт из БД, иначе резолвит на лету (БД не трогает). В `import_package.py` auto-apply после OCR. В админке `ApplicantDrawer` поле «Кем выдан (рус., для договора)» рядом с английским. Тесты: «EMBASSY OF P.R.CHINA IN RUSSIA» + CHN → «посольством КНР в России», «Ministry of Internal Affairs» + AZE → «МВД Азербайджана», 12/12 кейсов прошли. | ✅ В проде |
+| **35.3** + 35.3.1 hotfix | Кнопка ✨ «Сгенерировать» рядом с полем passport_issuer_ru в Drawer. 4 файла: endpoint `POST /api/admin/applicants/resolve-passport-issuer-ru` (не сохраняет в БД — только резолвит), `passport_issuer_ru` в `_PATCHABLE_FIELDS` и `ApplicantUpdate`, функция `resolvePassportIssuerRu` в `lib/api.ts`, в Drawer — state, handler `handleResolvePassportIssuerRu`, замена Pack 35.2-минимального Field на Field с `actionButton`. **Hotfix 35.3.1**: при «Сохранить» поле не записывалось в БД — patcher 35.3 искал shorthand `passport_issuer,` в payload `updateApplicant({...})`, а в коде формат `passport_issuer: passport_issuer.trim(),`. Одна строчка: `passport_issuer_ru: passport_issuer_ru.trim() \|\| null,` после `passport_issuer.trim()`. | ✅ В проде |
+| **35.4** | `_build_bank_context` в `context.py` принимает третий параметр `applicant: Applicant \| None = None`. Внутри функции вместо ненадёжного `getattr(application, "applicant", None)` (SQLModel relationship, иногда `None` несмотря на наличие applicant_id) — используется переданный applicant. Вызов в `build_context` теперь передаёт уже загруженный `session.get(Applicant, ...)`. Бонус: fallback на латинские поля (`first_name_latin + last_name_latin`) если русские пустые — для иностранцев без транслитерации. **НО** этот фикс работает только для одного из двух путей рендера выписки → потребовался Pack 35.5. | ✅ В проде (но недостаточно — см. 35.5) |
+| **35.5** + 35.5.1 hotfix | Двойной фикс. **(A)** В `backend/app/api/bank_transactions.py:_generate_for_app` теперь тоже резолвится applicant + передаются `applicant_full_name_ru` / `applicant_phone` / `statement_date_override`. Это второй путь рендера выписки (через endpoint `/bank-transactions/generate` который вызывает кнопка «Перегенерировать выписку» в админке) — Pack 35.4 его не покрывал, поэтому в сохранённом `bank_transactions_override` снова была дефолтная строка «Получатель: Получатель». **(B)** В `bank_statement_generator.py` сдвиг старта цикла месяцев на месяц назад (Pack 35.0) теперь **условный**: применяется только если `contract_sign_date < period_start`. Если договор подписан ВНУТРИ периода — стартуем с месяца `contract_sign_date`. **Hotfix 35.5.1**: оригинальный patcher 35.5 не нашёл якорь `_generate_for_app` потому что docstring в файле сохранён в cp1251 (Костя редактировал в Notepad++ с кириллицей в cp1251), patcher читает как UTF-8 — подстрока не матчит. 35.5.1 использует якорь без кириллицы (английский `return generate_default_transactions(...)`). | ✅ В проде, верифицировано на выписке Ся Инь №60: «Получатель: Инь С.», 2 поступления (фев+март без января), баланс сходится |
+
+**Главные уроки сессии:**
+
+1. **Два пути рендера выписки.** `_build_bank_context` в `context.py` (вызывается при генерации DOCX пакета) и `_generate_for_app` в `api/bank_transactions.py` (вызывается endpoint'ом «Перегенерировать выписку»). При любом фиксе генератора нужно править **оба места** — иначе фикс работает только в одном сценарии (см. Pack 35.4 → потребовался 35.5).
+2. **`getattr(application, "applicant", None)` — лотерея.** SQLModel relationship может быть `None` или AttachedObject, зависит от состояния сессии и того как загружали родителя. Надёжно: `session.get(Applicant, application.applicant_id)` явно (Правило 52 уже есть).
+3. **cp1251 docstring ломает patcher с UTF-8 якорями.** Если в файле есть русские комментарии написанные руками в редакторе с cp1251 (Notepad++ дефолт на русской Windows) — UTF-8-якорь не сматчит. Решение: брать якоря из английских строк кода (function signature, return-statement с параметрами на английском), не из docstring.
+4. **«Перегенерировать выписку» НЕ всегда вызывает генератор.** Если в `bank_transactions_override` уже что-то лежит — UI отдаёт сохранённый JSON. Чтобы заставить генератор пересчитать всё с нуля: `UPDATE application SET bank_transactions_override = NULL WHERE id = X;` через Railway Postgres Query.
+5. **id в URL админки `/admin?id=32` ≠ application.id.** Это **applicant.id** (Drawer редактирует applicant). При SQL-операциях по id нужно убедиться где смотришь: `application.id` через `JOIN` к applicant.
+6. **Pack 35.0 был «слишком жадным»** — добавлял предыдущий месяц безусловно. Для Шахина (договор от октября) это нужно, для Ся Инь (договор от 10.02 внутри периода) это вызывает «акт за январь, которого не существовало». Правильно: условный сдвиг через `if contract_sign_date < period_start`.
+7. **PowerShell `\` continuation ≠ bash.** Многострочные команды через `\` в PowerShell ломаются — каждая строка после `\` интерпретируется как отдельная команда. Писать одну команду на строку или каждый `git add` отдельной строкой (см. Правило 48 ниже).
+
+**Файлы patcher'ов:** `apply_pack35_0_bank_npd_fix.py`, `apply_pack35_1_npd_business_days.py`, `apply_pack35_2_passport_issuer_ru.py`, `apply_pack35_3_passport_issuer_ru_button.py` + `apply_pack35_3_1_hotfix_save.py`, `apply_pack35_4_sbp_recipient_fix.py`, `apply_pack35_5_dual_fix.py` + `apply_pack35_5_1_hotfix.py`.
+
+---
 
 ---
 
@@ -1480,6 +1509,75 @@ Pack 16.7 чинил merge `line1`/`line2` в `templates/docx/contract_template.
 
 **Tip для отладки:** если визуально «много места справа, а Word всё равно перенёс рано» — открой Word > Главная > Абзац > вкладка «Отступы и интервалы» → проверь «Выравнивание». Если «По ширине» — это justify.
 
+### 🔥 Правило 48 — Bash-style `\` line continuation ломает PowerShell
+
+Если в инструкции пишешь команды вида:
+```bash
+git add backend/app/db/migrations.py \
+        backend/app/main.py \
+        backend/app/models/applicant.py
+```
+
+— это **bash-синтаксис**. PowerShell такие continuation НЕ понимает: `\` в конце строки трактуется как часть имени файла, а каждая следующая строка интерпретируется как **отдельная команда**. В Pack 35.2 это привело к 6 ошибкам `CommandNotFoundException` и пропуску commit'а. Костя руками доделал.
+
+**Правило:**
+- Инструкции пользователю на Windows = **одна команда на строку**.
+- Если нужно много `git add` — каждый отдельной строкой, никаких `\`:
+```powershell
+git add backend/app/db/migrations.py
+git add backend/app/main.py
+git add backend/app/models/applicant.py
+```
+- Альтернатива (одна строка через пробел) — допустима, но визуально читать сложнее:
+```powershell
+git add backend/app/db/migrations.py backend/app/main.py backend/app/models/applicant.py
+```
+
+### 🔥 Правило 49 — id в URL админки `/admin?id=X` это `applicant.id`, НЕ `application.id`
+
+В админке Drawer открывается через `?id=X` и параметр это **id записи в applicant** (Drawer редактирует Applicant). Внутренний `application.id` — другое число.
+
+**Чтобы найти application по applicant'у**: `SELECT id, applicant_id, ... FROM application WHERE applicant_id = X`. Чтобы найти по человеку — JOIN с applicant по latin/native имени.
+
+**В Pack 35.5 это съело 30 минут**: я пытался сбросить override через `UPDATE application SET bank_transactions_override = NULL WHERE id = 32` — но 32 был applicant.id, а application.id у Ся Инь тоже оказался 32 (совпало), потом начали путаться окончательно. На скриншоте `#2026-0032` — это display_id (`application_number`), тоже не равен `application.id`.
+
+**Правило:**
+- Перед любым SQL по id заявки — `SELECT id, applicant_id, status FROM application WHERE applicant_id = X` — посмотреть структуру.
+- Или искать по имени: `JOIN applicant ON applicant.id = application.applicant_id WHERE applicant.last_name_latin = 'XIA'`.
+
+### 🔥 Правило 50 — Два пути рендера банковской выписки
+
+Выписка генерируется через **два независимых пути**:
+
+1. **`backend/app/templates_engine/context.py:_build_bank_context`** — вызывается из `build_context` при генерации DOCX-пакета (через render_endpoints).
+2. **`backend/app/api/bank_transactions.py:_generate_for_app`** — вызывается endpoint'ом `POST /api/admin/applications/{id}/bank-transactions/generate`, который дёргается кнопкой «Перегенерировать выписку» в админке.
+
+Результат `_generate_for_app` сохраняется в `application.bank_transactions_override` и при рендере DOCX используется **первым** (генератор не вызывается заново).
+
+**Правило:** при любом фиксе резолва applicant/company/parameters в bank_statement_generator → **оба** пути нужно править. Иначе:
+- Фикс в `_build_bank_context` сработает только если override пустой — для НОВЫХ заявок без сохранённой выписки.
+- Все существующие заявки с уже нажатой «Перегенерировать выписку» получат фикс только после повторной перегенерации (с новым `_generate_for_app`).
+- Если в течение сессии нажимать «Перегенерировать» — попадаем в `_generate_for_app`, не в `_build_bank_context`.
+
+Если что-то одно — нужно сбросить override (`UPDATE application SET bank_transactions_override = NULL WHERE id = X`) и перегенерить заново.
+
+### 🔥 Правило 51 — Кириллица в docstring файла = UTF-8/cp1251 лотерея для patcher'а
+
+Если Костя редактировал файл в Notepad++ или другом редакторе с дефолтной кодировкой cp1251 (русская Windows) — русские docstring/комментарии в файле могут быть **в cp1251**. Когда patcher читает файл через `Path.read_text(encoding="utf-8")` — кириллица превращается в кашу типа `Р“РµРЅРµСЂРёСЂСѓРµС‚`. И якорь с UTF-8-кириллицей **не сматчит**.
+
+**Симптом:** `Get-Content` показывает кракозябры в кириллических местах, патчер пишет «якорь не найден» хотя строка визуально на месте.
+
+**Правило:**
+- При написании patcher'а **не использовать русский текст из docstring как якорь**. Всегда брать английские строки кода: function signature, return-statement с английскими параметрами, английские keyword'ы.
+- Если без кириллицы никак — добавлять fallback-якоря (signature only, no-comment version) как в Pack 35.5.1.
+- При диагностике «якорь не нашёлся» — первым делом `Get-Content -Encoding UTF8` и `Get-Content -Encoding default` сравнить — если результаты разные, в файле cp1251.
+
+### 🔥 Правило 52 — Раньше уже было — `getattr(application, "relationship", None)` ненадёжно, использовать `session.get(Model, id)`
+
+(Это правило уже было в стиле кода CLAUDE.md, но конкретный случай в Pack 35.4/35.5 показал последствия.) SQLModel relationship может вернуть `None` или AttachedObject в зависимости от состояния сессии и того как загружали родительский объект. Для одних заявок `application.applicant` подгрузится автоматически, для других — `None`. Это вызвало баг «Получатель: Получатель» в выписке Ся Инь.
+
+**Правило:** в коде где есть `session` — всегда `session.get(Applicant, application.applicant_id) if application.applicant_id else None`. Никаких `getattr(application, "applicant", None)`. Если функция не имеет `session` — передавать уже извлечённый объект как параметр (как Pack 35.4: `_build_bank_context(application, company, applicant)`).
+
 ## DOCX-уроки (специально для Pack 16/20/25)
 
 1. **`<w:trHeight w:val="442"/>` БЕЗ `hRule="auto"`** = минимум 442 twips (~7.4mm), Word растянет если контент больше. С `hRule="auto"` Word **сжимает** короткие строки. У Алиева в эталоне нет hRule.
@@ -1553,6 +1651,9 @@ Pack 16.7 чинил merge `line1`/`line2` в `templates/docx/contract_template.
 - `migration_pack20_2_batch4` — id=28-39 (экономисты + продажники + переводчики)
 - `migration_pack20_2_cleanup` — удалены 7 Position + перепривязка Vedat 11→14
 - `migration_pack21_0` — 5 представителей + 11 spain_address
+
+## Pack 35 (11.05.2026 вечер)
+- `apply_pack35_2_migration` — `applicant.passport_issuer_ru VARCHAR(256)` (локализация органа выдачи паспорта для русских договоров/актов/счетов)
 
 ---
 
@@ -2229,9 +2330,84 @@ P6: ' {{ company.postal_address_line2 }}'
 - **«Зрительный обман» — слово-паразит**, к которому я прибег под давлением и в попытке оправдать прежний (неверный) тезис. Если возражение пользователя простое и физически воспроизводимое (бэкспейс убрал перенос) — это **сильное доказательство**, не повод для оправданий.
 
 
+## Инцидент 26 — Pack 35.0 «жадный» — сгенерировал акт за месяц до подписания договора (11.05.2026 вечер)
+
+**Что случилось:** Pack 35.0 безусловно сдвигал старт цикла месяцев на месяц назад от `period_start`. Логика правильная для Шахина (договор от 23.10.2025 → производные транзакции за январь 2026 попадают в начало периода). Но для Ся Инь (договор 10.02.2026, период 03.02-02.05.2026) генератор слепил «акт за январь 2026 от 31.01.2026, оплата 06.02.2026» — **до подписания договора**. Это физически невозможно, и Костя заметил.
+
+**Цикл сессии:**
+1. Выписка 56 — 2 поступления (фев+март), без января — было корректно (Pack 35.0 ещё не вышел для Ся Инь)
+2. Pack 35.0 пушнул и применился ко всем заявкам
+3. Выписка 57-59 — появился январский акт 06.02 → невозможный платёж
+
+**Корень:** в `bank_statement_generator.py:339-345` сдвиг `_start = period_start - 1 месяц` без проверки `contract_sign_date < period_start`. Pack 35.0 был тестирован только на Шахине (договор от октября), где это работает.
+
+**Решение — Pack 35.5 (B):** добавлено условие. Если `contract_sign_date < period_start` — старая логика (нужна для договоров подписанных до начала периода). Иначе — стартуем с месяца подписания договора.
+
+**Уроки:**
+- **Тестировать новую логику на разных типах кейсов.** «Договор внутри периода» и «договор до периода» — два качественно разных случая. Pack 35.0 закрывал второй, но без проверки сломал первый.
+- **Pack 35.0 → Pack 35.5 — это регрессия от моего же фикса.** Костя был прав, когда сразу спросил «а ты не сломал логику что я просил?». Я тогда защищался словами «по логике 2 поступления — это правильно для договора от 10.02». Но в реальности генератор всё равно лепил январский акт, и я этого не заметил пока не пришла свежая выписка.
+
+## Инцидент 27 — «Получатель: Получатель» — Pack 35.4 чинил только один из двух путей рендера выписки (11.05.2026 вечер)
+
+**Что случилось:** В выписке Ся Инь СБП-переводы выходили с дефолтной строкой «Получатель: Получатель» вместо ожидаемого «Инь С.». Pack 35.4 сделал `_build_bank_context` принимающим явный `applicant` параметр. Но проблема осталась.
+
+**Расследование заняло 4 итерации** (выписки 57, 58, 59, попытка сброса override через SQL). Симптомы:
+- В коде `context.py` — applicant правильно резолвится через `session.get(Applicant, ...)`
+- В файле `_format_sbp_recipient_name` логика правильная — из «Инь Ся» сделает «Инь С.»
+- В БД у Ся Инь оба поля заполнены — `first_name_native = Инь`, `last_name_native = Ся`
+- Но при перегенерации выписки всё равно «Получатель»
+
+**Корень нашёлся** через `Get-ChildItem -Recurse | Select-String "generate_default_transactions"`:
+
+| Файл | Что |
+|---|---|
+| `templates_engine/context.py:1056` | Pack 35.4 правильно резолвит applicant |
+| **`api/bank_transactions.py:144`** | **Применял `_generate_for_app` который НЕ передавал `applicant_full_name_ru` вообще** |
+| `services/bank_statement_generator.py:264` | Сам генератор |
+
+Кнопка «Перегенерировать выписку» в админке дёргает `POST /bank-transactions/generate` → `_generate_for_app` → генератор **без applicant**. Результат сохраняется в `application.bank_transactions_override`. При следующем рендере DOCX используется override, не вызывая `_build_bank_context` заново.
+
+**Решение — Pack 35.5 (A):** в `_generate_for_app` тоже добавлен резолв applicant через `session.get(Applicant, application.applicant_id)` + проброс `applicant_full_name_ru` / `applicant_phone` в генератор.
+
+**Уроки:**
+- **(Правило 50)** Два пути рендера — при любом фиксе нужно править оба. Поиск через `Get-ChildItem -Recurse | Select-String` — обязательная диагностическая команда перед любым «исправил один файл — должно заработать».
+- **Override каширует результат.** При неработающем фиксе и сохранённом override — реальный код не вызывается. Сброс через `UPDATE application SET bank_transactions_override = NULL` — обязательный шаг диагностики.
+
+## Инцидент 28 — Pack 35.5 упал на cp1251 docstring (11.05.2026 вечер)
+
+**Что случилось:** Pack 35.5 patcher написал якорь начинающийся с docstring `"""Генерирует свежий черновик для заявки. None если не хватает данных."""`. Patcher читал файл через `Path.read_text(encoding="utf-8")` и ожидал увидеть эту строку как UTF-8. Но в файле `bank_transactions.py` docstring сохранён в **cp1251** (Костя редактировал в Notepad++ с дефолтной cp1251 кодировкой на русской Windows). При UTF-8 чтении кириллица превращается в кашу типа `Р“РµРЅРµСЂРёСЂСѓРµС‚ СЃРІРµР¶РёР№...`. Подстрока не сматчила, patcher с ошибкой завершился на Fix A.
+
+**Проблема не была видна сразу.** `Get-Content` в PowerShell показывал ту же кашу. Я сначала думал что Костя поменял код руками. Только когда `Select-String -Pattern "def _generate_for_app"` нашёл функцию по английской сигнатуре — стало ясно, что код там нормальный, проблема в кодировке docstring.
+
+**Решение — Pack 35.5.1:** новые якоря построены **только из английских строк кода** (function signature, return-statement с английскими параметрами `submission_date=...`, `salary_rub=...`). Никаких русских комментариев. Также добавил fallback-якоря (signature only, no-comment version) на случай если в чужих местах тоже кириллица в cp1251.
+
+**Уроки:**
+- **(Правило 51)** Не использовать русский текст из docstring/комментариев как якорь patcher'а. cp1251 в одном файле + UTF-8 в другом — норма для исторических Windows-репо.
+- **Полезный диагностический трюк:** `Select-String -Path X -Pattern "латиница из кода"` всегда работает, в то время как поиск по русскому может не сматчить из-за кодировки.
+
+## Инцидент 29 — id из URL админки оказался applicant.id, не application.id (11.05.2026 вечер)
+
+**Что случилось:** Костя зашёл в админку Ся Инь, URL `/admin?id=32`. Я предложил для диагностики `UPDATE application SET bank_transactions_override = NULL WHERE id = 32;` — оба думали что 32 это application.id. Запрос выполнился «успешно» но 0 строк изменилось. Долго не могли понять что не так.
+
+**Корень:** в URL админки `/admin?id=32` параметр `id` — это **applicant.id** (Drawer открывает Applicant для редактирования). Внутренний `application.id` тоже совпал на 32 (повезло/не повезло — на проде у Ся Инь applicant_id=26, app_id=32, мы случайно угадали правильную колонку, но по другой причине).
+
+**Правильный диагностический запрос:**
+```sql
+SELECT a.id AS app_id, a.applicant_id, a.bank_transactions_override IS NOT NULL AS has_override,
+       apl.last_name_native, apl.first_name_native, apl.last_name_latin
+FROM application a
+JOIN applicant apl ON apl.id = a.applicant_id
+WHERE apl.last_name_latin = 'XIA' OR apl.last_name_native = 'Ся';
+```
+
+Это сразу показывает: app_id=32, applicant_id=26, override был, last_name_native=Ся. Если бы я с этого начал, не было бы путаницы.
+
+**Уроки:**
+- **(Правило 49)** id в URL ≠ application.id обязательно. Всегда сначала диагностический SELECT с JOIN, чтобы увидеть структуру.
+- **Не угадывать SQL ID** — Правило 20 (не угадывать имена колонок) расширяется на «не угадывать значения id, всегда find by name».
+
+
 ---
-
-
 
 ```powershell
 # Активировать venv (если нужно для миграций)
