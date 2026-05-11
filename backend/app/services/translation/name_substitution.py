@@ -140,6 +140,32 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
     if middle_native and middle_latin:
         pairs.append((middle_native, middle_latin))
 
+    # Pack 35.10: инициальные формы для подписи.
+    # В шаблоне подпись: «{{ applicant.initials_native }}» → русский «Шахин И.»
+    # Без этих пар substitution заменяет «Шахин»→«SAHIN», но «И.» остаётся
+    # кириллицей → в переводе «SAHIN И.» вместо «SAHIN I.».
+    # Точечный паттерн «{LASTNAME} {init}.» — не задевает другие «И.» в тексте.
+    if last_native and first_native and last_latin and first_latin:
+        ru_init = first_native[0]
+        lat_init = first_latin[0]
+        # Шахин И. → SAHIN I.
+        pairs.append((f"{last_native} {ru_init}.", f"{last_latin} {lat_init}."))
+        # Уже подменённый last_latin — на случай если фамилия заменилась раньше:
+        # SAHIN И. → SAHIN I.
+        pairs.append((f"{last_latin} {ru_init}.", f"{last_latin} {lat_init}."))
+        # С middle initial если есть
+        if middle_native and middle_latin:
+            ru_mid = middle_native[0]
+            lat_mid = middle_latin[0]
+            pairs.append((
+                f"{last_native} {ru_init}.{ru_mid}.",
+                f"{last_latin} {lat_init}.{lat_mid}.",
+            ))
+            pairs.append((
+                f"{last_latin} {ru_init}.{ru_mid}.",
+                f"{last_latin} {lat_init}.{lat_mid}.",
+            ))
+
     return pairs
 
 

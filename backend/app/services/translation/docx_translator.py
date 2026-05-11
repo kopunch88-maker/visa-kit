@@ -557,6 +557,16 @@ def _split_city_date_paragraphs(doc) -> int:
         # Сохраняем pPr оригинала для клонирования стиля (но почистим)
         old_pPr = p_elem.find(qn('w:pPr'))
 
+        # Pack 35.10: сохраняем rPr из первого run перед удалением
+        # (чтобы новые run'ы унаследовали шрифт/размер)
+        old_runs = list(p_elem.findall(qn('w:r')))
+        saved_rPr = None
+        if old_runs:
+            first_rPr = old_runs[0].find(qn('w:rPr'))
+            if first_rPr is not None:
+                from copy import deepcopy as _deepcopy
+                saved_rPr = _deepcopy(first_rPr)
+
         # Удаляем все runs из оригинального параграфа
         for r in list(p_elem.findall(qn('w:r'))):
             p_elem.remove(r)
@@ -584,6 +594,9 @@ def _split_city_date_paragraphs(doc) -> int:
         # Создаём новый run с городом
         from docx.oxml import OxmlElement
         r_city = OxmlElement('w:r')
+        # Pack 35.10: наследуем шрифт/размер из старого первого run
+        if saved_rPr is not None:
+            r_city.append(_deepcopy(saved_rPr))
         t_city = OxmlElement('w:t')
         t_city.text = before_date
         t_city.set(qn('xml:space'), 'preserve')
@@ -595,6 +608,9 @@ def _split_city_date_paragraphs(doc) -> int:
         if old_pPr is not None:
             new_p.append(deepcopy(old_pPr))
         r_date = OxmlElement('w:r')
+        # Pack 35.10: наследуем rPr и в date run
+        if saved_rPr is not None:
+            r_date.append(_deepcopy(saved_rPr))
         t_date = OxmlElement('w:t')
         t_date.text = date_str
         t_date.set(qn('xml:space'), 'preserve')
