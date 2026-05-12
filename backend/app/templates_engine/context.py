@@ -1008,7 +1008,12 @@ def _build_bank_context(application: Application, company: Company | None, appli
             (-t["amount"] for t in transactions if t["amount"] < 0),
             Decimal("0"),
         )
-        closing_balance = opening_balance + total_income - total_expense
+        # Pack 36.1: гарантируем closing_balance >= 5000
+        MIN_CLOSING = Decimal("5000.00")
+        net = total_income - total_expense
+        if opening_balance + net < MIN_CLOSING:
+            opening_balance = MIN_CLOSING - net
+        closing_balance = opening_balance + net
 
         for t in transactions:
             t["amount_formatted"] = fmt_amount_signed(t["amount"])
