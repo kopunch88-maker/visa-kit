@@ -437,7 +437,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     <div
       className="fixed inset-0 z-50 flex justify-end"
       style={{ background: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
+      
     >
       <div
         className="w-full max-w-xl h-full overflow-auto flex flex-col"
