@@ -1,3 +1,4 @@
+python
 """
 DESIGNACIÓN DE REPRESENTANTE — заполнение AcroForm.
 
@@ -137,7 +138,10 @@ def _build_designacion_fields(
 
     # ============= Estado civil (Casilla de verificación 1-5) =============
     # Casilla 1=Soltero, 2=Casado, 3=Viudo, 4=Divorciado, 5=Separado
-    # Для каждой нужно установить '/Yes' если стоит, иначе пусто.
+    # Сначала очищаем ВСЕ чекбоксы, потом ставим галочку только на один.
+    for i in range(1, 6):
+        fields[f"Casilla de verificación{i}"] = ""  # очищаем
+
     ec_to_casilla = {
         "S": 1,    # Soltero
         "C": 2,    # Casado
