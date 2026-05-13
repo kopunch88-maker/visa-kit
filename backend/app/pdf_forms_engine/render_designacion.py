@@ -1,4 +1,4 @@
-python
+
 """
 DESIGNACIÓN DE REPRESENTANTE — заполнение AcroForm.
 
