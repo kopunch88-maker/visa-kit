@@ -1291,27 +1291,66 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   </div>
                 </div>
 
-                {/* Pack 19.1a: duties отображаются read-only если есть, в 19.1b будет редактируемо */}
-                {wh.duties && wh.duties.length > 0 && (
-                  <div>
-                    <label
-                      className="text-xs block mb-1"
-                      style={{ color: "var(--color-text-tertiary)" }}
-                    >
-                      Обязанности ({wh.duties.length})
-                    </label>
-                    <div
-                      className="text-xs px-2 py-1 rounded"
-                      style={{
-                        background: "var(--color-bg-primary)",
-                        border: "1px solid var(--color-border-tertiary)",
-                        color: "var(--color-text-secondary)",
-                      }}
-                    >
-                      {wh.duties.join(" • ")}
+                {/* Pack 19.1b: duties редактируемы */}
+                <div>
+                  <label
+                    className="text-xs block mb-1"
+                    style={{ color: "var(--color-text-tertiary)" }}
+                  >
+                    Обязанности ({(wh.duties || []).length})
+                  </label>
+                  {(wh.duties || []).map((duty, di) => (
+                    <div key={di} className="flex gap-1 mb-1">
+                      <textarea
+                        value={duty}
+                        onChange={(e) => {
+                          const next = [...workHistory];
+                          const duties = [...(next[i].duties || [])];
+                          duties[di] = e.target.value;
+                          next[i] = { ...next[i], duties };
+                          setWorkHistory(next);
+                        }}
+                        rows={2}
+                        className="w-full px-2 py-1 rounded text-xs"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                          resize: "vertical",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...workHistory];
+                          const duties = (next[i].duties || []).filter((_, idx) => idx !== di);
+                          next[i] = { ...next[i], duties };
+                          setWorkHistory(next);
+                        }}
+                        className="p-1 rounded hover:bg-red-50 self-start mt-0.5"
+                        title="Удалить"
+                      >
+                        <Trash2 size={12} style={{ color: "#dc2626" }} />
+                      </button>
                     </div>
-                  </div>
-                )}
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = [...workHistory];
+                      next[i] = { ...next[i], duties: [...(next[i].duties || []), ""] };
+                      setWorkHistory(next);
+                    }}
+                    className="text-xs px-2 py-1 rounded mt-1"
+                    style={{
+                      background: "var(--color-bg-secondary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    + Добавить обязанность
+                  </button>
+                </div>
               </div>
             ))}
 
