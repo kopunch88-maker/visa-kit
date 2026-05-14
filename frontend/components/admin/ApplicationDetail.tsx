@@ -263,7 +263,16 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
               <ReadyForPickupToggleButton application={application} onChanged={handleArchiveChanged} />
               <button
                 onClick={async () => {
-                  try { await toggleFiled(application.id); await loadAll(); onUpdated(); }
+                  try {
+                    await toggleFiled(application.id);
+                    // Pack 36.2 — синхронизируем статус с флагом
+                    if (!application.is_filed && application.status !== "submitted") {
+                      await updateStatus(applicationId, "submitted");
+                    } else if (application.is_filed && application.status === "submitted") {
+                      await updateStatus(applicationId, "drafts_generated");
+                    }
+                    await loadAll(); onUpdated();
+                  }
                   catch (e) { alert(`Ошибка: ${(e as Error).message}`); }
                 }}
                 className="px-2.5 py-1 rounded-md text-xs font-semibold transition-colors"
