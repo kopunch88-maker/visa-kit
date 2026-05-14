@@ -34,6 +34,7 @@ import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
 // Pack 30.0
+import { toggleFiled } from "@/lib/api";
 import { UrgentToggleButton } from "./UrgentToggleButton";
 import { ReadyForPickupToggleButton } from "./ReadyForPickupToggleButton";
 // Pack 27.0 — кнопка удаления в корзину
@@ -254,6 +255,20 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             <div className="flex items-center gap-2 mb-0.5">
               <UrgentToggleButton application={application} onChanged={handleArchiveChanged} />
               <ReadyForPickupToggleButton application={application} onChanged={handleArchiveChanged} />
+              <button
+                onClick={async () => {
+                  try { await toggleFiled(application.id); await loadAll(); onUpdated(); }
+                  catch (e) { alert(`Ошибка: ${(e as Error).message}`); }
+                }}
+                className="px-2.5 py-1 rounded-md text-xs font-semibold transition-colors"
+                style={application.is_filed
+                  ? { background: "#eab308", color: "#fff" }
+                  : { background: "var(--color-bg-secondary)", color: "var(--color-text-secondary)", border: "0.5px solid var(--color-border-tertiary)" }
+                }
+                title={application.is_filed ? "Снять отметку «Подан»" : "Отметить как поданную"}
+              >
+                {application.is_filed ? "✓ Подан" : "Подан"}
+              </button>
               <h2 className="text-2xl font-bold text-primary leading-tight">
                 {fullNameRu}
               </h2>

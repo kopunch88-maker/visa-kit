@@ -640,6 +640,23 @@ def toggle_urgent(
 
 
 # ============================================================================
+# Pack 36.0 — флаг «Подан» (toggle)
+
+@router.post("/{app_id}/toggle-filed")
+def toggle_filed(
+    app_id: int,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+):
+    app = db.query(Application).filter(Application.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app.is_filed = not bool(app.is_filed)
+    db.commit()
+    db.refresh(app)
+    return _app_to_dict(app, db)
+
+
 # Pack 34.2 — флаг "Готово, можно забирать" (toggle)
 # ============================================================================
 

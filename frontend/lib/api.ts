@@ -98,6 +98,7 @@ export type ApplicationResponse = {
   can_be_archived?: boolean;
   // Pack 30.0
   is_urgent?: boolean;
+  is_filed?: boolean;  // Pack 36.0
   applicant_name_native?: string;
   applicant_name_latin?: string;
 };
@@ -1196,6 +1197,15 @@ export async function toggleReady(appId: number): Promise<ApplicationResponse> {
   if (!res.ok) throw new Error(`toggle-ready: ${res.status} ${await res.text()}`);
   return res.json();
 }
+
+export async function toggleFiled(appId: number): Promise<ApplicationResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-filed`, {
+    method: "POST", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`toggle-filed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+// Pack 36.0 end
 
 export async function unarchiveApplication(appId: number): Promise<ApplicationResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/unarchive`, {
