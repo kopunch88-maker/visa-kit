@@ -120,30 +120,26 @@ function AdminPageContent() {
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 py-4">
-      {/* Pack 36.0 — главные вкладки */}
-      <div className="flex gap-1 mb-3">
-        {([["applications", "Заявки"], ["filed", "Поданы"]] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setMainTab(id)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              mainTab === id ? "text-primary" : "text-secondary hover:bg-secondary"
-            }`}
-            style={mainTab === id ? { background: "var(--color-bg-secondary)" } : {}}
-          >
-            {label}
-            <span className="ml-1.5 text-xs text-tertiary">
-              {id === "filed"
-                ? applications.filter((a) => a.is_filed).length
-                : applications.filter((a) => !a.is_filed).length}
-            </span>
-          </button>
-        ))}
-      </div>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h1 className="text-xl font-semibold text-primary">
-          Заявки <span className="text-tertiary text-sm font-normal">({applications.length})</span>
-        </h1>
+        <div className="flex gap-1">
+          {([["applications", "Заявки"], ["filed", "Поданы"]] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setMainTab(id)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                mainTab === id ? "text-primary" : "text-secondary hover:bg-secondary"
+              }`}
+              style={mainTab === id ? { background: "var(--color-bg-secondary)" } : {}}
+            >
+              {label}
+              <span className="ml-1.5 text-xs text-tertiary">
+                {id === "filed"
+                  ? applications.filter((a) => a.is_filed).length
+                  : applications.filter((a) => !a.is_filed).length}
+              </span>
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => router.push("/admin/archive")}
