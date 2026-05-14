@@ -152,6 +152,12 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   async function handleStatusChange(newStatus: string) {
     try {
       await updateStatus(applicationId, newStatus);
+      // Pack 36.1 — статус "Подана" автоматически ставит флаг is_filed
+      if (newStatus === "submitted" && !application.is_filed) {
+        await toggleFiled(application.id);
+      } else if (newStatus !== "submitted" && application.is_filed) {
+        await toggleFiled(application.id);
+      }
       await loadAll();
       onUpdated();
     } catch (e) {

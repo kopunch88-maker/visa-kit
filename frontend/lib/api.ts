@@ -1667,7 +1667,6 @@ export const STATUS_TABS = [
     id: "in_progress", label: "В работе",
     statuses: ["assigned", "drafts_generated", "at_translator", "awaiting_scans", "awaiting_digital_sign"],
   },
-  { id: "submitted", label: "Поданы", statuses: ["submitted"] },
   { id: "approved", label: "Одобрены", statuses: ["approved"] },
   { id: "problems", label: "Проблемы", statuses: ["rejected", "needs_followup", "cancelled"] },
 ];
