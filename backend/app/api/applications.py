@@ -645,8 +645,8 @@ def toggle_urgent(
 @router.post("/{app_id}/toggle-filed")
 def toggle_filed(
     app_id: int,
-    db: Session = Depends(get_db),
-    _: str = Depends(require_admin),
+    db: Session = Depends(get_session),
+    _: str = Depends(require_manager),
 ):
     app = db.query(Application).filter(Application.id == app_id).first()
     if not app:
