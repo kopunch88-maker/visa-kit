@@ -58,6 +58,7 @@ def _enrich(app: Application, session: Session) -> dict:
     data["can_be_archived"] = app.can_be_archived()
     # Pack 30.0
     data["is_urgent"] = bool(getattr(app, "is_urgent", False))
+    data["is_filed"] = bool(getattr(app, "is_filed", False))
 
     # Pack 10.1: подгружаем имя заявителя для отображения в списках
     # (на странице архива и потенциально в других списках)
