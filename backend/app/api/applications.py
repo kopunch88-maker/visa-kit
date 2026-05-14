@@ -655,7 +655,8 @@ def toggle_filed(
     app.is_filed = not bool(app.is_filed)
     db.commit()
     db.refresh(app)
-    return _app_to_dict(app, db)
+    db.refresh(app)
+    return _enrich(app, db)
 
 
 # Pack 34.2 — флаг "Готово, можно забирать" (toggle)
