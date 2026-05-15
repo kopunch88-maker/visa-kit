@@ -288,3 +288,4 @@ function _triggerBrowserDownload(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url);
 }
 
+
