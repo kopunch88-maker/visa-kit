@@ -71,6 +71,7 @@ function AdminPageContent() {
       if (tab.id === "all") return;
       counts[tab.id] = applications.filter((a) => tab.statuses.includes(a.status)).length;
     });
+    counts["paid"] = applications.filter((a) => a.is_paid).length;
     return counts;
   }, [applications]);
 
