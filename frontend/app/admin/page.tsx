@@ -223,6 +223,17 @@ function AdminPageContent() {
               );
             })}
           </div>
+          <div className="flex flex-wrap gap-1.5 text-xs">
+            <button
+              onClick={() => setShowPaid(!showPaid)}
+              className={`px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
+                showPaid ? "text-primary font-medium" : "text-secondary hover:bg-secondary"
+              }`}
+              style={showPaid ? { background: "rgba(34, 197, 94, 0.15)", color: "#22c55e" } : {}}
+            >
+              $ Оплачен <span className="text-tertiary ml-0.5">{tabCounts["paid"] || 0}</span>
+            </button>
+          </div>
 
           {/* Pack 34.3 — переключатель сортировки */}
           <div className="flex items-center gap-1.5 text-xs">
