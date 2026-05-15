@@ -8,7 +8,7 @@ import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
 
 interface Props {
   applicationId: number;
-  // Pack 29.4 тАФ ╨┤╨╗╤П ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┤╨╛╨│╨╛╨▓╨╛╤А╨░
+  // Pack 29.4 тАФ ╨┤╨╗╤П ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ Перегенерировать▓╨╛╤А╨░
   companyId?: number | null;
 }
 
@@ -200,10 +200,10 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
               borderColor: "var(--color-border-tertiary)",
               borderWidth: 0.5,
             }}
-            title="╨Я╨╡╤А╨╡╨│╨╡╨╜╨╡╤А╨╕╤А╨╛╨▓╨░╤В╤М"
+            title="Перегенерировать"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${downloadingZip ? "animate-spin" : ""}`} />
-            ╨Я╨╡╤А╨╡╨│╨╡╨╜╨╡╤А╨╕╤А╨╛╨▓╨░╤В╤М
+            Перегенерировать
           </button>
           <button
             onClick={handleDownloadZip}
@@ -214,17 +214,17 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
             {downloadingZip ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ╨У╨╡╨╜╨╡╤А╨░╤Ж╨╕╤П...
+                Генерация...
               </>
             ) : zipDownloaded ? (
               <>
                 <Check className="w-3.5 h-3.5" />
-                ╨б╨║╨░╤З╨░╨╜╨╛
+                Скачано
               </>
             ) : (
               <>
                 <Download className="w-3.5 h-3.5" />
-                ╨б╨║╨░╤З╨░╤В╤М ZIP
+                Скачать всё
               </>
             )}
           </button>
@@ -291,7 +291,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         </div>
       </div>
 
-            {/* Pack 29.4 тАФ ╨Ь╨╛╨┤╨░╨╗╨║╨░ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┤╨╛╨│╨╛╨▓╨╛╤А╨░ ╨┐╤А╨╕ 409 */}
+            {/* Pack 29.4 тАФ ╨Ь╨╛╨┤╨░╨╗╨║╨░ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ Перегенерировать▓╨╛╤А╨░ ╨┐╤А╨╕ 409 */}
       {pickerState && pickerState.isOpen && (
         <ContractTemplatePickerModal
           companyId={pickerState.companyId}
