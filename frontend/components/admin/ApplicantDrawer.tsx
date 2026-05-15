@@ -403,6 +403,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         last_name_latin: last_name_latin.trim(),
         first_name_latin: first_name_latin.trim(),
         sex,
+        marital_status,
         nationality,
         home_country,
         home_address: home_address.trim(),
