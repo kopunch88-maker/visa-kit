@@ -223,8 +223,6 @@ function AdminPageContent() {
                 </button>
               );
             })}
-          </div>
-          <div className="flex flex-wrap gap-1.5 text-xs">
             <button
               onClick={() => setShowPaid(!showPaid)}
               className={`px-2.5 py-1 rounded-md transition-colors whitespace-nowrap ${
@@ -234,6 +232,8 @@ function AdminPageContent() {
             >
               $ Оплачен <span className="text-tertiary ml-0.5">{tabCounts["paid"] || 0}</span>
             </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-xs">
           </div>
 
           {/* Pack 34.3 — переключатель сортировки */}
