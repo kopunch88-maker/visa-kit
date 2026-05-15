@@ -99,6 +99,9 @@ export type ApplicationResponse = {
   // Pack 30.0
   is_urgent?: boolean;
   is_filed?: boolean;  // Pack 36.0
+  is_paid?: boolean;   // Pack 38.1
+  is_paid?: boolean;   // Pack 38.1
+  is_paid?: boolean;   // Pack 38.1
   applicant_name_native?: string;
   applicant_name_latin?: string;
 };
