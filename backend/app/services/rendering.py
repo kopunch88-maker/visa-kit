@@ -59,6 +59,7 @@ def build_full_package(
     session: Session,
     include_bank_statement: bool = True,
     include_pdf_forms: bool = True,
+    kind: str = "all",
 ) -> tuple[bytes, dict]:
     """
     Собирает ZIP-архив с документами заявки.
@@ -120,6 +121,10 @@ def build_full_package(
         filtered.append(entry)
 
     status: dict[str, str] = {}
+    include_docx = kind in ('all', 'docx')
+    include_pdf = kind in ('all', 'pdf')
+    if not include_docx:
+        filtered = []
     buffer = io.BytesIO()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -133,7 +138,7 @@ def build_full_package(
             status[status_key] = "ok"
 
         # === Pack 9: испанские PDF-формы в forms_es/ ===
-        if include_pdf_forms:
+        if include_pdf_forms and include_pdf:
             try:
                 # Шаблоны лежат в visa_kit/templates/pdf/ — на уровень выше backend/
                 # Cwd = D:\VISA\visa_kit\backend\, нужен путь D:\VISA\visa_kit\templates\
