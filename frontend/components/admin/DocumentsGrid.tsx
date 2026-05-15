@@ -178,29 +178,16 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         borderWidth: 0.5,
       }}
     >
-      <div className="border rounded-xl p-4" style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
           Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
         </h3>
         <div className="flex items-center gap-2">
-          <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
-            className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
-            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
-            {downloadingDocxZip
-              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
-              : docxZipDownloaded
-              ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
-              : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
-          </button>
           <button
             onClick={handleDownloadZip}
             disabled={downloadingZip}
             className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
-            style={{
-              borderColor: "var(--color-border-tertiary)",
-              borderWidth: 0.5,
-            }}
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
             title="Перегенерировать"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${downloadingZip ? "animate-spin" : ""}`} />
@@ -230,6 +217,21 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
             )}
           </button>
         </div>
+      </div>
+      <div className="border rounded-xl p-4" style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+          Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
+        </h3>
+        <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
+          className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
+          style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
+          {downloadingDocxZip
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
+            : docxZipDownloaded
+            ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
+            : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
+        </button>
       </div>
 
       {error && (
