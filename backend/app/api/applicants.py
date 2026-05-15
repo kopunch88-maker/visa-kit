@@ -105,7 +105,7 @@ _PATCHABLE_FIELDS = {
     "last_name_latin", "first_name_latin",
     "birth_date", "birth_place_latin",
     "birth_country",  # Pack 18.10
-    "nationality", "sex",
+    "nationality", "sex", "marital_status",
     "passport_number", "passport_issue_date", "passport_expiry_date", "passport_issuer",
     # Pack 35.3: русифицированный вариант органа выдачи для русских документов
     "passport_issuer_ru",
