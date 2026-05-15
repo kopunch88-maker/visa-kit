@@ -23,6 +23,26 @@ from .dependencies import require_manager
 router = APIRouter(prefix="/admin/applications", tags=["render"])
 
 
+@router.post("/{app_id}/render-package-docx")
+def render_package_docx(
+    app_id: int,
+    db: Session = Depends(get_session),
+    _: str = Depends(require_manager),
+):
+    application = db.get(Application, app_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Not found")
+    zip_bytes, status = build_full_package(application, db, kind="docx")
+    if not zip_bytes:
+        raise HTTPException(status_code=500, detail="DOCX package empty")
+    download_name = f"docx_package_{application.reference}.zip"
+    return StreamingResponse(
+        io.BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={download_name}"},
+    )
+
+
 @router.post("/{app_id}/render-package-pdf")
 def render_package_pdf(
     app_id: int,

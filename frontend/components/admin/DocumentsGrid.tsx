@@ -127,6 +127,27 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
     }
   }
 
+  async function handleDownloadDocxZip() {
+    setDownloadingDocxZip(true);
+    setError(null);
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-docx`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
+      const blob = await res.blob();
+      _triggerBrowserDownload(blob, `docx_package_${applicationId}.zip`);
+      setDocxZipDownloaded(true);
+      setTimeout(() => setDocxZipDownloaded(false), 3000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloadingDocxZip(false);
+    }
+  }
+
   async function handleDownloadOne(doc: DocItem) {
     setDownloadingId(doc.id);
     setError(null);
@@ -161,9 +182,18 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
     >
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-          Документы пакета ({DOCUMENTS.length})
+          Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
         </h3>
         <div className="flex items-center gap-2">
+          <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
+            className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
+            {downloadingDocxZip
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
+              : docxZipDownloaded
+              ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
+              : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
+          </button>
           <button
             onClick={handleDownloadZip}
             disabled={downloadingZip}
