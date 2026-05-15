@@ -23,26 +23,6 @@ from .dependencies import require_manager
 router = APIRouter(prefix="/admin/applications", tags=["render"])
 
 
-@router.post("/{app_id}/render-package-pdf")
-def render_package_pdf(
-    app_id: int,
-    db: Session = Depends(get_session),
-    _: str = Depends(require_manager),
-):
-    application = db.get(Application, app_id)
-    if not application:
-        raise HTTPException(status_code=404, detail="Not found")
-    zip_bytes, status = build_full_package(application, db, kind="pdf")
-    if not zip_bytes:
-        raise HTTPException(status_code=500, detail="PDF package empty")
-    download_name = f"pdf_forms_{application.reference}.zip"
-    return StreamingResponse(
-        io.BytesIO(zip_bytes),
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={download_name}"},
-    )
-
-
 @router.post("/{app_id}/render-package")
 def render_full_package(
     app_id: int,
