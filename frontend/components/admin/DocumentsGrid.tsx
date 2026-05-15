@@ -19,27 +19,23 @@ type DocItem = {
 };
 
 const DOCUMENTS: DocItem[] = [
-  { id: "contract",        filename: "01_╨Ф╨╛╨│╨╛╨▓╨╛╤А.docx",                          kind: "docx" },
-  { id: "act_1",           filename: "02_╨Р╨║╤В_1.docx",                            kind: "docx" },
-  { id: "act_2",           filename: "03_╨Р╨║╤В_2.docx",                            kind: "docx" },
-  { id: "act_3",           filename: "04_╨Р╨║╤В_3.docx",                            kind: "docx" },
-  { id: "invoice_1",       filename: "05_╨б╤З╤С╤В_1.docx",                           kind: "docx" },
-  { id: "invoice_2",       filename: "06_╨б╤З╤С╤В_2.docx",                           kind: "docx" },
-  { id: "invoice_3",       filename: "07_╨б╤З╤С╤В_3.docx",                           kind: "docx" },
-  { id: "employer_letter", filename: "08_╨Я╨╕╤Б╤М╨╝╨╛.docx",                           kind: "docx" },
-  { id: "cv",              filename: "09_╨а╨╡╨╖╤О╨╝╨╡.docx",                           kind: "docx" },
-  { id: "bank_statement",  filename: "10_╨Т╤Л╨┐╨╕╤Б╨║╨░.docx",                          kind: "docx" },
-  // Pack 9 тАФ ╨╕╤Б╨┐╨░╨╜╤Б╨║╨╕╨╡ PDF-╤Д╨╛╤А╨╝╤Л
-  { id: "mi_t",            filename: "11_MI-T.pdf",                              kind: "pdf"  },
-  { id: "designacion",     filename: "12_Designacion_representante.pdf",         kind: "pdf"  },
-  { id: "compromiso",      filename: "13_Compromiso_RETA.pdf",                   kind: "pdf"  },
-  { id: "declaracion",     filename: "14_Declaracion_antecedentes.pdf",          kind: "pdf"  },
-  // Pack 18.3 тАФ ╤Б╨┐╤А╨░╨▓╨║╨░ ╨╛ ╨┐╨╛╤Б╤В╨░╨╜╨╛╨▓╨║╨╡ ╨╜╨░ ╤Г╤З╤С╤В ╤Б╨░╨╝╨╛╨╖╨░╨╜╤П╤В╨╛╨│╨╛ (╨Ъ╨Э╨Ф 1122035)
-  { id: "npd_certificate",     filename: "15_╨б╨┐╤А╨░╨▓╨║╨░_╨Э╨Я╨Ф.docx",                     kind: "docx" },
-  // Pack 18.3.3 тАФ ╤В╨╛ ╨╢╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨░╨╜╨╕╨╡, ╨╜╨╛ ╨▓ ╤Д╨╛╤А╨╝╨░╤В╨╡ ╨Ы╨Ъ╨Э (╤Н╨╗╨╡╨║╤В╤А╨╛╨╜╨╜╨░╤П ╨┐╨╛╨┤╨┐╨╕╤Б╤М ╨д╨Э╨б ╨▓╨╜╨╕╨╖╤Г)
-  { id: "npd_certificate_lkn", filename: "15b_╨б╨┐╤А╨░╨▓╨║╨░_╨Э╨Я╨Ф_╨Ы╨Ъ╨Э.docx",                kind: "docx" },
-  // Pack 18.9 тАФ ╨░╨┐╨╛╤Б╤В╨╕╨╗╤М ╨║ ╤Б╨┐╤А╨░╨▓╨║╨╡ ╨Э╨Я╨Ф
-  { id: "apostille",           filename: "16_╨Р╨┐╨╛╤Б╤В╨╕╨╗╤М.docx",                        kind: "docx" },
+  { id: "contract",            filename: "01_Договор.docx",                        kind: "docx" },
+  { id: "act_1",               filename: "02_Акт_1.docx",                          kind: "docx" },
+  { id: "act_2",               filename: "03_Акт_2.docx",                          kind: "docx" },
+  { id: "act_3",               filename: "04_Акт_3.docx",                          kind: "docx" },
+  { id: "invoice_1",           filename: "05_Счёт_1.docx",                    kind: "docx" },
+  { id: "invoice_2",           filename: "06_Счёт_2.docx",                    kind: "docx" },
+  { id: "invoice_3",           filename: "07_Счёт_3.docx",                    kind: "docx" },
+  { id: "employer_letter",     filename: "08_Письмо.docx",          kind: "docx" },
+  { id: "cv",                  filename: "09_Резюме.docx",          kind: "docx" },
+  { id: "bank_statement",      filename: "10_Выписка.docx",    kind: "docx" },
+  { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
+  { id: "designacion",         filename: "12_Designacion_representante.pdf",                      kind: "pdf"  },
+  { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf"  },
+  { id: "declaracion",         filename: "14_Declaracion_antecedentes.pdf",                       kind: "pdf"  },
+  { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx" },
+  { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx" },
+  { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId, companyId }: Props) {
