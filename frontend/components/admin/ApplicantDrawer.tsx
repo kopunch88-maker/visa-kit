@@ -45,6 +45,14 @@ const SEX_OPTIONS = [
   { value: "M", label: "Женский" },
 ];
 
+const MARITAL_OPTIONS = [
+  { value: "", label: "— Не указано —" },
+  { value: "S", label: "Не женат / не замужем" },
+  { value: "C", label: "Женат / замужем" },
+  { value: "D", label: "Разведён / разведена" },
+  { value: "V", label: "Вдовец / вдова" },
+];
+
 // Pack 34.0 — локальный COUNTRY_OPTIONS теперь генерится из ALL_COUNTRIES
 // (полный мир ISO 3166-1 из @/lib/api). Префикс «— Не указано —» сохранён.
 // Формат label «Страна (ISO3)» — привычный для менеджеров.
@@ -73,6 +81,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [last_name_latin, setLastNameLatin] = useState(applicant.last_name_latin || "");
   const [first_name_latin, setFirstNameLatin] = useState(applicant.first_name_latin || "");
   const [sex, setSex] = useState(applicant.sex || "");
+  const [marital_status, setMaritalStatus] = useState(applicant.marital_status || "");
   const [nationality, setNationality] = useState(applicant.nationality || "");
   const [home_country, setHomeCountry] = useState(applicant.home_country || "");
   const [home_address, setHomeAddress] = useState(applicant.home_address || "");
@@ -576,6 +585,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <FieldSelect label="Гражданство" value={nationality} onChange={setNationality} options={COUNTRY_OPTIONS} />
             <FieldSelect label="Страна жительства" value={home_country} onChange={setHomeCountry} options={COUNTRY_OPTIONS} />
             <FieldSelect label="Пол" value={sex} onChange={setSex} options={SEX_OPTIONS} />
+            <FieldSelect label="Семейное положение" value={marital_status} onChange={setMaritalStatus} options={MARITAL_OPTIONS} />
           </Section>
 
           <Section title="Паспорт">
