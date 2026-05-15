@@ -45,6 +45,8 @@ const DOCUMENTS: DocItem[] = [
 export function DocumentsGrid({ applicationId, companyId }: Props) {
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipDownloaded, setZipDownloaded] = useState(false);
+  const [downloadingPdfZip, setDownloadingPdfZip] = useState(false);
+  const [pdfZipDownloaded, setPdfZipDownloaded] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,6 +103,27 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       setError((e as Error).message);
     } finally {
       setDownloadingZip(false);
+    }
+  }
+
+  async function handleDownloadPdfZip() {
+    setDownloadingPdfZip(true);
+    setError(null);
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-pdf`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
+      const blob = await res.blob();
+      _triggerBrowserDownload(blob, `pdf_forms_${applicationId}.zip`);
+      setPdfZipDownloaded(true);
+      setTimeout(() => setPdfZipDownloaded(false), 3000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloadingPdfZip(false);
     }
   }
 
@@ -210,6 +233,15 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
           <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
             Испанские PDF формы ({DOCUMENTS.filter(d => d.kind === "pdf").length})
           </h3>
+          <button onClick={handleDownloadPdfZip} disabled={downloadingPdfZip}
+            className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
+            {downloadingPdfZip
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
+              : pdfZipDownloaded
+              ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
+              : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
+          </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {DOCUMENTS.filter(d => d.kind === "pdf").map((doc) => {
