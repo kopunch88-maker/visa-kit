@@ -21,6 +21,7 @@ function AdminPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("all");
+  const [showPaid, setShowPaid] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Pack 34.3 — режим сортировки списка (default / alphabet / submission_date)
   // Сохраняется в localStorage чтобы выбор менеджера переживал перезагрузку.
