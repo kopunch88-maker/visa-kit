@@ -756,6 +756,24 @@ def apply_pack30_0_migration() -> None:
     print("[migration] Pack 30.0: application.is_urgent ready")
 
 
+# ======================================
+# Pack 38.1 — флаг is_paid на Application
+# ======================================
+def apply_pack38_1_migration() -> None:
+    from sqlalchemy import text
+    from app.db.session import engine
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_paid "
+            "ON application (is_paid)"
+        ))
+    print("[migration] Pack 38.1: application.is_paid ready")
+
+
 # ============================================================================
 # Pack 34.2 — флаг is_ready_for_pickup на Application («Готово, можно забирать»)
 # ============================================================================

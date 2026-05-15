@@ -58,6 +58,7 @@ def _enrich(app: Application, session: Session) -> dict:
     data["can_be_archived"] = app.can_be_archived()
     # Pack 30.0
     data["is_urgent"] = bool(getattr(app, "is_urgent", False))
+    data["is_paid"] = bool(getattr(app, "is_paid", False))
     data["is_filed"] = bool(getattr(app, "is_filed", False))
 
     # Pack 10.1: подгружаем имя заявителя для отображения в списках
@@ -614,6 +615,24 @@ def archive_application(
 # ============================================================================
 # Pack 30.0 — флаг "срочно" (toggle)
 # ============================================================================
+
+@router.post("/{app_id}/toggle-paid")
+def toggle_paid(
+    app_id: int,
+    session: Session = Depends(get_session),
+    _: str = Depends(require_manager),
+):
+    """Переключает флаг is_paid (Оплачен)."""
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Not found")
+    new_value = not bool(getattr(app, "is_paid", False))
+    app.is_paid = new_value
+    session.add(app)
+    session.commit()
+    session.refresh(app)
+    return {"is_paid": new_value}
+
 
 @router.post("/{app_id}/toggle-urgent")
 def toggle_urgent(

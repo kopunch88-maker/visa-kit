@@ -1189,6 +1189,14 @@ export async function toggleUrgent(appId: number): Promise<ApplicationResponse> 
   return res.json();
 }
 
+export async function togglePaid(appId: number): Promise<ApplicationResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-paid`, {
+    method: "POST", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`toggle-paid: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 // Pack 34.2 — переключить флаг "Готово, можно забирать"
 export async function toggleReady(appId: number): Promise<ApplicationResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-ready`, {

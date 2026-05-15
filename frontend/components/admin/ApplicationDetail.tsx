@@ -36,6 +36,7 @@ import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
 // Pack 30.0
 import { toggleFiled } from "@/lib/api";
 import { UrgentToggleButton } from "./UrgentToggleButton";
+import { PaidToggleButton } from "./PaidToggleButton";
 import { ReadyForPickupToggleButton } from "./ReadyForPickupToggleButton";
 // Pack 27.0 — кнопка удаления в корзину
 import { DeleteButton } from "./DeleteButton";
@@ -260,6 +261,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             {/* Pack 30.0 — огонёк рядом с именем клиента */}
             <div className="flex items-center gap-2 mb-0.5">
               <UrgentToggleButton application={application} onChanged={handleArchiveChanged} />
+              <PaidToggleButton application={application} onChanged={handleArchiveChanged} />
               <ReadyForPickupToggleButton application={application} onChanged={handleArchiveChanged} />
               <button
                 onClick={async () => {

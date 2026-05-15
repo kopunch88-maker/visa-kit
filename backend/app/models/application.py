@@ -109,6 +109,7 @@ class Application(TimestampMixin, table=True):
     # === Pack 34.2: флаг "Готово, можно забирать" ===
     is_ready_for_pickup: bool = Field(default=False, index=True)
     is_filed: bool = Field(default=False, index=True)  # Pack 36.0
+    is_paid: bool = Field(default=False, index=True)  # Pack 38.1
     # Pack 27.0 — soft-delete с автоудалением через 7 дней
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 
