@@ -259,8 +259,3 @@ function _triggerBrowserDownload(blob: Blob, filename: string) {
   a.remove();
   window.URL.revokeObjectURL(url);
 }
-<<<<<<< HEAD
-
-
-=======
->>>>>>> parent of a3c87c1 (Pack 37.0 — PDF блок отдельно от DOCX + кнопка PDF ZIP)
