@@ -80,7 +80,7 @@ def render_full_package(
         )
 
     zip_bytes, status = build_full_package(
-        application, session, include_bank_statement=include_bank_statement,
+        application, session, include_bank_statement=include_bank_statement, kind="docx",
     )
 
     if not zip_bytes:
