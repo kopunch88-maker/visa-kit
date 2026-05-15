@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { Download, Loader2, Check, RefreshCw } from "lucide-react";
@@ -8,38 +8,38 @@ import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
 
 interface Props {
   applicationId: number;
-  // Pack 29.4 вЂ” РґР»СЏ РјРѕРґР°Р»РєРё РІС‹Р±РѕСЂР° С€Р°Р±Р»РѕРЅР° РґРѕРіРѕРІРѕСЂР°
+  // Pack 29.4 тАФ ╨┤╨╗╤П ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┤╨╛╨│╨╛╨▓╨╛╤А╨░
   companyId?: number | null;
 }
 
 type DocItem = {
-  id: string;        // РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ URL endpoint
-  filename: string;  // С‡С‚Рѕ РїРѕРєР°Р·С‹РІР°РµРј РІ РєР°СЂС‚РѕС‡РєРµ
+  id: string;        // ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ URL endpoint
+  filename: string;  // ╤З╤В╨╛ ╨┐╨╛╨║╨░╨╖╤Л╨▓╨░╨╡╨╝ ╨▓ ╨║╨░╤А╤В╨╛╤З╨║╨╡
   kind: "docx" | "pdf";
 };
 
 const DOCUMENTS: DocItem[] = [
-  { id: "contract",        filename: "01_Р”РѕРіРѕРІРѕСЂ.docx",                          kind: "docx" },
-  { id: "act_1",           filename: "02_РђРєС‚_1.docx",                            kind: "docx" },
-  { id: "act_2",           filename: "03_РђРєС‚_2.docx",                            kind: "docx" },
-  { id: "act_3",           filename: "04_РђРєС‚_3.docx",                            kind: "docx" },
-  { id: "invoice_1",       filename: "05_РЎС‡С‘С‚_1.docx",                           kind: "docx" },
-  { id: "invoice_2",       filename: "06_РЎС‡С‘С‚_2.docx",                           kind: "docx" },
-  { id: "invoice_3",       filename: "07_РЎС‡С‘С‚_3.docx",                           kind: "docx" },
-  { id: "employer_letter", filename: "08_РџРёСЃСЊРјРѕ.docx",                           kind: "docx" },
-  { id: "cv",              filename: "09_Р РµР·СЋРјРµ.docx",                           kind: "docx" },
-  { id: "bank_statement",  filename: "10_Р’С‹РїРёСЃРєР°.docx",                          kind: "docx" },
-  // Pack 9 вЂ” РёСЃРїР°РЅСЃРєРёРµ PDF-С„РѕСЂРјС‹
+  { id: "contract",        filename: "01_╨Ф╨╛╨│╨╛╨▓╨╛╤А.docx",                          kind: "docx" },
+  { id: "act_1",           filename: "02_╨Р╨║╤В_1.docx",                            kind: "docx" },
+  { id: "act_2",           filename: "03_╨Р╨║╤В_2.docx",                            kind: "docx" },
+  { id: "act_3",           filename: "04_╨Р╨║╤В_3.docx",                            kind: "docx" },
+  { id: "invoice_1",       filename: "05_╨б╤З╤С╤В_1.docx",                           kind: "docx" },
+  { id: "invoice_2",       filename: "06_╨б╤З╤С╤В_2.docx",                           kind: "docx" },
+  { id: "invoice_3",       filename: "07_╨б╤З╤С╤В_3.docx",                           kind: "docx" },
+  { id: "employer_letter", filename: "08_╨Я╨╕╤Б╤М╨╝╨╛.docx",                           kind: "docx" },
+  { id: "cv",              filename: "09_╨а╨╡╨╖╤О╨╝╨╡.docx",                           kind: "docx" },
+  { id: "bank_statement",  filename: "10_╨Т╤Л╨┐╨╕╤Б╨║╨░.docx",                          kind: "docx" },
+  // Pack 9 тАФ ╨╕╤Б╨┐╨░╨╜╤Б╨║╨╕╨╡ PDF-╤Д╨╛╤А╨╝╤Л
   { id: "mi_t",            filename: "11_MI-T.pdf",                              kind: "pdf"  },
   { id: "designacion",     filename: "12_Designacion_representante.pdf",         kind: "pdf"  },
   { id: "compromiso",      filename: "13_Compromiso_RETA.pdf",                   kind: "pdf"  },
   { id: "declaracion",     filename: "14_Declaracion_antecedentes.pdf",          kind: "pdf"  },
-  // Pack 18.3 вЂ” СЃРїСЂР°РІРєР° Рѕ РїРѕСЃС‚Р°РЅРѕРІРєРµ РЅР° СѓС‡С‘С‚ СЃР°РјРѕР·Р°РЅСЏС‚РѕРіРѕ (РљРќР” 1122035)
-  { id: "npd_certificate",     filename: "15_РЎРїСЂР°РІРєР°_РќРџР”.docx",                     kind: "docx" },
-  // Pack 18.3.3 вЂ” С‚Рѕ Р¶Рµ СЃРѕРґРµСЂР¶Р°РЅРёРµ, РЅРѕ РІ С„РѕСЂРјР°С‚Рµ Р›РљРќ (СЌР»РµРєС‚СЂРѕРЅРЅР°СЏ РїРѕРґРїРёСЃСЊ Р¤РќРЎ РІРЅРёР·Сѓ)
-  { id: "npd_certificate_lkn", filename: "15b_РЎРїСЂР°РІРєР°_РќРџР”_Р›РљРќ.docx",                kind: "docx" },
-  // Pack 18.9 вЂ” Р°РїРѕСЃС‚РёР»СЊ Рє СЃРїСЂР°РІРєРµ РќРџР”
-  { id: "apostille",           filename: "16_РђРїРѕСЃС‚РёР»СЊ.docx",                        kind: "docx" },
+  // Pack 18.3 тАФ ╤Б╨┐╤А╨░╨▓╨║╨░ ╨╛ ╨┐╨╛╤Б╤В╨░╨╜╨╛╨▓╨║╨╡ ╨╜╨░ ╤Г╤З╤С╤В ╤Б╨░╨╝╨╛╨╖╨░╨╜╤П╤В╨╛╨│╨╛ (╨Ъ╨Э╨Ф 1122035)
+  { id: "npd_certificate",     filename: "15_╨б╨┐╤А╨░╨▓╨║╨░_╨Э╨Я╨Ф.docx",                     kind: "docx" },
+  // Pack 18.3.3 тАФ ╤В╨╛ ╨╢╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨░╨╜╨╕╨╡, ╨╜╨╛ ╨▓ ╤Д╨╛╤А╨╝╨░╤В╨╡ ╨Ы╨Ъ╨Э (╤Н╨╗╨╡╨║╤В╤А╨╛╨╜╨╜╨░╤П ╨┐╨╛╨┤╨┐╨╕╤Б╤М ╨д╨Э╨б ╨▓╨╜╨╕╨╖╤Г)
+  { id: "npd_certificate_lkn", filename: "15b_╨б╨┐╤А╨░╨▓╨║╨░_╨Э╨Я╨Ф_╨Ы╨Ъ╨Э.docx",                kind: "docx" },
+  // Pack 18.9 тАФ ╨░╨┐╨╛╤Б╤В╨╕╨╗╤М ╨║ ╤Б╨┐╤А╨░╨▓╨║╨╡ ╨Э╨Я╨Ф
+  { id: "apostille",           filename: "16_╨Р╨┐╨╛╤Б╤В╨╕╨╗╤М.docx",                        kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId, companyId }: Props) {
@@ -52,7 +52,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Pack 29.4 вЂ” СЃРѕСЃС‚РѕСЏРЅРёРµ РјРѕРґР°Р»РєРё РІС‹Р±РѕСЂР° С€Р°Р±Р»РѕРЅР° РїСЂРё 409 NEEDS_CONTRACT_TEMPLATE
+  // Pack 29.4 тАФ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┐╤А╨╕ 409 NEEDS_CONTRACT_TEMPLATE
   const [pickerState, setPickerState] = useState<{
     isOpen: boolean;
     companyId: number;
@@ -60,8 +60,8 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
     onSaved: () => void;
   } | null>(null);
 
-  // Pack 29.4 вЂ” РїСЂРѕРІРµСЂРєР° 409 NEEDS_CONTRACT_TEMPLATE
-  // Р’РѕР·РІСЂР°С‰Р°РµС‚ true РµСЃР»Рё РѕС‚РєСЂС‹Р»Рё РјРѕРґР°Р»РєСѓ (РЅСѓР¶РЅРѕ РїСЂРµСЂРІР°С‚СЊ РѕР±СЂР°Р±РѕС‚РєСѓ), false РµСЃР»Рё 409 РЅРµ РїСЂРёС€Р»Р°
+  // Pack 29.4 тАФ ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
+  // ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В true ╨╡╤Б╨╗╨╕ ╨╛╤В╨║╤А╤Л╨╗╨╕ ╨╝╨╛╨┤╨░╨╗╨║╤Г (╨╜╤Г╨╢╨╜╨╛ ╨┐╤А╨╡╤А╨▓╨░╤В╤М ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╤Г), false ╨╡╤Б╨╗╨╕ 409 ╨╜╨╡ ╨┐╤А╨╕╤И╨╗╨░
   async function handle409IfNeedsTemplate(res: Response, retryFn: () => void): Promise<boolean> {
     if (res.status !== 409) return false;
     let detail: any;
@@ -90,11 +90,11 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
-      // Pack 29.4 вЂ” РѕР±СЂР°Р±РѕС‚РєР° 409 NEEDS_CONTRACT_TEMPLATE
+      // Pack 29.4 тАФ ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
       if (await handle409IfNeedsTemplate(res, () => handleDownloadZip())) {
         return;
       }
-      if (!res.ok) throw new Error(`РћС€РёР±РєР° ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`╨Ю╤И╨╕╨▒╨║╨░ ${res.status}: ${await res.text()}`);
 
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `package_${applicationId}.zip`);
@@ -108,27 +108,6 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
     }
   }
 
-  async function handleDownloadPdfZip() {
-    setDownloadingPdfZip(true);
-    setError(null);
-    try {
-      const token = getToken();
-      const res = await fetch(
-        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-pdf`,
-        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) throw new Error(`РћС€РёР±РєР° ${res.status}: ${await res.text()}`);
-      const blob = await res.blob();
-      _triggerBrowserDownload(blob, `pdf_forms_${applicationId}.zip`);
-      setPdfZipDownloaded(true);
-      setTimeout(() => setPdfZipDownloaded(false), 3000);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setDownloadingPdfZip(false);
-    }
-  }
-
   async function handleDownloadDocxZip() {
     setDownloadingDocxZip(true);
     setError(null);
@@ -138,7 +117,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-docx`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!res.ok) throw new Error(`РћС€РёР±РєР° ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `docx_package_${applicationId}.zip`);
       setDocxZipDownloaded(true);
@@ -147,6 +126,27 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       setError((e as Error).message);
     } finally {
       setDownloadingDocxZip(false);
+    }
+  }
+
+  async function handleDownloadPdfZip() {
+    setDownloadingPdfZip(true);
+    setError(null);
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-pdf`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
+      const blob = await res.blob();
+      _triggerBrowserDownload(blob, `pdf_forms_${applicationId}.zip`);
+      setPdfZipDownloaded(true);
+      setTimeout(() => setPdfZipDownloaded(false), 3000);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloadingPdfZip(false);
     }
   }
 
@@ -159,11 +159,11 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         `${API_BASE_URL}/api/admin/applications/${applicationId}/download-file/${doc.id}`,
         { method: "GET", headers: { Authorization: `Bearer ${token}` } },
       );
-      // Pack 29.4 вЂ” РѕР±СЂР°Р±РѕС‚РєР° 409 NEEDS_CONTRACT_TEMPLATE
+      // Pack 29.4 тАФ ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
       if (await handle409IfNeedsTemplate(res, () => handleDownloadOne(doc))) {
         return;
       }
-      if (!res.ok) throw new Error(`РћС€РёР±РєР° ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`╨Ю╤И╨╕╨▒╨║╨░ ${res.status}: ${await res.text()}`);
 
       const blob = await res.blob();
       _triggerBrowserDownload(blob, doc.filename);
@@ -183,18 +183,18 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       }}
     >
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-          Р СѓСЃСЃРєРёРµ С„РѕСЂРјС‹ Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+          Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
         </h3>
         <div className="flex items-center gap-2">
           <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
             className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
             style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
             {downloadingDocxZip
-              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Р“РµРЅРµСЂР°С†РёСЏ...</span></>
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
               : docxZipDownloaded
-              ? <><Check className="w-3.5 h-3.5" /><span>РЎРєР°С‡Р°РЅРѕ</span></>
-              : <><Download className="w-3.5 h-3.5" /><span>РЎРєР°С‡Р°С‚СЊ ZIP</span></>}
+              ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
+              : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
           </button>
           <button
             onClick={handleDownloadZip}
@@ -204,10 +204,10 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
               borderColor: "var(--color-border-tertiary)",
               borderWidth: 0.5,
             }}
-            title="РџРµСЂРµРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ"
+            title="╨Я╨╡╤А╨╡╨│╨╡╨╜╨╡╤А╨╕╤А╨╛╨▓╨░╤В╤М"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${downloadingZip ? "animate-spin" : ""}`} />
-            РџРµСЂРµРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ
+            ╨Я╨╡╤А╨╡╨│╨╡╨╜╨╡╤А╨╕╤А╨╛╨▓╨░╤В╤М
           </button>
           <button
             onClick={handleDownloadZip}
@@ -218,17 +218,17 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
             {downloadingZip ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Р“РµРЅРµСЂР°С†РёСЏ...
+                ╨У╨╡╨╜╨╡╤А╨░╤Ж╨╕╤П...
               </>
             ) : zipDownloaded ? (
               <>
                 <Check className="w-3.5 h-3.5" />
-                РЎРєР°С‡Р°РЅРѕ
+                ╨б╨║╨░╤З╨░╨╜╨╛
               </>
             ) : (
               <>
                 <Download className="w-3.5 h-3.5" />
-                РЎРєР°С‡Р°С‚СЊ ZIP
+                ╨б╨║╨░╤З╨░╤В╤М ZIP
               </>
             )}
           </button>
@@ -252,7 +252,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
                 style={{ background: "var(--color-bg-info)", color: "var(--color-text-info)" }}>DOC</div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-primary line-clamp-1">{doc.filename}</div>
-                <div className="text-xs text-tertiary">{isDownloading ? "РЎРєР°С‡РёРІР°РЅРёРµ..." : "РєР»РёРє РґР»СЏ СЃРєР°С‡РёРІР°РЅРёСЏ"}</div>
+                <div className="text-xs text-tertiary">{isDownloading ? "Скачивание..." : "клик для скачивания"}</div>
               </div>
               {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-tertiary flex-shrink-0" /> : <Download className="w-4 h-4 text-tertiary flex-shrink-0 opacity-50" />}
             </button>
@@ -263,16 +263,16 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       <div className="mt-4 border rounded-xl p-4" style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-            РСЃРїР°РЅСЃРєРёРµ PDF С„РѕСЂРјС‹ ({DOCUMENTS.filter(d => d.kind === "pdf").length})
+            Испанские PDF формы ({DOCUMENTS.filter(d => d.kind === "pdf").length})
           </h3>
           <button onClick={handleDownloadPdfZip} disabled={downloadingPdfZip}
             className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
             style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
             {downloadingPdfZip
-              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Р“РµРЅРµСЂР°С†РёСЏ...</span></>
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Генерация...</span></>
               : pdfZipDownloaded
-              ? <><Check className="w-3.5 h-3.5" /><span>РЎРєР°С‡Р°РЅРѕ</span></>
-              : <><Download className="w-3.5 h-3.5" /><span>РЎРєР°С‡Р°С‚СЊ ZIP</span></>}
+              ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
+              : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -286,7 +286,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
                   style={{ background: "var(--color-bg-danger)", color: "var(--color-text-danger)" }}>PDF</div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-primary line-clamp-1">{doc.filename}</div>
-                  <div className="text-xs text-tertiary">{isDownloading ? "РЎРєР°С‡РёРІР°РЅРёРµ..." : "РєР»РёРє РґР»СЏ СЃРєР°С‡РёРІР°РЅРёСЏ"}</div>
+                  <div className="text-xs text-tertiary">{isDownloading ? "Скачивание..." : "клик для скачивания"}</div>
                 </div>
                 {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-tertiary flex-shrink-0" /> : <Download className="w-4 h-4 text-tertiary flex-shrink-0 opacity-50" />}
               </button>
@@ -295,7 +295,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         </div>
       </div>
 
-            {/* Pack 29.4 вЂ” РњРѕРґР°Р»РєР° РІС‹Р±РѕСЂР° С€Р°Р±Р»РѕРЅР° РґРѕРіРѕРІРѕСЂР° РїСЂРё 409 */}
+            {/* Pack 29.4 тАФ ╨Ь╨╛╨┤╨░╨╗╨║╨░ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┤╨╛╨│╨╛╨▓╨╛╤А╨░ ╨┐╤А╨╕ 409 */}
       {pickerState && pickerState.isOpen && (
         <ContractTemplatePickerModal
           companyId={pickerState.companyId}
@@ -304,7 +304,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
           onSaved={() => {
             const retry = pickerState.onSaved;
             setPickerState(null);
-            // РќРµР±РѕР»СЊС€Р°СЏ Р·Р°РґРµСЂР¶РєР° С‡С‚РѕР±С‹ UI Р·Р°РєСЂС‹Р» РјРѕРґР°Р»РєСѓ РїРµСЂРµРґ РїРѕРІС‚РѕСЂРЅРѕР№ РїРѕРїС‹С‚РєРѕР№
+            // ╨Э╨╡╨▒╨╛╨╗╤М╤И╨░╤П ╨╖╨░╨┤╨╡╤А╨╢╨║╨░ ╤З╤В╨╛╨▒╤Л UI ╨╖╨░╨║╤А╤Л╨╗ ╨╝╨╛╨┤╨░╨╗╨║╤Г ╨┐╨╡╤А╨╡╨┤ ╨┐╨╛╨▓╤В╨╛╤А╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╛╨╣
             setTimeout(() => retry(), 100);
           }}
         />
@@ -323,4 +323,3 @@ function _triggerBrowserDownload(blob: Blob, filename: string) {
   a.remove();
   window.URL.revokeObjectURL(url);
 }
-
