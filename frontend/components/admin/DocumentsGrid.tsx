@@ -178,10 +178,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
         borderWidth: 0.5,
       }}
     >
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-          Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
-        </h3>
+      <div className="flex items-center justify-end mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <button
             onClick={handleDownloadZip}
