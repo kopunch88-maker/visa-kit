@@ -330,6 +330,7 @@ Pack 18.3.4 ставил в справку КНД 1122035 синтетическ
 | **35.9.1** | Hotfix 1 к 35.9: попытка добавить вызов `_split_city_date_paragraphs(doc)` в финальную ветку `translate_docx`. Якорь был `for ...\n        _set_paragraph_text(...)\n    out = io.BytesIO()` (без пустой строки) — снова не нашёл. Идемпотентность patcher'а сработала: попытка применить ничего не сломала, но и не добавила вызов. | ❌ Не сматчил якорь |
 | **35.9.2** | Hotfix 2 к 35.9: правильный якорь **с пустой строкой** между циклом `_set_paragraph_text` и `out = io.BytesIO()`. На Windows PowerShell в выводе `Get-Content` строка 711 пустая — это и стало ключом. Якорь нашёлся, вызов вставлен. **Структура:** после цикла перевода всех параграфов, перед сохранением в bytes — `try: splits = _split_city_date_paragraphs(doc); log.info(f"split city+date paragraphs: {splits}")` обёрнуто в try/except чтобы не сломать перевод при exception в детекторе. | ✅ В проде, шапка разбивается на 2 параграфа |
 | **35.10** | Два фикса в одном Pack. **(A) Шрифт в шапке.** В Pack 35.9 функция `_split_city_date_paragraphs` создавала новые `<w:r>` через `OxmlElement('w:r')` без `<w:rPr>` — Word применял default стиль документа (мельче чем `sz` параграфа). 3 правки: (1) перед удалением старых runs сохраняем `<w:rPr>` первого run через `deepcopy` в `saved_rPr`, (2) при создании `r_city` добавляем `r_city.append(_deepcopy(saved_rPr))`, (3) то же для `r_date`. Теперь шрифт/размер/жирность наследуются. **(B) Латинские инициалы в подписи.** В шаблоне подпись: `{{ applicant.initials_native }}` → русский «Шахин И.» (для Шахина: last_native=Шахин, first_native=Исмаил, first_native[0]=И). При переводе name_substitution заменяет «Шахин»→«SAHIN», но «И.» остаётся → в испанском «SAHIN И.». В `_build_applicant_subs` (`name_substitution.py`) добавлены 4 пары перед `return pairs`: (1) `«{last_native} {first_native[0]}.»` → `«{last_latin} {first_latin[0]}.»` («Шахин И.» → «SAHIN I.»), (2) `«{last_latin} {first_native[0]}.»` → `«{last_latin} {first_latin[0]}.»` (если фамилия уже подменилась раньше), (3-4) аналогично с middle initial. | ✅ В проде, верифицировано на Шахине: «Moscú / «28» de febrero de 2026» 2 строки нормальный размер, «_____/ SAHIN I.» латиница |
+| **36.0** | Фикс рендера PDF AcroForm-форм на iOS/Telegram preview. Новый `backend/app/pdf_forms_engine/flatten_form.py`: после pypdf fill переписывает /AP /N каждого текстового виджета (9pt Helvetica, baseline 3.117pt, /Q-центрирование через AFM-таблицу ширин Helvetica), генерит appearance для radio/checkbox, делает `pikepdf.flatten_annotations()` — на выходе статичный PDF без AcroForm, рендерится одинаково в Adobe/Chrome/iOS preview/Telegram/Android. `render_mi_t.py` и `render_designacion.py` обёрнуты в `flatten_pdf_form()`; в `builder.py` также для `compromiso`/`declaracion` (no-op без AcroForm). Заменён `templates/pdf/MI_T.pdf` на чистый официальный с inclusion.gob.es (SHA256: `da62b3408decc54cf48a1c7f0eb9c36b0133961708c1df5a5ed70be3b719f012`, 504824 bytes) — старый «грязный» содержал данные клиента ALIYEV в /V полей и /AP streams, что вызывало частичную перезапись новых заявок (например, `0/0/1963` поверх даты Mabutov'а). Заодно фикс в `_build_mi_t_fields`: `ec_map["Sp"]="/SP"` и `"Uh"="/UH"` — раньше было `/Sp`/`/Uh` несовместимо с шаблоном, для Separado/Unión de hecho галка тихо не ставилась. Добавлен `pikepdf>=10.0` в requirements.txt. Верифицировано на iPhone Telegram preview: 5 чекбоксов и весь текст видны для MABUTOV (H/Casado) и для GARCIA (M/Separada — проверка /SP фикса). | ✅ В проде (16.05.2026) |
 
 **Главные уроки сессии:**
 
@@ -964,6 +965,34 @@ ZIP (через context.py build_context)
    ↓
 Менеджер скачивает / отправляет на jurada-перевод
 ```
+
+## PDF AcroForm pipeline (с Pack 36.0)
+
+Параллельно `.docx` pipeline, для 4 испанских PDF-форм через `pdf_forms_engine/builder.py:build_pdf_forms(application, session)` → `dict[filename → bytes]`:
+
+```
+- 11_MI-T.pdf                     — render_mi_t.py (AcroForm MI_T.pdf от Минюста)
+- 12_Designacion_representante.pdf — render_designacion.py (AcroForm)
+- 13_Compromiso_RETA.pdf          — render_compromiso.py (генерация с нуля через reportlab)
+- 14_Declaracion_antecedentes.pdf  — render_declaracion.py (с нуля)
+   ↓
+Каждый рендер → flatten_pdf_form(bytes):
+  - text appearance rewrite: /Helv 9pt, baseline 3.117pt, /Q-центрирование через AFM
+  - radio/checkbox /AP regen через pikepdf.generate_appearance_streams()
+  - pikepdf.flatten_annotations() → статичный PDF без AcroForm
+   ↓
+Результат: одинаковый рендер в Adobe / Chrome / iOS preview / Telegram / Android
+```
+
+**Зачем flatten:** AcroForm на мобильных viewer'ах (iOS preview, Telegram, Android system) не рендерит чекбоксы и текст — они игнорируют `/NeedAppearances=true` и existing `/AP /N` streams. Flatten впечатывает appearances в content stream — статичный PDF рендерится идентично везде. См. Инцидент 35 и Правило 58.
+
+**Шаблоны** (templates/pdf/):
+- `MI_T.pdf` — официальный с inclusion.gob.es, SHA256 `da62b3408decc54c...`
+- `DESIGNACION DE REPRESENTANTE. Editable.pdf` — официальный
+- `DECLARACION RESPONSABLE...pdf` — официальный
+- `COMPROMISO DE ALTA EN LA SEGURIDAD SOCIAL pdf.pdf` — официальный
+
+Полный список с SHA256 — в §8 «Активные шаблоны».
 
 ---
 
@@ -1695,6 +1724,28 @@ new_r.append(new_t)
 
 **Связь с DOCX-уроком 12:** Pack 34.5 NBSP-фикс тоже работал с runs, но не создавал новые — только модифицировал текст в существующих `<w:t>`. Поэтому проблемы не было. Pack 35.9 был первый случай создания run'ов с нуля.
 
+### 🔥 Правило 58 — AcroForm PDF-шаблоны: только официальные с .gob.es, после fill всегда flatten
+
+**Что:** Любой PDF-шаблон AcroForm-формы (MI_T, DESIGNACION, DECLARACION, COMPROMISO) должен:
+1. Браться **только** с официального сайта государственного ведомства (для испанских MI-форм — `inclusion.gob.es`). SHA256 шаблона фиксируется в `§ 8. Активные шаблоны → PDF-шаблоны AcroForm`.
+2. **Никогда** не сохраняться поверх шаблона после заполнения в Adobe Reader / Foxit. Если нужно проверить заполнение — сохранять под другим именем.
+3. После заполнения через `pypdf.update_page_form_field_values()` результат **обязательно** прогоняется через `flatten_pdf_form()` из `pdf_forms_engine/flatten_form.py` (см. Инцидент 35).
+
+**Почему:**
+- AcroForm `/AP /N` appearance streams содержат **визуал** заполненных значений. pypdf обновляет `/V`, но не `/AP` — старые значения визуально остаются и накладываются на новые.
+- Mobile viewer'ы (Telegram preview, iOS Files, Android system viewer) не делают runtime appearance regeneration. AcroForm на них = пустые поля.
+- `/NeedAppearances=true` для них — не команда «перерисовать», а просто игнорируется. После flatten этот флаг не нужен — appearances уже впечатаны в content stream страницы.
+
+**Проверка перед каждым релизом** (шаблоны должны быть чистыми):
+```powershell
+python -c "from pypdf import PdfReader; r=PdfReader('templates/pdf/MI_T.pdf'); ne=[(n,f.get('/V')) for n,f in (r.get_fields() or {}).items() if f.get('/V') not in (None,'','/Off')]; print('non-empty:', len(ne)); [print(' ', n, '=', v) for n,v in ne[:5]]"
+# Должно быть: non-empty: 0
+```
+
+**Связь с Инцидентом 35:** именно нарушение этого правила (грязный `templates/pdf/MI_T.pdf` с данными ALIYEV) спровоцировало баг `0/0/1987` у клиента Mabutov + невидимые чекбоксы на iPhone Telegram preview.
+
+**Дополнительный нюанс — имена on-state в radio groups:** в шаблоне Минюста для `DEX_EC` значения on-state — `/SP` и `/UH` (UPPERCASE), хотя в подписях формы написано "Sp" и "Uh". В коде маппинга (`ec_map["Sp"] = "/SP"`, не `"/Sp"`) это важно. При добавлении новых radio_group полей — **всегда** проверять реальные имена через `extract_form_field_info.py`, не доверять подписям шаблона.
+
 ## DOCX-уроки (специально для Pack 16/20/25)
 
 1. **`<w:trHeight w:val="442"/>` БЕЗ `hRule="auto"`** = минимум 442 twips (~7.4mm), Word растянет если контент больше. С `hRule="auto"` Word **сжимает** короткие строки. У Алиева в эталоне нет hRule.
@@ -1793,6 +1844,27 @@ new_r.append(new_t)
 | `apostille_template.docx` | render_apostille → 16_Апостиль.docx | 18.9 |
 
 ⚠️ В папке также лежат **бэкапы** — `*.bak_pre_packX_Y` и `*.before_*` — теперь они **в `.gitignore`** (Pack 25.x cleanup) и **не попадают в коммиты**, но физически на диске остаются для возможного отката.
+
+## PDF-шаблоны AcroForm (templates/pdf/) — с Pack 36.0
+
+`D:\VISA\visa_kit\templates\pdf\`:
+
+| Файл | Используется | Источник | SHA256 |
+|---|---|---|---|
+| `MI_T.pdf` | render_mi_t → 11_MI-T.pdf | `inclusion.gob.es/documents/410169/2156463/MI_T.pdf` | `da62b3408decc54cf48a1c7f0eb9c36b0133961708c1df5a5ed70be3b719f012` |
+| `DESIGNACION DE REPRESENTANTE. Editable.pdf` | render_designacion → 12_Designacion_representante.pdf | `inclusion.gob.es` (Modelos Ley 14/2013) | TODO: зафиксировать в Pack 36.x |
+| `DECLARACION RESPONSABLE DE CARECER DE ANTECEDENTES PENALES.pdf` | render_declaracion → 14_Declaracion_antecedentes.pdf | `inclusion.gob.es` | TODO |
+| `COMPROMISO DE ALTA EN LA SEGURIDAD SOCIAL pdf.pdf` | render_compromiso → 13_Compromiso_RETA.pdf | `inclusion.gob.es` | TODO |
+
+⚠️ **Все PDF-шаблоны AcroForm** должны быть чистыми (без остаточных данных клиента) и браться **только** с официального сайта `inclusion.gob.es`. См. Правило 58. Проверка чистоты:
+```powershell
+python -c "from pypdf import PdfReader; r=PdfReader('templates/pdf/MI_T.pdf'); ne=[(n,f.get('/V')) for n,f in (r.get_fields() or {}).items() if f.get('/V') not in (None,'','/Off')]; print('non-empty:', len(ne))"
+# Должно быть: non-empty: 0
+```
+
+После заполнения через `pypdf.update_page_form_field_values()` все 4 формы прогоняются через `flatten_pdf_form()` (см. §5 Pipeline, Инцидент 35).
+
+`*_original.pdf` (при наличии) — backup-копии шаблонов на случай повреждения основных.
 
 ---
 
@@ -2652,6 +2724,42 @@ if last_native and first_native and last_latin and first_latin:
 - **Не использовать голые инициалы** в substitution — они слишком короткие и универсальные, дадут false-positive.
 
 
+## Инцидент 35 — PDF AcroForm-формы не рендерятся на iOS/Telegram preview, шаблон содержит данные клиента (15-16.05.2026)
+
+**Что случилось:** Костя получил жалобу от менеджера: скачанный `11_MI-T.pdf` открывается в Telegram preview на iPhone **без чекбоксов** — пустые квадраты, хотя клиент Mabutov должен иметь Teletrabajador / Inicial / TAEE / H / Casado. На десктопе в Chrome тот же файл показывался корректно. Дата рождения тоже показывалась как `0 / 0 / 1987` вместо `10 / 10 / 1987`.
+
+**Расследование:**
+1. AcroForm `/NeedAppearances=True` после `pypdf.update_page_form_field_values()` — мобильные viewer'ы игнорируют флаг и existing `/AP /N` appearance streams тоже не рисуют. Текст и галки невидимы.
+2. Шаблон `templates/pdf/MI_T.pdf` (639 KB, ModDate 28.04.2026) оказался **заполненной формой клиента ALIYEV**, а не чистым шаблоном. Тот, кто создавал шаблон, заполнил его в Acrobat и сохранил поверх. В `/V` полей и `/AP /N` appearance streams лежали данные ALIYEV.
+3. `pypdf.update_page_form_field_values()` обновляет только `/V`, но НЕ appearance streams. Для `DEX_DIA_NAC` у MABUTOV было задано `"10"`, запись в `/V` прошла, но visual представление осталось от ALIYEV — `09`, который частично перерисовался + новый текст наложился → выглядело как `0`.
+4. pypdf также рендерит текст `/Helv` auto-size (10.5pt вместо положенных 9pt) с baseline 1pt от низа вместо 3.117pt — текст «висит» выше и крупнее эталона Adobe Reader.
+
+**Что пробовали и почему не сработало:**
+- Просто удалить `/NeedAppearances` — на iPhone Telegram preview всё равно не рисует чекбоксы (этот viewer вообще не реализует appearance regen из widget annotations).
+- Overlay чёрных квадратов через reportlab поверх `pikepdf flatten_annotations` — рендер ломал шрифт (текст крупнее эталона), а на Chrome пропадала бежевая подсветка полей.
+- pikepdf-only fill (без pypdf) — `pikepdf.generate_appearance_streams()` не умеет рендерить текстовые поля, только radio/checkbox. На чистом шаблоне текст вообще не появлялся.
+
+**Решение — Pack 36.0:**
+1. Заменён `templates/pdf/MI_T.pdf` на чистый официальный с `https://www.inclusion.gob.es/documents/410169/2156463/MI_T.pdf` (SHA256: `da62b3408decc54cf48a1c7f0eb9c36b0133961708c1df5a5ed70be3b719f012`, 504824 bytes, ModDate 19.12.2022 от Минюста).
+2. Новый `pdf_forms_engine/flatten_form.py` с `flatten_pdf_form(bytes) -> bytes`:
+   - Переписывает `/AP /N` каждого Tx-виджета своим content stream: `/Helv 9 Tf 0 g, 2.0 3.117 Td, (text) Tj` (правильный шрифт и baseline).
+   - Для `/Q=1` — центрирование через AFM-таблицу ширин Helvetica (важно для `FIR_PROV` где BARCELONA центрируется).
+   - `pdf.generate_appearance_streams()` для radio/checkbox (умеет это).
+   - `pdf.flatten_annotations()` — впечатывает appearances в content stream, удаляет AcroForm + остаточные пустые Widget-аннотации (DEE_NOM и т.д.).
+   - Идемпотентно: на flattened PDF (без AcroForm) — no-op.
+3. `render_mi_t.py` и `render_designacion.py` вызывают `flatten_pdf_form()` на финальном bytes перед return.
+4. В `builder.py` `compromiso` и `declaracion` (генерация с нуля через reportlab, без AcroForm) также обёрнуты — для consistency, no-op срабатывает.
+5. Заодно фикс старого silent-bug: `ec_map["Sp"]` был `/Sp`, в шаблоне Минюста on-state называется `/SP` (UPPERCASE). То же `/UH` для `Uh`. Раньше для семейного статуса Separado/Unión de hecho галка тихо не ставилась — приложение проставляло несуществующее значение и не падало.
+
+**Уроки:**
+- **(Правило 58)** PDF AcroForm-шаблоны → **только официальные** с сайта государственного ведомства. Никогда не сохранять заполненный AcroForm PDF поверх шаблона.
+- Mobile viewer'ы (Telegram preview, iOS Files, Android system viewer) НЕ делают runtime regeneration of appearance streams. Если PDF — AcroForm и `/NeedAppearances=true`, на мобиле он будет пустым. Решение — `flatten_annotations()` перед раздачей.
+- Тестировать визуальные PDF-выходы НЕ ТОЛЬКО в Chrome/Adobe (которые делают AcroForm regen на лету и маскируют баги), а в реальном пользовательском окружении: **Telegram preview на телефоне**.
+- pypdf использует свой расчёт font size (height-of-field - 1pt) и baseline (1pt), игнорирует `/DA` поля. Чтобы получить правильный шрифт — нужно либо использовать чужую генерацию appearance, либо самим строить content stream через pikepdf.
+- Шаблоны на диске нужно периодически проверять на наличие остаточных данных. SHA256 шаблонов в PROJECT_STATE — теперь обязательный артефакт (см. §8).
+- **Имена on-state в radio groups** в шаблоне Минюста для DEX_EC — `/SP` и `/UH` (UPPERCASE), хотя в подписях написано "Sp" и "Uh". При добавлении новых radio_group полей — **всегда** проверять реальные имена через `extract_form_field_info.py`, не доверять подписям шаблона.
+
+
 ---
 
 ```powershell
@@ -2670,11 +2778,13 @@ curl https://visa-kit-production.up.railway.app/docs
 
 ---
 
-**Версия документа:** 3.6 (расширение 11.05.2026, +Сессия 11.05.2026 в TL;DR с 7 Pack-ами 34.x, +Инциденты 24-25, +Правила 44-47, +DOCX-уроки 12-15, обновление «Что работает», вычеркнут Pack 24.x degree (закрыт в 34.1) и долг #7 шаблона договора (закрыт в 34.5-34.7))
-**Базируется на:** PROJECT_STATE 3.5 (10.05.2026 — Pack 33.x: 10 паков за день)
+**Версия документа:** 3.7 (расширение 16.05.2026, +Pack 36.0 PDF AcroForm flatten, +Инцидент 35, +Правило 58, обновление §5 Pipeline с PDF блоком, обновление §8 с PDF-шаблонами Минюста + SHA256)
+**Базируется на:** 3.6 (11.05.2026 — Pack 35.x + Инциденты 24-34 + Правила 44-57) ← 3.5 (10.05.2026 — Pack 33.x: 10 паков за день)
 **Следующее обновление:** в конце следующей рабочей сессии. Открытые направления:
+- **Pack 36.1 — EX-17 TIE форма** (новая, в работе): добавить 5-й AcroForm PDF в pdf_forms_engine (`render_ex17_tie.py`), шаблон `templates/pdf/EX_17.pdf` с inclusion.gob.es, 2 новых поля в Applicant (`fingerprint_date` для даты подачи отпечатков + `nie` уже есть), кнопка «Сгенерировать EX-17 TIE» в Applicant Drawer админки.
 - IFNS expansion в другие регионы (Башкортостан, Дагестан, Чечня, Нижний Новгород — пока нет клиентов, ИФНС только default)
 - CareerTrack seed для 21 новой специальности Pack 33.4 (4 уровня × 21 = 84 строки, без duties)
 - Полировка `profile_description` для Pack 33.4 Position rows (сейчас fallback-строка)
 - Hardening fallback в `work_history_generator.py` (отложено из Pack 33.4 — нужен полный файл от пользователя)
 - Pack 28 Часть 2 — переключение pipeline, cron, admin UI для NPD pool
+- Зафиксировать SHA256 трёх оставшихся PDF-шаблонов Минюста (DESIGNACION/DECLARACION/COMPROMISO) в §8 — пока TODO
