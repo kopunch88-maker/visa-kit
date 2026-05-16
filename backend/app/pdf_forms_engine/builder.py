@@ -2,6 +2,11 @@
 PDF forms builder — собирает все 4 испанские формы для одной заявки.
 
 Возвращает dict {filename: bytes}, который потом добавляется в общий ZIP пакета.
+
+Pack 36.0: все 4 формы прогоняются через flatten_pdf_form() в конце,
+обеспечивая корректный рендер на iPhone / Telegram preview / Android.
+Для render_compromiso и render_declaracion (генерация с нуля через reportlab,
+без AcroForm) flatten — no-op, безопасен.
 """
 
 import logging
@@ -11,6 +16,7 @@ from typing import Dict, Optional
 from sqlmodel import Session
 
 from app.models import Application, Applicant, Representative, SpainAddress
+from .flatten_form import flatten_pdf_form
 from .render_mi_t import render_mi_t
 from .render_designacion import render_designacion
 from .render_compromiso import render_compromiso
@@ -69,6 +75,8 @@ def build_pdf_forms(
     try:
         mi_t_path = pdf_dir / MI_T_TEMPLATE
         if mi_t_path.exists():
+            # render_mi_t уже сам вызывает flatten_pdf_form внутри.
+            # Здесь повторный прогон будет no-op (см. идемпотентность хелпера).
             result["11_MI-T.pdf"] = render_mi_t(
                 application, applicant, representative, spain_address, mi_t_path
             )
@@ -81,6 +89,7 @@ def build_pdf_forms(
     try:
         des_path = pdf_dir / DESIGNACION_TEMPLATE
         if des_path.exists():
+            # render_designacion тоже сам вызывает flatten_pdf_form.
             result["12_Designacion_representante.pdf"] = render_designacion(
                 application, applicant, representative, spain_address, des_path
             )
@@ -89,19 +98,19 @@ def build_pdf_forms(
     except Exception as e:
         log.exception(f"Failed to render Designación: {e}")
 
-    # 13. Compromiso de alta en SS (RETA) — генерация с нуля
+    # 13. Compromiso de alta en SS (RETA) — генерация с нуля через reportlab.
+    # У этого PDF нет AcroForm, flatten_pdf_form() будет no-op, но прогон
+    # делаем для consistency и защиты от регрессий.
     try:
-        result["13_Compromiso_RETA.pdf"] = render_compromiso(
-            application, applicant, spain_address
-        )
+        compromiso_bytes = render_compromiso(application, applicant, spain_address)
+        result["13_Compromiso_RETA.pdf"] = flatten_pdf_form(compromiso_bytes)
     except Exception as e:
         log.exception(f"Failed to render Compromiso: {e}")
 
-    # 14. Declaración responsable — генерация с нуля
+    # 14. Declaración responsable — генерация с нуля.
     try:
-        result["14_Declaracion_antecedentes.pdf"] = render_declaracion(
-            application, applicant, spain_address
-        )
+        declaracion_bytes = render_declaracion(application, applicant, spain_address)
+        result["14_Declaracion_antecedentes.pdf"] = flatten_pdf_form(declaracion_bytes)
     except Exception as e:
         log.exception(f"Failed to render Declaración: {e}")
 

@@ -1,4 +1,3 @@
-
 """
 DESIGNACIÓN DE REPRESENTANTE — заполнение AcroForm.
 
@@ -7,6 +6,10 @@ DESIGNACIÓN DE REPRESENTANTE — заполнение AcroForm.
 - Texto23-35: данные представителя (Representante)
 - Texto36-39: место и дата подписи
 - Casilla de verificación 1-5: estado civil (S/C/V/D/Sp)
+
+Pack 36.0: добавлен flatten_pdf_form() в конце pipeline — обеспечивает
+рендер чекбоксов и правильного 9pt-шрифта на iOS preview / Telegram /
+Android viewer'ах (см. Инцидент 35 в PROJECT_STATE).
 """
 
 import io
@@ -18,6 +21,7 @@ from pypdf import PdfReader, PdfWriter
 
 from app.models import Application, Applicant, Representative, SpainAddress
 from .countries_es import country_es, month_es
+from .flatten_form import flatten_pdf_form
 
 
 # Тип авторизации — константа (для DN)
@@ -44,7 +48,9 @@ def render_designacion(
 
     buf = io.BytesIO()
     writer.write(buf)
-    return buf.getvalue()
+
+    # Pack 36.0: flatten для корректного рендера во всех viewer'ах.
+    return flatten_pdf_form(buf.getvalue())
 
 
 def _build_designacion_fields(

@@ -7,6 +7,10 @@ MI-T form generator — заполнение AcroForm полей в шаблон
 - DEE_*  — данные испанской компании (16 полей, все пустые для DN)
 - DR_*   — данные представителя (5 полей)
 - NRC_TITULAR + FIR_*  — оплата и подпись
+
+Pack 36.0: добавлен flatten_pdf_form() в конце pipeline — обеспечивает
+рендер чекбоксов и правильного 9pt-шрифта на iOS preview / Telegram /
+Android viewer'ах (см. Инцидент 35 в PROJECT_STATE).
 """
 
 import io
@@ -15,10 +19,10 @@ from pathlib import Path
 from typing import Optional
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import BooleanObject, NameObject, TextStringObject
 
 from app.models import Application, Applicant, Representative, SpainAddress
-from .countries_es import country_es
+from .countries_es import country_es, month_es
+from .flatten_form import flatten_pdf_form
 
 
 def render_mi_t(
@@ -34,17 +38,18 @@ def render_mi_t(
     reader = PdfReader(str(template_path))
     writer = PdfWriter(clone_from=reader)
 
-    # Собираем все значения
     fields = _build_mi_t_fields(application, applicant, representative, spain_address)
 
     # Заполняем все страницы (обычно одна, но на всякий случай)
     for page in writer.pages:
         writer.update_page_form_field_values(page, fields)
 
-    # Вытаскиваем bytes
     buf = io.BytesIO()
     writer.write(buf)
-    return buf.getvalue()
+
+    # Pack 36.0: flatten для корректного рендера во всех viewer'ах.
+    # Заменяет appearance streams на правильные 9pt и впечатывает их в страницу.
+    return flatten_pdf_form(buf.getvalue())
 
 
 def _fmt_date_parts(d: Optional[date]) -> tuple[str, str, str]:
@@ -101,14 +106,16 @@ def _build_mi_t_fields(
         elif applicant.sex == "M":
             fields["DEX_SEXO"] = "/M"
 
-        # Estado civil: S/C/V/D/Sp/Uh
+        # Estado civil: S/C/V/D/SP/UH
+        # ВАЖНО: имена on-state в шаблоне Минюста — UPPERCASE (/SP, /UH),
+        # хотя в подписях шаблона написано "Sp" и "Uh". Pack 36.0 фикс.
         ec_map = {
-            "S": "/S",   # Soltero
-            "C": "/C",   # Casado
-            "V": "/V",   # Viudo
-            "D": "/D",   # Divorciado
-            "Sp": "/Sp", # Separado
-            "Uh": "/Uh", # Unión de hecho
+            "S": "/S",    # Soltero
+            "C": "/C",    # Casado
+            "V": "/V",    # Viudo
+            "D": "/D",    # Divorciado
+            "Sp": "/SP",  # Separado (in template: /SP, NOT /Sp)
+            "Uh": "/UH",  # Unión de hecho (in template: /UH, NOT /Uh)
         }
         if applicant.marital_status in ec_map:
             fields["DEX_EC"] = ec_map[applicant.marital_status]
@@ -163,7 +170,6 @@ def _build_mi_t_fields(
     fields["FIR_PROV"] = sign_city.upper()
     fields["FIR_DIA"] = f"{sign_date.day:02d}"
     # Месяц по-испански в верхнем регистре (как в образце: 'ABRIL')
-    from .countries_es import month_es
     fields["FIR_MES"] = month_es(sign_date.month)
     fields["FIR_ANYO"] = str(sign_date.year)
 
