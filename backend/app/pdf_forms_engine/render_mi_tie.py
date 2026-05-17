@@ -13,6 +13,14 @@ SITUACIÓN EN ESPAÑA = INVESTIGADOR NACIONAL (по умолчанию для в
 
 TIPO_DOCUMENTO = INICIAL (первичная выдача карты).
 
+Pack 36.1.2: убраны hasattr-проверки на rep.address_* — поля точно есть
+в модели Representative. Секция представителя заполняется всегда когда
+у заявки есть representative.
+
+Секция "DOMICILIO A EFECTOS DE NOTIFICACIONES" заполняется адресом самого
+заявителя в Испании (тем же что в секции 1) — это физическое место
+проживания клиента, не представителя.
+
 В конце pipeline — flatten_pdf_form() для корректного рендера на
 iOS/Telegram preview (см. Инцидент 35 в PROJECT_STATE).
 """
@@ -81,17 +89,13 @@ def _build_mi_tie_fields(
     fields: dict = {}
 
     # ============ TIPO DE TARJETA (константа для DN-теletrabajador) ============
-    # Pack 36.1: INICIAL — первичная выдача карты
     fields["INICIAL"] = "/On"
 
-    # ============ SITUACIÓN EN ESPAÑA (константа INVESTIGADOR NACIONAL) ========
-    # Pack 36.1: по умолчанию INVESTIGADOR NACIONAL (как в 2 реально сданных
-    # образцах JASHARI и ZAMANLI). Менять руками в Acrobat при необходимости.
+    # ============ SITUACIÓN EN ESPAÑA (по умолчанию INVESTIGADOR NACIONAL) =====
     fields["INVESTIGADOR NACIONAL"] = "/On"
 
     # ============ DATOS DEL EXTRANJERO/A ============
     if applicant:
-        # Паспорт
         fields["PASAPORTE"] = applicant.passport_number or ""
 
         # NIE (буква-номер-буква)
@@ -100,9 +104,8 @@ def _build_mi_tie_fields(
         fields["NIE_2"] = nie_number
         fields["NIE_3"] = nie_final
 
-        # ФИО
         fields["1er Apellido"] = (applicant.last_name_latin or "").upper()
-        fields["2do Apellido"] = ""  # 2-я фамилия для русских отсутствует
+        fields["2do Apellido"] = ""
         fields["Nombre"] = (applicant.first_name_latin or "").upper()
 
         # Sexo: H = Hombre, M = Mujer
@@ -111,14 +114,13 @@ def _build_mi_tie_fields(
         elif applicant.sex == "M":
             fields["M"] = "/On"
 
-        # Estado civil: S/C/V/D/SP (ВНИМАНИЕ: SP UPPERCASE, см. Инцидент 35)
+        # Estado civil: S/C/V/D/SP (SP UPPERCASE — см. Инцидент 35)
         ec_map = {
-            "S":  "S",   # Soltero
-            "C":  "C",   # Casado
-            "V":  "V",   # Viudo
-            "D":  "D",   # Divorciado
-            "Sp": "SP",  # Separado
-            # Uh не поддерживается в MI-TIE шаблоне Минюста
+            "S":  "S",
+            "C":  "C",
+            "V":  "V",
+            "D":  "D",
+            "Sp": "SP",
         }
         if applicant.marital_status in ec_map:
             fields[ec_map[applicant.marital_status]] = "/On"
@@ -129,19 +131,17 @@ def _build_mi_tie_fields(
         fields["Mes"] = m
         fields["Año"] = y
 
-        # País nacimiento + Nacionalidad (Pack 18.10: birth_country отдельно)
+        # País nacimiento + Nacionalidad
         fields["País"] = country_es(applicant.birth_country or applicant.nationality)
         fields["Nacionalidad"] = country_es(applicant.nationality)
 
-        # Имена родителей
         fields["Nombre del padre"] = (applicant.father_name_latin or "").upper()
         fields["Nombre de la madre"] = (applicant.mother_name_latin or "").upper()
 
-        # Контакты
         fields["Tf móvil"] = applicant.phone or ""
         fields["Email"] = (applicant.email or "").upper()
 
-    # ============ Адрес в Испании ============
+    # ============ Адрес заявителя в Испании ============
     if addr:
         fields["Domicilio en España"] = (addr.street or "").upper()
         fields["Numero"] = addr.number or ""
@@ -151,44 +151,45 @@ def _build_mi_tie_fields(
         fields["Provincia"] = (addr.province or "").upper()
 
     # ============ DATOS DEL REPRESENTANTE A LOS EFECTOS DE PRESENTACIÓN ========
-    # Для DN-кейсов представитель — это менеджер визового центра.
-    # Заполняется только если есть representative.
+    # Pack 36.1.2: всегда заполняется когда есть representative.
     if rep:
-        # Razón Social = имя представителя физлица (для юрлица — название компании)
+        # Razón Social = ФИО представителя (для физлица)
         rep_full_name = f"{rep.first_name or ''} {rep.last_name or ''}".strip().upper()
         fields["NombreRazón Social"] = rep_full_name
         fields["DNI-NIE-PAS"] = (rep.nie or "").upper()
 
-        # Адрес представителя (если есть в БД)
-        if hasattr(rep, 'address_street'):
-            fields["Domicilio ClPl"] = (getattr(rep, 'address_street', '') or "").upper()
-            fields["Numero_2"] = getattr(rep, 'address_number', '') or ""
-            fields["Piso_2"] = getattr(rep, 'address_floor', '') or ""
-            fields["Localidad_2"] = (getattr(rep, 'address_city', '') or "").upper()
-            fields["CP_2"] = getattr(rep, 'address_zip', '') or ""
-            fields["Provincia_2"] = (getattr(rep, 'address_province', '') or "").upper()
+        # Адрес представителя (поля гарантированно есть в модели Representative)
+        fields["Domicilio ClPl"] = (rep.address_street or "").upper()
+        fields["Numero_2"] = rep.address_number or ""
+        fields["Piso_2"] = rep.address_floor or ""
+        fields["Localidad_2"] = (rep.address_city or "").upper()
+        fields["CP_2"] = rep.address_zip or ""
+        fields["Provincia_2"] = (rep.address_province or "").upper()
 
         fields["Tf móvil_2"] = rep.phone or ""
         fields["Email_2"] = (rep.email or "").upper()
 
     # ============ DOMICILIO A EFECTOS DE NOTIFICACIONES/COMUNICACIONES ========
-    # Для DN-кейсов = адрес в Испании (тот же что у заявителя)
-    if addr:
-        fields["NombreRazón Social_2"] = ""
-        fields["DNI-NIE-PAS_3"] = ""
+    # Pack 36.1.2: адрес заявителя в Испании (физическое место проживания клиента).
+    if addr and applicant:
+        # Razón Social в notificaciones = ФИО заявителя
+        applicant_full_name = (
+            f"{applicant.last_name_latin or ''} {applicant.first_name_latin or ''}"
+        ).strip().upper()
+        fields["NombreRazón Social_2"] = applicant_full_name
+        fields["DNI-NIE-PAS_3"] = app.nie or ""
+
         fields["Domicilio en España_2"] = (addr.street or "").upper()
         fields["Numero_3"] = addr.number or ""
         fields["Piso_3"] = addr.floor or ""
         fields["Localidad_3"] = (addr.city or "").upper()
         fields["CP_3"] = addr.zip or ""
         fields["Provincia_3"] = (addr.province or "").upper()
-        if applicant:
-            fields["Tf móvil_3"] = applicant.phone or ""
-            fields["Email_3"] = (applicant.email or "").upper()
+
+        fields["Tf móvil_3"] = applicant.phone or ""
+        fields["Email_3"] = (applicant.email or "").upper()
 
     # ============ FOOTER: место + дата подписи ============
-    # Pack 36.1: дата = fingerprint_date (дата визита в комиссариат)
-    # — это и есть момент когда заявитель физически приносит/подписывает форму.
     sign_date = app.fingerprint_date or app.submission_date or date.today()
     sign_city = (addr.city if addr else "BARCELONA") or "BARCELONA"
 
@@ -197,8 +198,7 @@ def _build_mi_tie_fields(
     fields["Mes_1"] = month_es(sign_date.month)
     fields["Año_1"] = str(sign_date.year)
 
-    # ============ Header (страница 1): DIRIGIDO A ============
-    # "BRIGADA DE EXTRANJERÍA DE BARCELONA"
+    # Header (страница 1): BRIGADA DE EXTRANJERÍA DE <город>
     fields["EXTRANJERÍA"] = sign_city.upper()
 
     return fields
