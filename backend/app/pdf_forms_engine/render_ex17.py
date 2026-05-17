@@ -8,13 +8,20 @@ Extranjero" Министерства Внутренних Дел (LO 4/2000 y RD
 Подаётся параллельно с MI-TIE — оба варианта приносятся в комиссариат,
 полиция сама решает какую принять (зависит от региона / комиссара).
 
-Маппинг полей расшифрован по координатам Rect:
-  - DATOS DEL EXTRANJERO/A    — секция 1 (Y ~ 650..490)
-  - DATOS REPRESENTANTE       — секция 2 (Y ~ 414..346)  [для нас обычно пустая]
-  - DOMICILIO NOTIFICACIONES  — секция 3 (Y ~ 269..218)  [для нас обычно пустая]
-  - TIPO_DOCUMENTO + дата     — страница 2
-
-TIPO_DOCUMENTO = TARJETA INICIAL.
+Pack 36.1.1 hotfix: чекбоксы Sexo и Estado civil в шаблоне имеют ИМЕНА
+СДВИНУТЫЕ на 1 позицию вправо относительно подписей. То есть имя
+widget'а взято от соседней слева подписи. Эмпирически проверено
+визуально с поочерёдным /On для каждого checkbox-поля:
+  Sexo:
+    widget T='H'        стоит под подписью X* (Indefinido)
+    widget T='M'        стоит под подписью H  (Hombre)
+    widget T='ChkBox'   стоит под подписью M  (Mujer)
+  Estado civil:
+    widget T='C'        стоит под подписью S  (Soltero)
+    widget T='V'        стоит под подписью C  (Casado)
+    widget T='D'        стоит под подписью V  (Viudo)
+    widget T='Sp'       стоит под подписью D  (Divorciado)
+    widget T='ChkBox-0' стоит под подписью Sp (Separado)
 
 В конце pipeline — flatten_pdf_form() для корректного рендера на
 iOS/Telegram preview (см. Инцидент 35 в PROJECT_STATE).
@@ -70,6 +77,23 @@ def _split_nie(nie: Optional[str]) -> tuple[str, str, str]:
     return s[0], s[1:-1], s[-1]
 
 
+# Pack 36.1.1 hotfix: маппинги с учётом сдвига имён виджетов на 1 вправо
+# (см. docstring модуля).
+_SEX_WIDGET_MAP = {
+    "H": "M",       # Hombre на форме = widget T='M'
+    "M": "ChkBox",  # Mujer на форме = widget T='ChkBox'
+    # X-Indefinido = widget T='H' — не используем для DN-кейсов
+}
+
+_EC_WIDGET_MAP = {
+    "S":  "C",         # Soltero на форме = widget T='C'
+    "C":  "V",         # Casado на форме = widget T='V'
+    "V":  "D",         # Viudo на форме = widget T='D'
+    "D":  "Sp",        # Divorciado на форме = widget T='Sp'
+    "Sp": "ChkBox-0",  # Separado на форме = widget T='ChkBox-0'
+}
+
+
 def _build_ex17_fields(
     app: Application,
     applicant: Optional[Applicant],
@@ -97,11 +121,9 @@ def _build_ex17_fields(
         fields["x"] = ""                                            # 2º Apellido
         fields["Textfield-5"] = (applicant.first_name_latin or "").upper()  # Nombre
 
-        # Sexo: H/M (X-Indefinido не используем)
-        if applicant.sex == "H":
-            fields["H"] = "/On"
-        elif applicant.sex == "M":
-            fields["M"] = "/On"
+        # Sexo: H/M через сдвинутый маппинг (Pack 36.1.1)
+        if applicant.sex in _SEX_WIDGET_MAP:
+            fields[_SEX_WIDGET_MAP[applicant.sex]] = "/On"
 
         # Дата рождения (день/мес/год)
         d, m, y = _fmt_date_parts(applicant.birth_date)
@@ -113,17 +135,9 @@ def _build_ex17_fields(
         fields["Textfield-7"] = country_es(applicant.birth_country or applicant.nationality)
         fields["Textfield-8"] = country_es(applicant.nationality)
 
-        # Estado civil: S/C/V/D/Sp
-        # ChkBox-0 = S (Soltero) — самая правая колонка, как ни странно
-        ec_map = {
-            "S":  "ChkBox-0",
-            "C":  "C",
-            "V":  "V",
-            "D":  "D",
-            "Sp": "Sp",
-        }
-        if applicant.marital_status in ec_map:
-            fields[ec_map[applicant.marital_status]] = "/On"
+        # Estado civil через сдвинутый маппинг (Pack 36.1.1)
+        if applicant.marital_status in _EC_WIDGET_MAP:
+            fields[_EC_WIDGET_MAP[applicant.marital_status]] = "/On"
 
         fields["Textfield-10"] = (applicant.father_name_latin or "").upper()
         fields["N"] = (applicant.mother_name_latin or "").upper()  # Nombre madre
@@ -143,13 +157,8 @@ def _build_ex17_fields(
         fields["DN IN IEPAS"] = (applicant.email or "").upper()  # имя поля очень врёт
 
     # ============ Секции 2 и 3 — обычно пустые для нашего use case ============
-    # Если у клиента есть representative — можно заполнить секцию 2:
     if rep:
         # Pack 36.1: пока опционально, по умолчанию оставляем секцию пустой.
-        # Раскомментируй если потребуется в проде:
-        # fields["Textfield-29"] = (rep.first_name + " " + rep.last_name).upper()
-        # fields["D NIN IEPAS"] = (rep.nie or "").upper()
-        # и т.д.
         pass
 
     # ============ Страница 2: TIPO DE DOCUMENTO ============
