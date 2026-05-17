@@ -1,0 +1,7 @@
+{
+  "description": "Pack 36.1: добавить миграцию для application.nie и application.fingerprint_date",
+  "target": "backend/app/db/migrations.py",
+  "mode": "append_if_missing",
+  "marker_to_check": "def apply_pack36_1_migration",
+  "append_content": "\n\n# ============================================================================\n# Pack 36.1 — application.nie и application.fingerprint_date (TIE формы)\n# ============================================================================\n\ndef apply_pack36_1_migration() -> None:\n    \"\"\"Pack 36.1 миграция:\n       - ALTER TABLE application ADD COLUMN nie VARCHAR(16)\n       - ALTER TABLE application ADD COLUMN fingerprint_date DATE\n       Идемпотентна — IF NOT EXISTS на обоих шагах.\n\n       nie заполняется после одобрения заявления MI-T (полиция выдаёт\n       номер). fingerprint_date — дата визита в комиссариат для снятия\n       отпечатков, после неё генерятся 15_MI-TIE.pdf и 16_EX-17.pdf.\n    \"\"\"\n    from sqlalchemy import text\n    from app.db.session import engine\n\n    with engine.begin() as conn:\n        conn.execute(text(\n            \"ALTER TABLE application \"\n            \"ADD COLUMN IF NOT EXISTS nie VARCHAR(16)\"\n        ))\n        conn.execute(text(\n            \"ALTER TABLE application \"\n            \"ADD COLUMN IF NOT EXISTS fingerprint_date DATE\"\n        ))\n    print(\"[migration] Pack 36.1: application.nie + fingerprint_date ready\")\n"
+}

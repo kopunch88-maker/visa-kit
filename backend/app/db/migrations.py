@@ -824,3 +824,32 @@ def apply_pack35_2_migration() -> None:
         else:
             log.debug("[migration:pack35_2] applicant.passport_issuer_ru already exists")
     print("[migration] Pack 35.2: applicant.passport_issuer_ru ready")
+
+
+# ============================================================================
+# Pack 36.1 — application.nie и application.fingerprint_date (TIE формы)
+# ============================================================================
+
+def apply_pack36_1_migration() -> None:
+    """Pack 36.1 миграция:
+       - ALTER TABLE application ADD COLUMN nie VARCHAR(16)
+       - ALTER TABLE application ADD COLUMN fingerprint_date DATE
+       Идемпотентна — IF NOT EXISTS на обоих шагах.
+
+       nie заполняется после одобрения заявления MI-T (полиция выдаёт
+       номер). fingerprint_date — дата визита в комиссариат для снятия
+       отпечатков, после неё генерятся 15_MI-TIE.pdf и 16_EX-17.pdf.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS nie VARCHAR(16)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS fingerprint_date DATE"
+        ))
+    print("[migration] Pack 36.1: application.nie + fingerprint_date ready")

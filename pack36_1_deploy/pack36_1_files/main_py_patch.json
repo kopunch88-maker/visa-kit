@@ -1,0 +1,16 @@
+{
+  "description": "Pack 36.1: импорт apply_pack36_1_migration и вызов в lifespan",
+  "target": "backend/app/main.py",
+  "edits": [
+    {
+      "comment": "Добавить импорт после apply_pack38_1_migration",
+      "old_str": "    apply_pack38_1_migration,  # Pack 38.1 — application.is_paid",
+      "new_str": "    apply_pack38_1_migration,  # Pack 38.1 — application.is_paid\n    apply_pack36_1_migration,  # Pack 36.1 — application.nie + fingerprint_date"
+    },
+    {
+      "comment": "Добавить вызов в lifespan после apply_pack38_1_migration()",
+      "old_str": "    apply_pack38_1_migration()  # Pack 38.1 application.is_paid",
+      "new_str": "    apply_pack38_1_migration()  # Pack 38.1 application.is_paid\n    apply_pack36_1_migration()  # Pack 36.1 application.nie + fingerprint_date"
+    }
+  ]
+}

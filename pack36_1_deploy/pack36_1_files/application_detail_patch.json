@@ -1,0 +1,32 @@
+{
+  "description": "Pack 36.1: вставить TieCard в сетку карточек + TieDrawer + state",
+  "target": "frontend/components/admin/ApplicationDetail.tsx",
+  "edits": [
+    {
+      "comment": "1. Добавить импорты TieCard и TieDrawer (рядом с SubmissionCard/SubmissionDrawer)",
+      "old_str": "import { SubmissionCard } from \"./cards/SubmissionCard\";",
+      "new_str": "import { SubmissionCard } from \"./cards/SubmissionCard\";\nimport { TieCard } from \"./cards/TieCard\";  // Pack 36.1"
+    },
+    {
+      "comment": "2. Импорт TieDrawer (искать существующий импорт SubmissionDrawer и добавить рядом)",
+      "old_str": "import { SubmissionDrawer } from \"./SubmissionDrawer\";",
+      "new_str": "import { SubmissionDrawer } from \"./SubmissionDrawer\";\nimport { TieDrawer } from \"./TieDrawer\";  // Pack 36.1"
+    },
+    {
+      "comment": "3. Добавить state showTieDrawer (искать строку с showSubmissionDrawer)",
+      "old_str": "  const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);",
+      "new_str": "  const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);\n  const [showTieDrawer, setShowTieDrawer] = useState(false);  // Pack 36.1"
+    },
+    {
+      "comment": "4. Вставить TieCard после SubmissionCard в сетке",
+      "old_str": "        <SubmissionCard\n          application={application}\n          representative={representative}\n          address={address}\n          onEdit={() => setShowSubmissionDrawer(true)}\n        />\n      </div>",
+      "new_str": "        <SubmissionCard\n          application={application}\n          representative={representative}\n          address={address}\n          onEdit={() => setShowSubmissionDrawer(true)}\n        />\n        {/* Pack 36.1 — карточка TIE с NIE и датой отпечатков */}\n        <TieCard\n          application={application}\n          onEdit={() => setShowTieDrawer(true)}\n        />\n      </div>"
+    },
+    {
+      "comment": "5. Добавить рендер TieDrawer (искать существующий рендер SubmissionDrawer)",
+      "old_str": "      {showSubmissionDrawer && (\n        <SubmissionDrawer",
+      "new_str": "      {showTieDrawer && (\n        <TieDrawer\n          application={application}\n          onClose={() => setShowTieDrawer(false)}\n          onSaved={() => {\n            setShowTieDrawer(false);\n            onChanged();\n          }}\n        />\n      )}\n\n      {showSubmissionDrawer && (\n        <SubmissionDrawer"
+    }
+  ],
+  "manual_fallback_note": "Если автоматический патч не сработает (например, искомые строки отличаются), смотри в README.md секцию '⚠ Если ApplicationDetail.tsx патч не применился'"
+}

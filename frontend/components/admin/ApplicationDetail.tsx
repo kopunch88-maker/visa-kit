@@ -24,12 +24,14 @@ import {
 import { CandidateCard } from "./cards/CandidateCard";
 import { CompanyCard } from "./cards/CompanyCard";
 import { SubmissionCard } from "./cards/SubmissionCard";
+import { TieCard } from "./cards/TieCard";  // Pack 36.1
 // Pack 32.1 — блок заметок по клиенту
 import { NotesCard } from "./cards/NotesCard";
 import { BusinessChecksBlock } from "./BusinessChecksBlock";
 import { DocumentsGrid } from "./DocumentsGrid";
 import { CompanyContractDrawer } from "./CompanyContractDrawer";
 import { SubmissionDrawer } from "./SubmissionDrawer";
+import { TieDrawer } from "./TieDrawer";  // Pack 36.1
 import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
@@ -87,6 +89,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const [copied, setCopied] = useState(false);
   const [showCompanyDrawer, setShowCompanyDrawer] = useState(false);
   const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);
+  const [showTieDrawer, setShowTieDrawer] = useState(false);  // Pack 36.1
   const [showApplicantDrawer, setShowApplicantDrawer] = useState(false);
   // Pack 32.0 — спиннер пока создаём пустого кандидата
   const [creatingApplicant, setCreatingApplicant] = useState(false);
@@ -396,6 +399,11 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           address={address}
           onEdit={() => setShowSubmissionDrawer(true)}
         />
+        {/* Pack 36.1 — карточка TIE с NIE и датой отпечатков */}
+        <TieCard
+          application={application}
+          onEdit={() => setShowTieDrawer(true)}
+        />
       </div>
 
       <BusinessChecksBlock
@@ -444,6 +452,17 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             setShowCompanyDrawer(false);
             loadAll();
             onUpdated();
+          }}
+        />
+      )}
+
+      {showTieDrawer && (
+        <TieDrawer
+          application={application}
+          onClose={() => setShowTieDrawer(false)}
+          onSaved={() => {
+            setShowTieDrawer(false);
+            onChanged();
           }}
         />
       )}

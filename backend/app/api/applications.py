@@ -244,6 +244,9 @@ class ApplicationPatch(BaseModel):
     # Pack 26.0: реквизиты письма от компании (Исх. № и дата)
     employer_letter_number: Optional[str] = None
     employer_letter_date: Optional[date] = None
+    # Pack 36.1: TIE поля (заполняются после одобрения и получения NIE)
+    nie: Optional[str] = None
+    fingerprint_date: Optional[date] = None
 
 
 @router.patch("/{app_id}")
@@ -402,6 +405,11 @@ def assign_application(
         app.submission_date = payload.submission_date
     if payload.payments_period_months:
         app.payments_period_months = payload.payments_period_months
+    # Pack 36.1: TIE поля — обнулять можно явной пустой строкой/None через PATCH
+    if payload.nie is not None:
+        app.nie = payload.nie or None
+    if payload.fingerprint_date is not None:
+        app.fingerprint_date = payload.fingerprint_date
 
     if app.status in (ApplicationStatus.READY_TO_ASSIGN, ApplicationStatus.AWAITING_DATA):
         app.status = ApplicationStatus.ASSIGNED
@@ -504,6 +512,9 @@ _DOWNLOAD_FILES = {
     "designacion":      {"name": "12_Designacion_representante.pdf",            "kind": "pdf", "pdf_key": "12_Designacion_representante.pdf"},
     "compromiso":       {"name": "13_Compromiso_RETA.pdf",                      "kind": "pdf", "pdf_key": "13_Compromiso_RETA.pdf"},
     "declaracion":      {"name": "14_Declaracion_antecedentes.pdf",             "kind": "pdf", "pdf_key": "14_Declaracion_antecedentes.pdf"},
+    # Pack 36.1: TIE формы (генерятся только если application.nie + fingerprint_date заполнены)
+    "mi_tie":           {"name": "15_MI-TIE.pdf",                                "kind": "pdf", "pdf_key": "15_MI-TIE.pdf"},
+    "ex17":             {"name": "16_EX-17.pdf",                                 "kind": "pdf", "pdf_key": "16_EX-17.pdf"},
        # Pack 18.3 — справка о постановке на учёт самозанятого (КНД 1122035)
     "npd_certificate":  {"name": "15_Справка_НПД.docx",        "kind": "docx", "fn": render_npd_certificate, "args": ()},  # < ДОБАВИТЬ 
     # Pack 18.3.3 — тот же документ в формате ЛКН (электронная подпись ФНС внизу, без блока МФЦ)

@@ -33,6 +33,9 @@ const DOCUMENTS: DocItem[] = [
   { id: "designacion",         filename: "12_Designacion_representante.pdf",                      kind: "pdf"  },
   { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf"  },
   { id: "declaracion",         filename: "14_Declaracion_antecedentes.pdf",                       kind: "pdf"  },
+  // Pack 36.1 — TIE формы (только если у заявки заполнены NIE и fingerprint_date)
+  { id: "mi_tie",              filename: "15_MI-TIE.pdf",                                         kind: "pdf"  },
+  { id: "ex17",                filename: "16_EX-17.pdf",                                          kind: "pdf"  },
   { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx" },
   { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx" },
   { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },

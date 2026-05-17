@@ -1,0 +1,548 @@
+﻿=== main.py / lifespan где вызываются миграции ===
+--- D:\VISA\visa_kit\backend\app\main.py ---
+
+LineNumber Line                                                                                          
+---------- ----                                                                                          
+        12 from app.db.migrations import (                                                               
+        13     apply_pack10_migration,                                                                   
+        14     apply_pack11_migration,                                                                   
+        15     apply_pack11_2_migration,                                                                 
+        16     apply_pack13_migration,                                                                   
+        17     apply_pack15_migration,                                                                   
+        18     apply_pack15_1_migration,                                                                 
+        19     apply_pack16_migration,                                                                   
+        20     apply_pack17_0_migration,                                                                 
+        21     apply_pack17_2_4_migration,                                                               
+        22     apply_pack17_2_4_1_migration,                                                             
+        23     apply_pack28_0_migration,                                                                 
+        24     apply_pack28_2_migration,                                                                 
+        25     apply_pack28_5_migration,                                                                 
+        26     apply_pack29_0_migration,                                                                 
+        27     apply_pack30_0_migration,                                                                 
+        28     apply_pack34_2_migration,  # Pack 30.0                                                    
+        29     apply_pack35_2_migration,  # Pack 35.2 — applicant.passport_issuer_ru                     
+        30     apply_pack38_1_migration,  # Pack 38.1 — application.is_paid                              
+        35 async def lifespan(app: FastAPI):                                                             
+        39     apply_pack10_migration()                                                                  
+        40     apply_pack11_migration()                                                                  
+        41     apply_pack11_2_migration()                                                                
+        42     apply_pack13_migration()                                                                  
+        43     apply_pack15_migration()                                                                  
+        44     apply_pack15_1_migration()                                                                
+        45     apply_pack16_migration()  # Bank table + applicant.bank_id (Pack 16)                      
+        46     apply_pack17_0_migration()  # Region table + applicant.inn_* fields (Pack 17.0)           
+        47     apply_pack17_2_4_migration()  # self_employed_registry + registry_import_log (Pack 17.2.4)
+        48     apply_pack17_2_4_1_migration()  # BigInteger fix + reset stuck imports (Pack 17.2.4.1)    
+        49     apply_pack28_0_migration()  # npd_candidate indexes (Pack 28.0)                           
+        50     apply_pack28_2_migration()  # npd_refill_task table + indexes (Pack 28.2)                 
+        51     apply_pack28_5_migration()  # Pack 28.5 result_registration_date column                   
+        52     apply_pack29_0_migration()  # Pack 29.0 company.contract_template_slug + backfill         
+        53     apply_pack30_0_migration()                                                                
+        54     apply_pack34_2_migration()  # Pack 30.0 application.is_urgent                             
+        55     apply_pack35_2_migration()  # Pack 35.2 applicant.passport_issuer_ru                      
+        56     apply_pack38_1_migration()  # Pack 38.1 application.is_paid                               
+        69     lifespan=lifespan,                                                                        
+
+
+
+=== Структура Application модели 60-90 строки ===
+
+class Application(TimestampMixin, table=True):
+    __tablename__ = "application"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reference: str = Field(unique=True, index=True, max_length=16)
+    status: ApplicationStatus = Field(default=ApplicationStatus.DRAFT, index=True)
+    status_notes: Optional[str] = Field(default=None, max_length=512)
+    client_access_token: str = Field(unique=True, index=True, max_length=64)
+    applicant_id: Optional[int] = Field(default=None, foreign_key="applicant.id", index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="company.id", index=True)
+    position_id: Optional[int] = Field(default=None, foreign_key="position.id", index=True)
+    representative_id: Optional[int] = Field(default=None, foreign_key="representative.id", index=True)
+    spain_address_id: Optional[int] = Field(default=None, foreign_key="spain_address.id", index=True)
+    contract_number: Optional[str] = Field(default=None, max_length=32)
+    contract_sign_date: Optional[date] = None
+    contract_sign_city: Optional[str] = Field(default=None, max_length=64)
+    contract_end_date: Optional[date] = None
+    salary_rub: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)
+    employer_letter_date: Optional[date] = None
+    employer_letter_number: Optional[str] = Field(default=None, max_length=32)
+    submission_date: Optional[date] = Field(default=None)
+    payments_period_months: Optional[int] = Field(default=3)
+    tasa_type: TasaType = Field(default=TasaType.TASA_038)
+    tasa_nrc: Optional[str] = Field(default=None, max_length=64)
+    recommendation_snapshot: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    bank_transactions_override: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    eur_rate_override: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)
+    monthly_documents_override: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    # === Параметры расчётов банковской выписки ===
+    bank_npd_rate: Optional[Decimal] = Field(default=None, max_digits=5, decimal_places=4)
+    bank_monthly_fee: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=2)
+    # Pack 25.9: ручной override даты формирования банковской выписки.
+    # Если NULL — генератор берёт today - random(7..10).
+    # Если задано — генератор использует эту дату как statement_date,
+    # период считается как [statement_date - 3мес, statement_date].
+    bank_statement_date: Optional[date] = None
+    bank_period_start: Optional[date] = None
+    bank_period_end: Optional[date] = None
+    bank_opening_balance: Optional[Decimal] = Field(default=None, max_digits=12, decimal_places=2)
+    assigned_manager_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    internal_notes: Optional[str] = Field(default=None, max_length=4096)
+
+    # === Pack 10: архивирование ===
+    is_archived: bool = Field(default=False, index=True)
+    archived_at: Optional[datetime] = Field(default=None)
+    # === Pack 30.0: флаг "срочно" ===
+    is_urgent: bool = Field(default=False, index=True)
+    # === Pack 34.2: флаг "Готово, можно забирать" ===
+    is_ready_for_pickup: bool = Field(default=False, index=True)
+    is_filed: bool = Field(default=False, index=True)  # Pack 36.0
+    is_paid: bool = Field(default=False, index=True)  # Pack 38.1
+    # Pack 27.0 — soft-delete с автоудалением через 7 дней
+    deleted_at: Optional[datetime] = Field(default=None, index=True)
+
+    applicant: Optional["Applicant"] = Relationship(back_populates="applications")
+    family_members: List["FamilyMember"] = Relationship(back_populates="application")
+    previous_residences: List["PreviousResidence"] = Relationship(back_populates="application")
+    uploaded_files: List["UploadedFile"] = Relationship(back_populates="application")
+    generated_documents: List["GeneratedDocument"] = Relationship(back_populates="application")
+
+=== ApplicationPatch и обработчик PATCH (200-260, 395-440) ===
+# PATCH partial-update — Pack 8.7
+# ============================================================================
+
+class ApplicationPatch(BaseModel):
+    """
+    Любое поле заявки можно обновить частично. Все опциональные.
+    Используется в drawers Pack 8.6+ когда нужно сохранить только
+    Подачу или только Компанию/Договор.
+    """
+    company_id: Optional[int] = None
+    position_id: Optional[int] = None
+    representative_id: Optional[int] = None
+    spain_address_id: Optional[int] = None
+    contract_number: Optional[str] = None
+    contract_sign_date: Optional[date] = None
+    contract_sign_city: Optional[str] = None
+    contract_end_date: Optional[date] = None
+    salary_rub: Optional[float] = None
+    submission_date: Optional[date] = None
+    payments_period_months: Optional[int] = None
+    internal_notes: Optional[str] = None
+    # Pack 9: NRC квитанции пошлины (для PDF-форм MI-T)
+    tasa_nrc: Optional[str] = None
+    # Pack 26.0: реквизиты письма от компании (Исх. № и дата)
+    employer_letter_number: Optional[str] = None
+    employer_letter_date: Optional[date] = None
+
+
+@router.patch("/{app_id}")
+def patch_application(
+    app_id: int,
+    payload: ApplicationPatch,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """
+    Pack 8.7: частичное обновление заявки.
+
+    Принимает любой набор полей. Незаданные поля не трогает.
+    Валидирует foreign keys только для тех связей которые передаются.
+    Автоматически переводит статус в ASSIGNED если все 4 связи готовы.
+
+    Pack 20.0: убрана валидация связи Position-Company (Position больше
+    не привязан к Company; Company и Position на Application выбираются
+    независимо).
+    """
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+--- patch handler ---
+    position = session.get(Position, payload.position_id)
+    # Pack 20.0: position больше не имеет company_id, проверяем только наличие
+    if not position:
+        raise HTTPException(422, "Position not found")
+    rep = session.get(Representative, payload.representative_id)
+    if not rep or not rep.is_active:
+        raise HTTPException(422, "Representative not found or inactive")
+    addr = session.get(SpainAddress, payload.spain_address_id)
+    if not addr or not addr.is_active:
+        raise HTTPException(422, "Spain address not found or inactive")
+
+    app.company_id = payload.company_id
+    app.position_id = payload.position_id
+    app.representative_id = payload.representative_id
+    app.spain_address_id = payload.spain_address_id
+    app.contract_number = payload.contract_number
+    app.contract_sign_date = payload.contract_sign_date
+    app.contract_sign_city = payload.contract_sign_city
+    app.contract_end_date = payload.contract_end_date
+    app.salary_rub = payload.salary_rub
+    if payload.submission_date:
+        app.submission_date = payload.submission_date
+    if payload.payments_period_months:
+        app.payments_period_months = payload.payments_period_months
+
+    if app.status in (ApplicationStatus.READY_TO_ASSIGN, ApplicationStatus.AWAITING_DATA):
+        app.status = ApplicationStatus.ASSIGNED
+
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id, "application_assigned",
+        f"Assigned: {company.short_name} / {position.title_ru}",
+    )
+    session.commit()
+    session.refresh(app)
+    return _enrich(app, session)
+
+
+# ============================================================================
+# Status — liberal (без strict status_machine)
+# ============================================================================
+
+@router.post("/{app_id}/status")
+def update_status(
+    app_id: int,
+    payload: ApplicationStatusUpdate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    old_status = app.status
+    app.status = payload.new_status
+    if payload.notes:
+        app.status_notes = payload.notes
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id, "status_changed",
+        f"Status: {old_status.value if hasattr(old_status, 'value') else old_status} > {payload.new_status.value}",
+
+=== lib/api.ts — patchApplication и API_BASE ===
+--- D:\VISA\visa_kit\frontend\lib\api.ts ---
+
+LineNumber Line                                                                                                     
+---------- ----                                                                                                     
+         4  * - patchApplication(): partial-update заявки                                                           
+        12 export const API_BASE_URL =                                                                              
+        73 export type ApplicationResponse = {                                                                      
+        94   tasa_nrc?: string;                                                                                     
+       309   const res = await fetch(`${API_BASE_URL}/api/auth/login`, {                                            
+       331   const res = await fetch(`${API_BASE_URL}/api/client/${token}/me`);                                     
+       340   const res = await fetch(`${API_BASE_URL}/api/client/${token}/me`, {                                    
+       349 export async function getMyApplication(token: string): Promise<ApplicationResponse> {                    
+       350   const res = await fetch(`${API_BASE_URL}/api/client/${token}/application`);                            
+       360   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents`);                              
+       376   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents/upload`, {                      
+       399     `${API_BASE_URL}/api/client/${token}/documents/${docId}`,                                            
+       412     `${API_BASE_URL}/api/client/${token}/documents/${docId}/recognize`,                                  
+       439     `${API_BASE_URL}/api/client/${token}/documents/preview-apply`,                                       
+       473     `${API_BASE_URL}/api/client/${token}/documents/apply-to-applicant`,                                  
+       505     `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents`,                          
+       527     `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}/recognize`,       
+       690   const res = await fetch(`${API_BASE_URL}/api/admin/import-package/upload`, {                           
+       715     `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize`,                                    
+       746     `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize/with-company`,                       
+       777     `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize/skip-company`,                       
+       803   await fetch(`${API_BASE_URL}/api/admin/import-package/${sessionId}/cancel`, {                          
+       812     `${API_BASE_URL}/api/admin/import-package/${sessionId}/status`,                                      
+       854     `${API_BASE_URL}/api/admin/import-package/presign-batch`,                                            
+       882     `${API_BASE_URL}/api/admin/import-package/${sessionId}/finalize-uploads`,                            
+       954 ): Promise<ApplicationResponse[]> {                                                                      
+       955   const url = new URL(`${API_BASE_URL}/api/admin/applications`);                                         
+       967 export async function getApplication(id: number): Promise<ApplicationResponse> {                         
+       968   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${id}`, { headers: authHeaders() });   
+       980 }): Promise<ApplicationResponse> {                                                                       
+       981   const res = await fetch(`${API_BASE_URL}/api/admin/applications`, {                                    
+       989   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, { headers: authHeaders() });     
+      1002     `${API_BASE_URL}/api/admin/applicants/for-application/${appId}`,                                     
+      1050   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, {                                
+      1086   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/transliterate`, {                        
+      1112     `${API_BASE_URL}/api/admin/applications/${appId}/recommendation`,                                    
+      1119 export async function patchApplication(                                                                  
+      1135 ): Promise<ApplicationResponse> {                                                                        
+      1136   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}`, {                           
+      1158 ): Promise<ApplicationResponse> {                                                                        
+      1159   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/assign`, {                    
+      1168 ): Promise<ApplicationResponse> {                                                                        
+      1169   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/status`, {                    
+      1177 export async function archiveApplication(appId: number): Promise<ApplicationResponse> {                  
+      1178   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/archive`, {                   
+      1186 export async function toggleUrgent(appId: number): Promise<ApplicationResponse> {                        
+      1187   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-urgent`, {             
+      1194 export async function togglePaid(appId: number): Promise<ApplicationResponse> {                          
+      1195   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-paid`, {               
+      1203 export async function toggleReady(appId: number): Promise<ApplicationResponse> {                         
+      1204   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-ready`, {              
+      1211 export async function toggleFiled(appId: number): Promise<ApplicationResponse> {                         
+      1212   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/toggle-filed`, {              
+      1220 export async function unarchiveApplication(appId: number): Promise<ApplicationResponse> {                
+      1221   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/unarchive`, {                 
+      1233   const url = new URL(`${API_BASE_URL}/api/admin/companies`);                                            
+      1241   const res = await fetch(`${API_BASE_URL}/api/admin/companies/${id}`, { headers: authHeaders() });      
+      1247   const res = await fetch(`${API_BASE_URL}/api/admin/companies`, {                                       
+      1255   const res = await fetch(`${API_BASE_URL}/api/admin/companies/${id}`, {                                 
+      1263   const res = await fetch(`${API_BASE_URL}/api/admin/companies/${id}`, {                                 
+      1281   const res = await fetch(`${API_BASE_URL}/api/admin/companies/contract-templates`, {                    
+      1294   const url = new URL(`${API_BASE_URL}/api/admin/positions`);                                            
+      1303   const res = await fetch(`${API_BASE_URL}/api/admin/positions/${id}`, { headers: authHeaders() });      
+      1309   const res = await fetch(`${API_BASE_URL}/api/admin/positions`, {                                       
+      1317   const res = await fetch(`${API_BASE_URL}/api/admin/positions/${id}`, {                                 
+      1325   const res = await fetch(`${API_BASE_URL}/api/admin/positions/${id}`, {                                 
+      1336   const url = new URL(`${API_BASE_URL}/api/admin/representatives`);                                      
+      1344   const res = await fetch(`${API_BASE_URL}/api/admin/representatives/${id}`, { headers: authHeaders() });
+      1350   const res = await fetch(`${API_BASE_URL}/api/admin/representatives`, {                                 
+      1358   const res = await fetch(`${API_BASE_URL}/api/admin/representatives/${id}`, {                           
+      1366   const res = await fetch(`${API_BASE_URL}/api/admin/representatives/${id}`, {                           
+      1377   const url = new URL(`${API_BASE_URL}/api/admin/spain-addresses`);                                      
+      1385   const res = await fetch(`${API_BASE_URL}/api/admin/spain-addresses/${id}`, { headers: authHeaders() });
+      1391   const res = await fetch(`${API_BASE_URL}/api/admin/spain-addresses`, {                                 
+      1399   const res = await fetch(`${API_BASE_URL}/api/admin/spain-addresses/${id}`, {                           
+      1407   const res = await fetch(`${API_BASE_URL}/api/admin/spain-addresses/${id}`, {                           
+      1787     `${API_BASE_URL}/api/admin/applications/${applicationId}/translate`,                                 
+      1800     `${API_BASE_URL}/api/admin/applications/${applicationId}/translate/${kind}`,                         
+      1810     `${API_BASE_URL}/api/admin/applications/${applicationId}/translations`,                              
+      1820     `${API_BASE_URL}/api/admin/applications/${applicationId}/translations`,                              
+      1829     `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/cancel-stuck`,                 
+      1839     `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/zip`,                          
+      1852     `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/${kind}/download`,             
+      1884     `${API_BASE_URL}/api/admin/companies/translit-suggest`,                                              
+      1922   const url = `${API_BASE_URL}/api/admin/banks${includeInactive ? "?include_inactive=true" : ""}`;       
+      1929   const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, { headers: authHeaders() });          
+      1935   const res = await fetch(`${API_BASE_URL}/api/admin/banks`, {                                           
+      1945   const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, {                                     
+      1955   const res = await fetch(`${API_BASE_URL}/api/admin/banks/${id}`, {                                     
+      1980     `${API_BASE_URL}/api/admin/banks/${bankId}/generate-account`,                                        
+      2028   const res = await fetch(`${API_BASE_URL}/api/admin/regions${qs}`, {                                    
+      2036   const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {                                   
+      2046   const res = await fetch(`${API_BASE_URL}/api/admin/regions`, {                                         
+      2059   const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {                                   
+      2069   const res = await fetch(`${API_BASE_URL}/api/admin/regions/${id}`, {                                   
+      2148     `${API_BASE_URL}/api/admin/applicants/${applicantId}/inn-suggest`,                                   
+      2167     `${API_BASE_URL}/api/admin/applicants/${applicantId}/inn-accept`,                                    
+      2203     `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-address`,                                 
+      2250     `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-education`,                               
+      2309     `${API_BASE_URL}/api/admin/applicants/${applicantId}/regen-work-history`,                            
+      2350     `${API_BASE_URL}/api/admin/applications/${appId}/bank-transactions/generate`,                        
+      2368     `${API_BASE_URL}/api/admin/applications/${appId}/bank-transactions`,                                 
+      2412     `${API_BASE_URL}/api/admin/companies/extract-from-document`,                                         
+      2438   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}`, {                           
+      2449 export async function restoreApplication(appId: number): Promise<ApplicationResponse> {                  
+      2450   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/restore`, {                   
+      2466   const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/permanent`, {                 
+      2517   const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/stats`, {                                  
+      2528   const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/tasks/${taskId}`, {                        
+      2549   const res = await fetch(`${API_BASE_URL}/api/admin/npd-pool/refill-all`, {                             
+      2590     `${API_BASE_URL}/api/admin/applicants/${applicantId}/refine-inn-date`,                               
+      2605     `${API_BASE_URL}/api/admin/refine-tasks/${taskId}`,                                                  
+      2630     `${API_BASE_URL}/api/admin/npd-pool/region/${regionCode}/refill?add_target=${addTarget}`,            
+      2652     `${API_BASE_URL}/api/admin/applicants/resolve-passport-issuer-ru`,                                   
+
+
+--- D:\VISA\visa_kit\frontend\lib\api_changes.ts ---
+
+LineNumber Line                                                                               
+---------- ----                                                                               
+        50   const res = await fetch(`${API_BASE_URL}/api/client/${token}/documents/upload`, {
+
+
+--- D:\VISA\visa_kit\frontend\lib\api_login_PATCH.ts ---
+
+LineNumber Line                                                         
+---------- ----                                                         
+        22   const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+
+
+--- D:\VISA\visa_kit\frontend\lib\api_PATCH.ts ---
+--- D:\VISA\visa_kit\frontend\lib\pdfConverter.ts ---
+--- D:\VISA\visa_kit\frontend\lib\utils.ts ---
+
+=== Структура ApplicationResponse (TS-тип) ===
+--- D:\VISA\visa_kit\frontend\lib\api.ts ---
+export type ApplicationResponse = {
+  id: number;
+  reference: string;
+  status: string;
+  status_notes?: string;
+  internal_notes?: string;
+  business_rule_problems?: string[];
+  client_access_token?: string;
+  applicant_id?: number;
+  company_id?: number;
+  position_id?: number;
+  representative_id?: number;
+  spain_address_id?: number;
+  contract_number?: string;
+  contract_sign_date?: string;
+  contract_end_date?: string;
+  contract_sign_city?: string;
+  salary_rub?: number;
+  submission_date?: string;
+  payments_period_months?: number;
+  recommendation_snapshot?: any;
+  tasa_nrc?: string;
+  created_at?: string;
+  is_archived?: boolean;
+  archived_at?: string;
+  can_be_archived?: boolean;
+  // Pack 30.0
+  is_urgent?: boolean;
+  is_filed?: boolean;  // Pack 36.0
+  is_paid?: boolean;   // Pack 38.1
+  is_paid?: boolean;   // Pack 38.1
+  applicant_name_native?: string;
+  applicant_name_latin?: string;
+}
+
+=== build_pdf_forms в pdf_forms_engine/builder.py ===
+"""
+PDF forms builder — собирает все 4 испанские формы для одной заявки.
+
+Возвращает dict {filename: bytes}, который потом добавляется в общий ZIP пакета.
+
+Pack 36.0: все 4 формы прогоняются через flatten_pdf_form() в конце,
+обеспечивая корректный рендер на iPhone / Telegram preview / Android.
+Для render_compromiso и render_declaracion (генерация с нуля через reportlab,
+без AcroForm) flatten — no-op, безопасен.
+"""
+
+import logging
+from pathlib import Path
+from typing import Dict, Optional
+
+from sqlmodel import Session
+
+from app.models import Application, Applicant, Representative, SpainAddress
+from .flatten_form import flatten_pdf_form
+from .render_mi_t import render_mi_t
+from .render_designacion import render_designacion
+from .render_compromiso import render_compromiso
+from .render_declaracion import render_declaracion
+
+log = logging.getLogger(__name__)
+
+
+# Пути к шаблонам (относительно корня проекта visa_kit/)
+TEMPLATES_PDF_DIR = Path("templates") / "pdf"
+MI_T_TEMPLATE = "MI_T.pdf"
+DESIGNACION_TEMPLATE = "DESIGNACION DE REPRESENTANTE. Editable.pdf"
+
+
+def build_pdf_forms(
+    application: Application,
+    session: Session,
+    templates_root: Optional[Path] = None,
+) -> Dict[str, bytes]:
+    """
+    Генерирует все 4 PDF-формы для заявки.
+
+    Args:
+        application: заявка с заполненными связями
+        session: SQLModel сессия (нужна для подгрузки applicant/representative/spain_address)
+        templates_root: путь к папке templates/. Если None — берётся ./templates от cwd.
+
+    Returns:
+        dict {filename: bytes} с 4 PDF файлами
+    """
+    if templates_root is None:
+        templates_root = Path("templates")
+
+    pdf_dir = templates_root / "pdf"
+    if not pdf_dir.exists():
+        log.warning(f"PDF templates directory not found: {pdf_dir}. "
+                    f"PDF forms will be skipped.")
+        return {}
+
+    # Подгружаем связанные сущности
+    applicant: Optional[Applicant] = None
+    if application.applicant_id:
+        applicant = session.get(Applicant, application.applicant_id)
+
+    representative: Optional[Representative] = None
+    if application.representative_id:
+        representative = session.get(Representative, application.representative_id)
+
+    spain_address: Optional[SpainAddress] = None
+    if application.spain_address_id:
+        spain_address = session.get(SpainAddress, application.spain_address_id)
+
+    result: Dict[str, bytes] = {}
+
+    # 11. MI-T
+    try:
+        mi_t_path = pdf_dir / MI_T_TEMPLATE
+        if mi_t_path.exists():
+            # render_mi_t уже сам вызывает flatten_pdf_form внутри.
+            # Здесь повторный прогон будет no-op (см. идемпотентность хелпера).
+            result["11_MI-T.pdf"] = render_mi_t(
+                application, applicant, representative, spain_address, mi_t_path
+            )
+        else:
+            log.warning(f"MI-T template not found: {mi_t_path}")
+    except Exception as e:
+        log.exception(f"Failed to render MI-T: {e}")
+
+    # 12. Designación de representante
+    try:
+        des_path = pdf_dir / DESIGNACION_TEMPLATE
+        if des_path.exists():
+            # render_designacion тоже сам вызывает flatten_pdf_form.
+            result["12_Designacion_representante.pdf"] = render_designacion(
+                application, applicant, representative, spain_address, des_path
+            )
+        else:
+            log.warning(f"Designación template not found: {des_path}")
+    except Exception as e:
+        log.exception(f"Failed to render Designación: {e}")
+
+    # 13. Compromiso de alta en SS (RETA) — генерация с нуля через reportlab.
+    # У этого PDF нет AcroForm, flatten_pdf_form() будет no-op, но прогон
+    # делаем для consistency и защиты от регрессий.
+    try:
+        compromiso_bytes = render_compromiso(application, applicant, spain_address)
+        result["13_Compromiso_RETA.pdf"] = flatten_pdf_form(compromiso_bytes)
+    except Exception as e:
+        log.exception(f"Failed to render Compromiso: {e}")
+
+    # 14. Declaración responsable — генерация с нуля.
+    try:
+        declaracion_bytes = render_declaracion(application, applicant, spain_address)
+        result["14_Declaracion_antecedentes.pdf"] = flatten_pdf_form(declaracion_bytes)
+    except Exception as e:
+        log.exception(f"Failed to render Declaración: {e}")
+
+    log.info(f"Generated {len(result)} PDF forms for application #{application.id}")
+    return result
+
+=== Структура rendering.py:build_full_package и где собирает pdf_forms (~140-165) ===
+        # === DOCX в корне ZIP (как было) ===
+        for filename, status_key, fn, args in filtered:
+            content = _try_render(status_key, fn, *args)
+            if content is None:
+                status[status_key] = "skipped"
+                continue
+            zf.writestr(filename, content)
+            status[status_key] = "ok"
+
+        # === Pack 9: испанские PDF-формы в forms_es/ ===
+        if include_pdf_forms and include_pdf:
+            try:
+                # Шаблоны лежат в visa_kit/templates/pdf/ — на уровень выше backend/
+                # Cwd = D:\VISA\visa_kit\backend\, нужен путь D:\VISA\visa_kit\templates\
+                templates_root = Path(__file__).resolve().parent.parent.parent.parent / "templates"
+                pdf_forms = build_pdf_forms(application, session, templates_root)
+                for filename, pdf_bytes in pdf_forms.items():
+                    zf.writestr(f"forms_es/{filename}", pdf_bytes)
+                    # ключ статуса = имя без расширения, для удобства
+                    status_key = filename.rsplit(".", 1)[0]
+                    status[status_key] = "ok"
+                if not pdf_forms:
+                    status["pdf_forms"] = "skipped (no templates found)"
+            except Exception as e:
+                logger.exception(f"PDF forms generation failed: {e}")
+                status["pdf_forms"] = f"error: {type(e).__name__}: {e}"
+
+    buffer.seek(0)
+    return buffer.getvalue(), status

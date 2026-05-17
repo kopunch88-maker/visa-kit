@@ -1,0 +1,11 @@
+{
+  "description": "Pack 36.1: добавить mi_tie и ex17 в массив DOCUMENTS",
+  "target": "frontend/components/admin/DocumentsGrid.tsx",
+  "edits": [
+    {
+      "comment": "Вставить 2 новые строки после declaracion перед npd_certificate",
+      "old_str": "  { id: \"declaracion\",         filename: \"14_Declaracion_antecedentes.pdf\",                       kind: \"pdf\"  },\n  { id: \"npd_certificate\",     filename: \"15_Справка_НПД.docx\",       kind: \"docx\" },",
+      "new_str": "  { id: \"declaracion\",         filename: \"14_Declaracion_antecedentes.pdf\",                       kind: \"pdf\"  },\n  // Pack 36.1 — TIE формы (только если у заявки заполнены NIE и fingerprint_date)\n  { id: \"mi_tie\",              filename: \"15_MI-TIE.pdf\",                                         kind: \"pdf\"  },\n  { id: \"ex17\",                filename: \"16_EX-17.pdf\",                                          kind: \"pdf\"  },\n  { id: \"npd_certificate\",     filename: \"15_Справка_НПД.docx\",       kind: \"docx\" },"
+    }
+  ]
+}

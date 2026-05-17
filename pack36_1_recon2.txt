@@ -1,0 +1,123 @@
+﻿=== Где models.py ===
+
+=== Где migrations.py ===
+
+FullName                                      Length
+--------                                      ------
+D:\VISA\visa_kit\backend\app\db\migrations.py  39480
+
+
+
+=== Класс Application (любой найденный models.py) ===
+
+=== Где applications.py (для endpoint'ов и _DOWNLOAD_FILES) ===
+
+FullName                                         Length
+--------                                         ------
+D:\VISA\visa_kit\backend\app\api\applications.py  37047
+
+
+
+=== _DOWNLOAD_FILES полный (все строки) ===
+
+--- D:\VISA\visa_kit\backend\app\api\applications.py ---
+
+LineNumber Line                                                                                                                                          
+---------- ----                                                                                                                                          
+       490 _DOWNLOAD_FILES = {                                                                                                                           
+       492     "contract":         {"name": "01_Договор.docx",            "kind": "docx", "fn": render_contract,     "args": ()},                        
+       493     "act_1":            {"name": "02_Акт_1.docx",              "kind": "docx", "fn": render_act,          "args": (1,)},                      
+       494     "act_2":            {"name": "03_Акт_2.docx",              "kind": "docx", "fn": render_act,          "args": (2,)},                      
+       495     "act_3":            {"name": "04_Акт_3.docx",              "kind": "docx", "fn": render_act,          "args": (3,)},                      
+       496     "invoice_1":        {"name": "05_Счёт_1.docx",             "kind": "docx", "fn": render_invoice,      "args": (1,)},                      
+       497     "invoice_2":        {"name": "06_Счёт_2.docx",             "kind": "docx", "fn": render_invoice,      "args": (2,)},                      
+       498     "invoice_3":        {"name": "07_Счёт_3.docx",             "kind": "docx", "fn": render_invoice,      "args": (3,)},                      
+       499     "employer_letter":  {"name": "08_Письмо.docx",             "kind": "docx", "fn": render_employer_letter, "args": ()},                     
+       500     "cv":               {"name": "09_Резюме.docx",             "kind": "docx", "fn": render_cv,           "args": ()},                        
+       501     "bank_statement":   {"name": "10_Выписка.docx",            "kind": "docx", "fn": render_bank_statement, "args": ()},                      
+       503     "mi_t":             {"name": "11_MI-T.pdf",                                 "kind": "pdf", "pdf_key": "11_MI-T.pdf"},                     
+       504     "designacion":      {"name": "12_Designacion_representante.pdf",            "kind": "pdf", "pdf_key": "12_Designacion_representante.pdf"},
+       505     "compromiso":       {"name": "13_Compromiso_RETA.pdf",                      "kind": "pdf", "pdf_key": "13_Compromiso_RETA.pdf"},          
+       506     "declaracion":      {"name": "14_Declaracion_antecedentes.pdf",             "kind": "pdf", "pdf_key": "14_Declaracion_antecedentes.pdf"}, 
+       508     "npd_certificate":  {"name": "15_Справка_НПД.docx",        "kind": "docx", "fn": render_npd_certificate, "args": ()},  # < ДОБАВИТЬ       
+       510     "npd_certificate_lkn": {"name": "15b_Справка_НПД_ЛКН.docx", "kind": "docx", "fn": render_npd_certificate_lkn, "args": ()},                
+       512     "apostille":           {"name": "16_Апостиль.docx",         "kind": "docx", "fn": render_apostille,         "args": ()},                  
+       533     if file_id not in _DOWNLOAD_FILES:                                                                                                        
+       536     spec = _DOWNLOAD_FILES[file_id]                                                                                                           
+       540         if spec["kind"] == "docx":                                                                                                            
+       543         elif spec["kind"] == "pdf":                                                                                                           
+
+
+
+=== Где rendering.py (build_full_package) ===
+
+FullName                                          
+--------                                          
+D:\VISA\visa_kit\backend\app\services\rendering.py
+
+
+
+=== build_full_package — где собирается ZIP и список PDF ===
+
+--- D:\VISA\visa_kit\backend\app\services\rendering.py ---
+
+LineNumber Line                                                                             
+---------- ----                                                                             
+        19         11_MI-T.pdf                                                              
+        41 from app.pdf_forms_engine import build_pdf_forms                                 
+        57 def build_full_package(                                                          
+       146                 pdf_forms = build_pdf_forms(application, session, templates_root)
+
+
+
+=== Backend компонент с Испанскими PDF формами (frontend) ===
+
+Path                                                         LineNumber Line                                                                                                             
+----                                                         ---------- ----                                                                                                             
+D:\VISA\visa_kit\docgrid_original.tsx                                33   { id: "mi_t",            filename: "11_MI-T.pdf",                              kind: "pdf"  },                 
+D:\VISA\visa_kit\frontend\components\admin\DocumentsGrid.tsx         32   { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
+D:\VISA\visa_kit\frontend\components\admin\DocumentsGrid.tsx        262             Испанские PDF формы ({DOCUMENTS.filter(d => d.kind === "pdf").length})                               
+
+
+
+=== Компонент Подача (PODACHA / submission) ===
+
+Path                                                                 LineNumber Line                                                                                                
+----                                                                 ---------- ----                                                                                                
+D:\VISA\visa_kit\frontend\app\admin\page.tsx                                 26   // Pack 34.3 — режим сортировки списка (default / alphabet / submission_date)                     
+D:\VISA\visa_kit\frontend\app\admin\page.tsx                                 31     if (saved === "default" || saved === "alphabet" || saved === "submission_date") {               
+D:\VISA\visa_kit\frontend\app\admin\page.tsx                                246               { id: "submission_date" as const, label: "По дате подачи" },                          
+D:\VISA\visa_kit\frontend\app\admin\page.tsx                                262                       : "Внутри групп — ближайшая дата подачи выше"                                 
+D:\VISA\visa_kit\frontend\app\admin\applications\new\page.tsx                24         submission_date: submissionDate || undefined,                                               
+D:\VISA\visa_kit\frontend\app\admin\applications\new\page.tsx               101               Планируемая дата подачи в UGE                                                         
+D:\VISA\visa_kit\frontend\app\admin\archive\page.tsx                        180                 <th className="px-4 py-2.5">Подача в UGE</th>                                       
+D:\VISA\visa_kit\frontend\app\admin\archive\page.tsx                        227                       {formatDate(a.submission_date)}                                               
+D:\VISA\visa_kit\frontend\components\admin\ApplicationDetail.tsx            377       {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}                         
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx               8 export type SortMode = "default" | "alphabet" | "submission_date";                                  
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             103   } else if (mode === "submission_date") {                                                          
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             105       distanceFromToday(a.submission_date) - distanceFromToday(b.submission_date);                  
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             207                     color: app.submission_date                                                      
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             210                     opacity: app.submission_date ? 0.85 : 0.45,                                     
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             212                   title={app.submission_date ? "Планируемая дата подачи" : "Дата подачи не задана"} 
+D:\VISA\visa_kit\frontend\components\admin\ApplicationsList.tsx             215                   {formatSubmissionDate(app.submission_date) || "не задана"}                        
+D:\VISA\visa_kit\frontend\components\admin\BusinessChecksBlock.tsx           30   if (application.contract_sign_date && application.submission_date) {                              
+D:\VISA\visa_kit\frontend\components\admin\BusinessChecksBlock.tsx           32     const submitDate = new Date(application.submission_date);                                       
+D:\VISA\visa_kit\frontend\components\admin\BusinessChecksBlock.tsx           50       text: "Договор не подписан или не задана дата подачи",                                        
+D:\VISA\visa_kit\frontend\components\admin\CompanyContractDrawer.tsx         46 // Считаем от max(submission_date, today) + 3 года + случайно 3..5 месяцев запаса.                  
+D:\VISA\visa_kit\frontend\components\admin\CompanyContractDrawer.tsx         61 // Минимально допустимая дата окончания = submission_date + 3 года ровно (без запаса).              
+D:\VISA\visa_kit\frontend\components\admin\CompanyContractDrawer.tsx         82     const submission = application.submission_date || "";                                           
+D:\VISA\visa_kit\frontend\components\admin\CompanyContractDrawer.tsx        303                   const minRequired = minRequiredContractEndDate(application.submission_date || "");
+D:\VISA\visa_kit\frontend\components\admin\SubmissionDrawer.tsx              25   const [submissionDate, setSubmissionDate] = useState(application.submission_date || "");          
+D:\VISA\visa_kit\frontend\components\admin\SubmissionDrawer.tsx              49         submission_date: submissionDate || undefined,                                               
+D:\VISA\visa_kit\frontend\components\admin\SubmissionDrawer.tsx              68             Подача · #{application.reference}                                                       
+D:\VISA\visa_kit\frontend\components\admin\cards\CompanyCard.tsx             67   const days = daysBetween(application.contract_sign_date, application.submission_date);            
+D:\VISA\visa_kit\frontend\components\admin\cards\CompanyCard.tsx             82   if (!application.contract_end_date || !application.submission_date) {                             
+D:\VISA\visa_kit\frontend\components\admin\cards\CompanyCard.tsx             85   const submission = new Date(application.submission_date);                                         
+D:\VISA\visa_kit\frontend\components\admin\cards\CompanyCard.tsx             95     const remaining = daysBetween(application.submission_date, application.contract_end_date);      
+D:\VISA\visa_kit\frontend\components\admin\cards\SubmissionCard.tsx          19     application.submission_date || representative || address;                                       
+D:\VISA\visa_kit\frontend\components\admin\cards\SubmissionCard.tsx          32           Подача                                                                                    
+D:\VISA\visa_kit\frontend\components\admin\cards\SubmissionCard.tsx          49             <div className="text-[11px] text-tertiary">Дата подачи</div>                            
+D:\VISA\visa_kit\frontend\components\admin\cards\SubmissionCard.tsx          51               {application.submission_date                                                          
+D:\VISA\visa_kit\frontend\components\admin\cards\SubmissionCard.tsx          52                 ? new Date(application.submission_date).toLocaleDateString("ru")                    
+
+

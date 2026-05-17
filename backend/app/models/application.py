@@ -110,6 +110,9 @@ class Application(TimestampMixin, table=True):
     is_ready_for_pickup: bool = Field(default=False, index=True)
     is_filed: bool = Field(default=False, index=True)  # Pack 36.0
     is_paid: bool = Field(default=False, index=True)  # Pack 38.1
+    # === Pack 36.1: TIE card fields ===
+    nie: Optional[str] = Field(default=None, max_length=16)
+    fingerprint_date: Optional[date] = None
     # Pack 27.0 — soft-delete с автоудалением через 7 дней
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 

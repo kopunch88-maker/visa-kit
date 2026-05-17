@@ -1,0 +1,546 @@
+﻿=== Все .py файлы со словом Application (определение класса/модели) ===
+
+Path                                               LineNumber Line                                          
+----                                               ---------- ----                                          
+D:\VISA\visa_kit\backend\app\api\applications.py          224 class ApplicationPatch(BaseModel):            
+D:\VISA\visa_kit\backend\app\models\application.py         31 class ApplicationStatus(str, Enum):           
+D:\VISA\visa_kit\backend\app\models\application.py         62 class Application(TimestampMixin, table=True):
+D:\VISA\visa_kit\backend\app\models\application.py        146 class ApplicationCreate(SQLModel):            
+D:\VISA\visa_kit\backend\app\models\application.py        154 class ApplicationAssign(SQLModel):            
+D:\VISA\visa_kit\backend\app\models\application.py        168 class ApplicationStatusUpdate(SQLModel):      
+D:\VISA\visa_kit\backend\app\models\application.py        173 class ApplicationRead(SQLModel):              
+
+
+
+=== Последние 5 миграций ===
+
+LineNumber Line                                   
+---------- ----                                   
+        38 def apply_pack10_migration():          
+        71 def apply_pack11_migration():          
+        83 def apply_pack11_2_migration():        
+       109 def apply_pack13_migration():          
+       123 def apply_pack15_migration():          
+       138 def apply_pack15_1_migration():        
+       150 def apply_pack16_migration():          
+       231 def apply_pack17_0_migration():        
+       387 def apply_pack17_2_4_migration():      
+       449 def apply_pack17_2_4_1_migration():    
+       512 def apply_pack28_0_migration():        
+       578 def apply_pack28_2_migration():        
+       621 def apply_pack28_5_migration():        
+       672 def apply_pack29_0_migration():        
+       738 def apply_pack30_0_migration() -> None:
+       762 def apply_pack38_1_migration() -> None:
+       781 def apply_pack34_2_migration() -> None:
+       807 def apply_pack35_2_migration() -> None:
+
+
+
+=== Структура migrations.py: как объявляется и вызывается миграция ===
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_urgent "
+            "ON application (is_urgent)"
+        ))
+    print("[migration] Pack 30.0: application.is_urgent ready")
+
+
+# ======================================
+# Pack 38.1 — флаг is_paid на Application
+# ======================================
+def apply_pack38_1_migration() -> None:
+    from sqlalchemy import text
+    from app.db.session import engine
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_paid BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_paid "
+            "ON application (is_paid)"
+        ))
+    print("[migration] Pack 38.1: application.is_paid ready")
+
+
+# ============================================================================
+# Pack 34.2 — флаг is_ready_for_pickup на Application («Готово, можно забирать»)
+# ============================================================================
+
+def apply_pack34_2_migration() -> None:
+    """Pack 34.2 миграция:
+       - ALTER TABLE application ADD COLUMN is_ready_for_pickup BOOLEAN
+         NOT NULL DEFAULT FALSE
+       - CREATE INDEX ix_application_is_ready_for_pickup
+       Идемпотентна — IF NOT EXISTS на обоих шагах.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS is_ready_for_pickup BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_is_ready_for_pickup "
+            "ON application (is_ready_for_pickup)"
+        ))
+    print("[migration] Pack 34.2: application.is_ready_for_pickup ready")
+
+
+# ============================================================================
+# Pack 35.2 — applicant.passport_issuer_ru (локализованное название органа)
+# ============================================================================
+
+def apply_pack35_2_migration() -> None:
+    """Pack 35.2 миграция:
+       - ALTER TABLE applicant ADD COLUMN passport_issuer_ru VARCHAR(256)
+       Идемпотентна — IF NOT EXISTS / column check.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        if not _column_exists(conn, "applicant", "passport_issuer_ru"):
+            try:
+                conn.execute(text(
+                    "ALTER TABLE applicant ADD COLUMN passport_issuer_ru VARCHAR(256)"
+                ))
+                log.info("[migration:pack35_2] Added applicant.passport_issuer_ru")
+            except Exception as e:
+                log.warning(f"[migration:pack35_2] Add column failed: {e}")
+        else:
+            log.debug("[migration:pack35_2] applicant.passport_issuer_ru already exists")
+    print("[migration] Pack 35.2: applicant.passport_issuer_ru ready")
+
+=== ApplicationDetail.tsx — сетка карточек строка ~377 ===
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Сетка карточек: 1 кандидат сверху, 2 (компания + подача) ниже */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Pack 32.0 — onEdit передаётся всегда: handleEditApplicant сам решит,
+            создавать пустого applicant'а или сразу открывать Drawer. */}
+        <CandidateCard
+          applicant={applicant}
+          application={application}
+          onEdit={handleEditApplicant}
+          editLoading={creatingApplicant}
+        />
+        <CompanyCard
+          company={company}
+          position={position}
+          application={application}
+          onEdit={() => setShowCompanyDrawer(true)}
+        />
+        <SubmissionCard
+          application={application}
+          representative={representative}
+          address={address}
+          onEdit={() => setShowSubmissionDrawer(true)}
+        />
+      </div>
+
+      <BusinessChecksBlock
+        application={application}
+        applicant={applicant}
+        company={company}
+      />
+      <AdminClientDocuments applicationId={application.id} />
+      {isAssigned && <DocumentsGrid applicationId={application.id} companyId={application.company_id} />}
+      {isAssigned && <TranslationPanel applicationId={application.id} />}
+
+      {!isAssigned && applicant && (
+        <div
+          className="bg-primary rounded-xl border p-5 text-center"
+          style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+        >
+          <p className="text-sm text-tertiary mb-3">Заявка ещё не распределена</p>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowCompanyDrawer(true)}
+              className="px-4 py-2 rounded-md text-sm font-medium text-white"
+              style={{ background: "var(--color-accent)" }}
+            >
+              Указать компанию и договор
+            </button>
+            <button
+              onClick={() => setShowSubmissionDrawer(true)}
+              className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary"
+              style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+            >
+              Указать подачу
+            </button>
+
+=== SubmissionCard.tsx — для моделирования TieCard ===
+"use client";
+
+import { Calendar, Edit2 } from "lucide-react";
+import {
+  ApplicationResponse,
+  RepresentativeResponse,
+  SpainAddressResponse,
+} from "@/lib/api";
+
+interface Props {
+  application: ApplicationResponse;
+  representative?: RepresentativeResponse;
+  address?: SpainAddressResponse;
+  onEdit: () => void;
+}
+
+export function SubmissionCard({ application, representative, address, onEdit }: Props) {
+  const hasData =
+    application.submission_date || representative || address;
+
+  return (
+    <div
+      className="bg-primary rounded-xl border p-4"
+      style={{
+        borderColor: "var(--color-border-tertiary)",
+        borderWidth: 0.5,
+      }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary flex items-center gap-1.5">
+          <Calendar className="w-3.5 h-3.5" />
+          Подача
+        </h3>
+        <button
+          onClick={onEdit}
+          className="text-xs text-info hover:underline flex items-center gap-1"
+          title="Изменить дату подачи, представителя и адрес"
+        >
+          <Edit2 className="w-3 h-3" />
+          Изменить
+        </button>
+      </div>
+
+      {!hasData ? (
+        <div className="text-sm text-tertiary italic py-4">Не назначена</div>
+      ) : (
+        <div className="space-y-2">
+          <div>
+            <div className="text-[11px] text-tertiary">Дата подачи</div>
+            <div className="text-sm text-primary">
+              {application.submission_date
+                ? new Date(application.submission_date).toLocaleDateString("ru")
+                : "—"}
+              {address?.city && (
+                <span className="text-tertiary text-xs ml-2">· {address.city}</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] text-tertiary">Представитель</div>
+            <div className="text-sm text-primary">
+              {representative?.full_name || "—"}
+              {representative?.nie && (
+                <span className="text-tertiary text-xs ml-2 font-mono">
+                  NIE {representative.nie}
+                </span>
+              )}
+            </div>
+          </div>
+          {address && (
+            <div>
+              <div className="text-[11px] text-tertiary">Адрес в Испании</div>
+              <div className="text-sm text-primary">{address.label}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+=== SubmissionDrawer.tsx — для моделирования TieDrawer ===
+"use client";
+
+import { useState, useEffect } from "react";
+import { X, Loader2, AlertCircle } from "lucide-react";
+import {
+  ApplicationResponse,
+  RepresentativeResponse,
+  SpainAddressResponse,
+  patchApplication,
+} from "@/lib/api";
+
+interface Props {
+  application: ApplicationResponse;
+  representatives: RepresentativeResponse[];
+  addresses: SpainAddressResponse[];
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+export function SubmissionDrawer({
+  application, representatives, addresses, onClose, onSaved,
+}: Props) {
+  const [representativeId, setRepresentativeId] = useState<number | "">(application.representative_id || "");
+  const [spainAddressId, setSpainAddressId] = useState<number | "">(application.spain_address_id || "");
+  const [submissionDate, setSubmissionDate] = useState(application.submission_date || "");
+  // Pack 9: номер квитанции пошлины (для PDF-форм)
+  const [tasaNrc, setTasaNrc] = useState<string>((application as any).tasa_nrc || "");
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleEsc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [onClose]);
+
+  async function handleSave() {
+    setSaveError(null);
+    if (!representativeId || !spainAddressId) {
+      setSaveError("Заполните представителя и адрес");
+      return;
+    }
+    setSaving(true);
+    try {
+      await patchApplication(application.id, {
+        representative_id: representativeId as number,
+        spain_address_id: spainAddressId as number,
+        submission_date: submissionDate || undefined,
+        tasa_nrc: tasaNrc || undefined,
+      } as any);
+      onSaved();
+    } catch (e) {
+      setSaveError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-screen w-full sm:w-[500px] bg-primary z-40 shadow-2xl overflow-y-auto"
+        style={{ borderLeft: "0.5px solid var(--color-border-tertiary)" }}>
+        <div className="sticky top-0 bg-primary border-b px-5 py-4 flex items-center justify-between z-10"
+          style={{ borderColor: "var(--color-border-tertiary)", borderBottomWidth: 0.5 }}>
+          <h2 className="text-lg font-semibold text-primary">
+            Подача · #{application.reference}
+          </h2>
+          <button onClick={onClose} className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-secondary">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              Представитель в Испании <span className="text-danger">*</span>
+            </label>
+            <select value={representativeId}
+              onChange={(e) => setRepresentativeId(e.target.value ? parseInt(e.target.value, 10) : "")}
+              className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+              style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}>
+              <option value="">— выберите —</option>
+              {representatives.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.full_name || `${r.first_name} ${r.last_name}`}
+                  {r.nie ? ` (NIE ${r.nie})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              Адрес в Испании <span className="text-danger">*</span>
+            </label>
+            <select value={spainAddressId}
+              onChange={(e) => setSpainAddressId(e.target.value ? parseInt(e.target.value, 10) : "")}
+              className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+              style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}>
+              <option value="">— выберите —</option>
+              {addresses.map((a) => (
+                <option key={a.id} value={a.id}>{a.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              Дата планируемой подачи в UGE
+            </label>
+            <input type="date" value={submissionDate}
+              onChange={(e) => setSubmissionDate(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+              style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+            <p className="text-xs text-tertiary mt-1">Минимум 90 дней с даты подписания договора</p>
+          </div>
+
+          {/* Pack 9 — поле NRC */}
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              Номер квитанции пошлины (NRC)
+            </label>
+            <input type="text" value={tasaNrc}
+              onChange={(e) => setTasaNrc(e.target.value)}
+              placeholder="7900380018790MJSXT1VRT"
+              className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary font-mono focus:outline-none focus:ring-2"
+              style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+            <p className="text-xs text-tertiary mt-1">
+              Уникальный номер от банка после оплаты пошлины 038. Подставится в форму MI-T
+            </p>
+          </div>
+
+          {saveError && (
+            <div className="bg-danger text-danger text-sm p-3 rounded-md flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>{saveError}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="sticky bottom-0 bg-primary border-t px-5 py-3 flex justify-end gap-2"
+          style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-md text-sm border text-secondary hover:bg-secondary"
+            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
+            Отмена
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2"
+            style={{ background: "var(--color-accent)" }}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Сохранить"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+=== DocumentsGrid.tsx — как структурирован массив DOCUMENTS ===
+"use client";
+
+import { useState } from "react";
+import { Download, Loader2, Check, RefreshCw } from "lucide-react";
+import { API_BASE_URL, getToken } from "@/lib/api";
+// Pack 29.4
+import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
+
+interface Props {
+  applicationId: number;
+  // Pack 29.4 тАФ ╨┤╨╗╤П ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ Перегенерировать▓╨╛╤А╨░
+  companyId?: number | null;
+}
+
+type DocItem = {
+  id: string;        // ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ URL endpoint
+  filename: string;  // ╤З╤В╨╛ ╨┐╨╛╨║╨░╨╖╤Л╨▓╨░╨╡╨╝ ╨▓ ╨║╨░╤А╤В╨╛╤З╨║╨╡
+  kind: "docx" | "pdf";
+};
+
+const DOCUMENTS: DocItem[] = [
+  { id: "contract",            filename: "01_Договор.docx",                        kind: "docx" },
+  { id: "act_1",               filename: "02_Акт_1.docx",                          kind: "docx" },
+  { id: "act_2",               filename: "03_Акт_2.docx",                          kind: "docx" },
+  { id: "act_3",               filename: "04_Акт_3.docx",                          kind: "docx" },
+  { id: "invoice_1",           filename: "05_Счёт_1.docx",                    kind: "docx" },
+  { id: "invoice_2",           filename: "06_Счёт_2.docx",                    kind: "docx" },
+  { id: "invoice_3",           filename: "07_Счёт_3.docx",                    kind: "docx" },
+  { id: "employer_letter",     filename: "08_Письмо.docx",          kind: "docx" },
+  { id: "cv",                  filename: "09_Резюме.docx",          kind: "docx" },
+  { id: "bank_statement",      filename: "10_Выписка.docx",    kind: "docx" },
+  { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
+  { id: "designacion",         filename: "12_Designacion_representante.pdf",                      kind: "pdf"  },
+  { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf"  },
+  { id: "declaracion",         filename: "14_Declaracion_antecedentes.pdf",                       kind: "pdf"  },
+  { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx" },
+  { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx" },
+  { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },
+];
+
+export function DocumentsGrid({ applicationId, companyId }: Props) {
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [zipDownloaded, setZipDownloaded] = useState(false);
+  const [downloadingDocxZip, setDownloadingDocxZip] = useState(false);
+  const [docxZipDownloaded, setDocxZipDownloaded] = useState(false);
+  const [downloadingPdfZip, setDownloadingPdfZip] = useState(false);
+  const [pdfZipDownloaded, setPdfZipDownloaded] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Pack 29.4 тАФ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┐╤А╨╕ 409 NEEDS_CONTRACT_TEMPLATE
+  const [pickerState, setPickerState] = useState<{
+    isOpen: boolean;
+    companyId: number;
+    companyShortName: string;
+    onSaved: () => void;
+  } | null>(null);
+
+  // Pack 29.4 тАФ ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
+  // ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В true ╨╡╤Б╨╗╨╕ ╨╛╤В╨║╤А╤Л╨╗╨╕ ╨╝╨╛╨┤╨░╨╗╨║╤Г (╨╜╤Г╨╢╨╜╨╛ ╨┐╤А╨╡╤А╨▓╨░╤В╤М ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╤Г), false ╨╡╤Б╨╗╨╕ 409 ╨╜╨╡ ╨┐╤А╨╕╤И╨╗╨░
+
+=== Где Application в Pydantic / SQLAlchemy / SQLModel ===
+
+Path                                                  LineNumber Line                                                                                         
+----                                                  ---------- ----                                                                                         
+D:\VISA\visa_kit\backend\apply_pack25_8.py                    68 old_block = '''    # Дата формирования выписки: period_end + 1 день, иначе submission_date   
+D:\VISA\visa_kit\backend\apply_pack25_8.py                    74         statement_date = application.submission_date'''                                      
+D:\VISA\visa_kit\backend\apply_pack25_8.py                    77     # Fallback на старую логику period_end+1, в крайнем случае - submission_date.            
+D:\VISA\visa_kit\backend\apply_pack25_8.py                    84             statement_date = application.submission_date'''                                  
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             32 old_block_1 = '''    # Дата формирования выписки: period_end + 1 день, иначе submission_date 
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             37     elif application.submission_date:                                                        
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             38         statement_date = application.submission_date'''                                      
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             41     # Fallback на старую логику period_end+1, в крайнем случае - submission_date.            
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             47         elif application.submission_date:                                                    
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             48             statement_date = application.submission_date'''                                  
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             60         submission_date=base_date,                                                           
+D:\VISA\visa_kit\backend\apply_pack25_8_finish.py             84         submission_date=base_date,                                                           
+D:\VISA\visa_kit\backend\apply_pack25_9.py                    70         submission_date=base_date,                                                           
+D:\VISA\visa_kit\backend\apply_pack25_9.py                    86         submission_date=base_date,                                                           
+D:\VISA\visa_kit\backend\app\api\applications.py             205         submission_date=payload.submission_date,                                             
+D:\VISA\visa_kit\backend\app\api\applications.py             224 class ApplicationPatch(BaseModel):                                                           
+D:\VISA\visa_kit\backend\app\api\applications.py             239     submission_date: Optional[date] = None                                                   
+D:\VISA\visa_kit\backend\app\api\applications.py             243     tasa_nrc: Optional[str] = None                                                           
+D:\VISA\visa_kit\backend\app\api\applications.py             401     if payload.submission_date:                                                              
+D:\VISA\visa_kit\backend\app\api\applications.py             402         app.submission_date = payload.submission_date                                        
+D:\VISA\visa_kit\backend\app\api\bank_transactions.py         95                 "submission_date, contract or company data",                                 
+D:\VISA\visa_kit\backend\app\api\bank_transactions.py        129         application.submission_date,                                                         
+D:\VISA\visa_kit\backend\app\api\bank_transactions.py        163         submission_date=application.submission_date,                                         
+D:\VISA\visa_kit\backend\app\api\bank_transactions.py        207             "(salary_rub, submission_date, contract_number, contract_sign_date, company_id)",
+D:\VISA\visa_kit\backend\app\models\application.py            31 class ApplicationStatus(str, Enum):                                                          
+D:\VISA\visa_kit\backend\app\models\application.py            62 class Application(TimestampMixin, table=True):                                               
+D:\VISA\visa_kit\backend\app\models\application.py            82     submission_date: Optional[date] = Field(default=None)                                    
+D:\VISA\visa_kit\backend\app\models\application.py            85     tasa_nrc: Optional[str] = Field(default=None, max_length=64)                             
+D:\VISA\visa_kit\backend\app\models\application.py           124         if not self.contract_sign_date or not self.submission_date:                          
+D:\VISA\visa_kit\backend\app\models\application.py           126         days_old = (self.submission_date - self.contract_sign_date).days                     
+
+
+
+=== _PATCHABLE_FIELDS в applications.py ===
+
+> backend\app\api\applications.py:205:        submission_date=payload.submission_date,
+  backend\app\api\applications.py:206:    )
+  backend\app\api\applications.py:207:    session.add(app)
+  backend\app\api\applications.py:208:    session.flush()
+> backend\app\api\applications.py:239:    submission_date: Optional[date] = None
+  backend\app\api\applications.py:240:    payments_period_months: Optional[int] = None
+  backend\app\api\applications.py:241:    internal_notes: Optional[str] = None
+  backend\app\api\applications.py:242:    # Pack 9: NRC квитанции пошлины (для PDF-форм MI-T)
+> backend\app\api\applications.py:243:    tasa_nrc: Optional[str] = None
+  backend\app\api\applications.py:244:    # Pack 26.0: реквизиты письма от компании (Исх. № и дата)
+  backend\app\api\applications.py:245:    employer_letter_number: Optional[str] = None
+  backend\app\api\applications.py:246:    employer_letter_date: Optional[date] = None
+> backend\app\api\applications.py:401:    if payload.submission_date:
+> backend\app\api\applications.py:402:        app.submission_date = payload.submission_date
+  backend\app\api\applications.py:403:    if payload.payments_period_months:
+  backend\app\api\applications.py:404:        app.payments_period_months = payload.payments_period_months
+  backend\app\api\applications.py:405:
+
+

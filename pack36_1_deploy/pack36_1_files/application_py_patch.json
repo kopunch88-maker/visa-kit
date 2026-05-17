@@ -1,0 +1,11 @@
+{
+  "description": "Pack 36.1: добавить nie и fingerprint_date в SQLModel Application после is_paid",
+  "target": "backend/app/models/application.py",
+  "expected_target_sha256_after_patch": "computed_at_runtime",
+  "edits": [
+    {
+      "old_str": "    is_paid: bool = Field(default=False, index=True)  # Pack 38.1\n    # Pack 27.0 — soft-delete с автоудалением через 7 дней\n    deleted_at: Optional[datetime] = Field(default=None, index=True)",
+      "new_str": "    is_paid: bool = Field(default=False, index=True)  # Pack 38.1\n    # === Pack 36.1: TIE card fields ===\n    nie: Optional[str] = Field(default=None, max_length=16)\n    fingerprint_date: Optional[date] = None\n    # Pack 27.0 — soft-delete с автоудалением через 7 дней\n    deleted_at: Optional[datetime] = Field(default=None, index=True)"
+    }
+  ]
+}

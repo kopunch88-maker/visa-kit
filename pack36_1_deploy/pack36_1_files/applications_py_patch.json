@@ -1,0 +1,21 @@
+{
+  "description": "Pack 36.1: добавить TIE формы в _DOWNLOAD_FILES, поля в ApplicationPatch и patch handler",
+  "target": "backend/app/api/applications.py",
+  "edits": [
+    {
+      "comment": "1. Добавить mi_tie и ex17 в _DOWNLOAD_FILES (между declaracion и npd_certificate)",
+      "old_str": "    \"declaracion\":      {\"name\": \"14_Declaracion_antecedentes.pdf\",             \"kind\": \"pdf\", \"pdf_key\": \"14_Declaracion_antecedentes.pdf\"},",
+      "new_str": "    \"declaracion\":      {\"name\": \"14_Declaracion_antecedentes.pdf\",             \"kind\": \"pdf\", \"pdf_key\": \"14_Declaracion_antecedentes.pdf\"},\n    # Pack 36.1: TIE формы (генерятся только если application.nie + fingerprint_date заполнены)\n    \"mi_tie\":           {\"name\": \"15_MI-TIE.pdf\",                                \"kind\": \"pdf\", \"pdf_key\": \"15_MI-TIE.pdf\"},\n    \"ex17\":             {\"name\": \"16_EX-17.pdf\",                                 \"kind\": \"pdf\", \"pdf_key\": \"16_EX-17.pdf\"},"
+    },
+    {
+      "comment": "2. Добавить nie и fingerprint_date в ApplicationPatch Pydantic модель",
+      "old_str": "    # Pack 26.0: реквизиты письма от компании (Исх. № и дата)\n    employer_letter_number: Optional[str] = None\n    employer_letter_date: Optional[date] = None",
+      "new_str": "    # Pack 26.0: реквизиты письма от компании (Исх. № и дата)\n    employer_letter_number: Optional[str] = None\n    employer_letter_date: Optional[date] = None\n    # Pack 36.1: TIE поля (заполняются после одобрения и получения NIE)\n    nie: Optional[str] = None\n    fingerprint_date: Optional[date] = None"
+    },
+    {
+      "comment": "3. Добавить обработку в patch_application handler (после payments_period_months)",
+      "old_str": "    if payload.payments_period_months:\n        app.payments_period_months = payload.payments_period_months",
+      "new_str": "    if payload.payments_period_months:\n        app.payments_period_months = payload.payments_period_months\n    # Pack 36.1: TIE поля — обнулять можно явной пустой строкой/None через PATCH\n    if payload.nie is not None:\n        app.nie = payload.nie or None\n    if payload.fingerprint_date is not None:\n        app.fingerprint_date = payload.fingerprint_date"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "description": "Pack 36.1: добавить nie/fingerprint_date в TS-тип ApplicationResponse; заодно убрать дубль is_paid",
+  "target": "frontend/lib/api.ts",
+  "edits": [
+    {
+      "comment": "1. Убрать дубль is_paid (был 2 раза подряд)",
+      "old_str": "  is_paid?: boolean;   // Pack 38.1\n  is_paid?: boolean;   // Pack 38.1",
+      "new_str": "  is_paid?: boolean;   // Pack 38.1\n  // Pack 36.1: TIE поля\n  nie?: string;\n  fingerprint_date?: string;"
+    }
+  ]
+}
