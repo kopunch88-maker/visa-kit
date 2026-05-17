@@ -3,23 +3,23 @@ MI-TIE form generator — заполнение AcroForm полей в шабло
 
 Pack 36.1: новая форма "Solicitud de Tarjeta de Identidad de Extranjero" —
 специальная версия от DIRECCIÓN GENERAL DE LA POLICÍA для Ley 14/2013
-(Movilidad Internacional). 79 полей: 53 текстовых + 26 чекбоксов.
+(Movilidad Internacional). 79 полей.
 
 Заполняется когда у заявки есть NIE (получен после одобрения заявления MI-T)
 и fingerprint_date (дата визита в комиссариат для снятия отпечатков).
 
-SITUACIÓN EN ESPAÑA = INVESTIGADOR NACIONAL (по умолчанию для всех клиентов,
-проверено на 2 реально сданных кейсах JASHARI и ZAMANLI).
-
+SITUACIÓN EN ESPAÑA = INVESTIGADOR NACIONAL (по умолчанию для всех клиентов).
 TIPO_DOCUMENTO = INICIAL (первичная выдача карты).
 
-Pack 36.1.2: убраны hasattr-проверки на rep.address_* — поля точно есть
-в модели Representative. Секция представителя заполняется всегда когда
-у заявки есть representative.
+Pack 36.1.4: после консультации с полицией заполняются ТОЛЬКО блоки:
+  - SOLICITUD DE TARJETA DE IDENTIDAD DE EXTRANJERO (INICIAL)
+  - SITUACIÓN EN ESPAÑA (INVESTIGADOR NACIONAL)
+  - DATOS DEL EXTRANJERO/A
+  - DIRIGIDO A: ... DE <город>
+  - Дата подписи (fingerprint_date)
 
-Секция "DOMICILIO A EFECTOS DE NOTIFICACIONES" заполняется адресом самого
-заявителя в Испании (тем же что в секции 1) — это физическое место
-проживания клиента, не представителя.
+Блоки DATOS DEL REPRESENTANTE и DOMICILIO A EFECTOS DE NOTIFICACIONES
+оставляем ПУСТЫМИ — полиция вписывает от руки при необходимости.
 
 В конце pipeline — flatten_pdf_form() для корректного рендера на
 iOS/Telegram preview (см. Инцидент 35 в PROJECT_STATE).
@@ -88,10 +88,10 @@ def _build_mi_tie_fields(
 
     fields: dict = {}
 
-    # ============ TIPO DE TARJETA (константа для DN-теletrabajador) ============
+    # ============ TIPO DE TARJETA ============
     fields["INICIAL"] = "/On"
 
-    # ============ SITUACIÓN EN ESPAÑA (по умолчанию INVESTIGADOR NACIONAL) =====
+    # ============ SITUACIÓN EN ESPAÑA ============
     fields["INVESTIGADOR NACIONAL"] = "/On"
 
     # ============ DATOS DEL EXTRANJERO/A ============
@@ -131,7 +131,6 @@ def _build_mi_tie_fields(
         fields["Mes"] = m
         fields["Año"] = y
 
-        # País nacimiento + Nacionalidad
         fields["País"] = country_es(applicant.birth_country or applicant.nationality)
         fields["Nacionalidad"] = country_es(applicant.nationality)
 
@@ -150,44 +149,9 @@ def _build_mi_tie_fields(
         fields["CP"] = addr.zip or ""
         fields["Provincia"] = (addr.province or "").upper()
 
-    # ============ DATOS DEL REPRESENTANTE A LOS EFECTOS DE PRESENTACIÓN ========
-    # Pack 36.1.2: всегда заполняется когда есть representative.
-    if rep:
-        # Razón Social = ФИО представителя (для физлица)
-        rep_full_name = f"{rep.first_name or ''} {rep.last_name or ''}".strip().upper()
-        fields["NombreRazón Social"] = rep_full_name
-        fields["DNI-NIE-PAS"] = (rep.nie or "").upper()
-
-        # Адрес представителя (поля гарантированно есть в модели Representative)
-        fields["Domicilio ClPl"] = (rep.address_street or "").upper()
-        fields["Numero_2"] = rep.address_number or ""
-        fields["Piso_2"] = rep.address_floor or ""
-        fields["Localidad_2"] = (rep.address_city or "").upper()
-        fields["CP_2"] = rep.address_zip or ""
-        fields["Provincia_2"] = (rep.address_province or "").upper()
-
-        fields["Tf móvil_2"] = rep.phone or ""
-        fields["Email_2"] = (rep.email or "").upper()
-
-    # ============ DOMICILIO A EFECTOS DE NOTIFICACIONES/COMUNICACIONES ========
-    # Pack 36.1.2: адрес заявителя в Испании (физическое место проживания клиента).
-    if addr and applicant:
-        # Razón Social в notificaciones = ФИО заявителя
-        applicant_full_name = (
-            f"{applicant.last_name_latin or ''} {applicant.first_name_latin or ''}"
-        ).strip().upper()
-        fields["NombreRazón Social_2"] = applicant_full_name
-        fields["DNI-NIE-PAS_3"] = app.nie or ""
-
-        fields["Domicilio en España_2"] = (addr.street or "").upper()
-        fields["Numero_3"] = addr.number or ""
-        fields["Piso_3"] = addr.floor or ""
-        fields["Localidad_3"] = (addr.city or "").upper()
-        fields["CP_3"] = addr.zip or ""
-        fields["Provincia_3"] = (addr.province or "").upper()
-
-        fields["Tf móvil_3"] = applicant.phone or ""
-        fields["Email_3"] = (applicant.email or "").upper()
+    # ============ Pack 36.1.4: секции REPRESENTANTE и NOTIFICACIONES =========
+    # Оставляем ПУСТЫМИ — после консультации с полицией решено что эти блоки
+    # не нужны. Если потребуется — заполнят от руки.
 
     # ============ FOOTER: место + дата подписи ============
     sign_date = app.fingerprint_date or app.submission_date or date.today()
@@ -198,7 +162,7 @@ def _build_mi_tie_fields(
     fields["Mes_1"] = month_es(sign_date.month)
     fields["Año_1"] = str(sign_date.year)
 
-    # Header (страница 1): BRIGADA DE EXTRANJERÍA DE <город>
+    # Header (страница 1): DIRIGIDO A ... BRIGADA DE EXTRANJERÍA DE <город>
     fields["EXTRANJERÍA"] = sign_city.upper()
 
     return fields
