@@ -1162,6 +1162,10 @@ def _build_cv_work_history(applicant, application, company, position) -> list:
     с period_end='по настоящее время'.
 
     Возвращает новый список — applicant.work_history НЕ модифицируется.
+
+    Pack 37.6: после Pack 37.2 (sync work_history в БД) функция стала защитным
+    слоем. Если БД уже содержит DN-employer первой записью — no-op, возвращаем
+    base как есть. Иначе подмешиваем как раньше.
     """
     base = list(applicant.work_history or [])
 
@@ -1170,6 +1174,24 @@ def _build_cv_work_history(applicant, application, company, position) -> list:
         return base
     if not application.contract_sign_date:
         return base
+
+    # Pack 37.6: проверка идемпотентности. Если первая запись уже = DN-employer
+    # с period_end='по настоящее время' — БД синхронизирована (Pack 37.2),
+    # ничего не подмешиваем. Без этой проверки CV получал бы дубликат
+    # работодателя с битыми датами 'Февраль 2026 — Январь 2026'.
+    if base and isinstance(base[0], dict):
+        first_company = (base[0].get("company") or "").strip()
+        first_period_end = (base[0].get("period_end") or "").strip().lower()
+        target_company = (company.full_name_ru or "").strip()
+        # Сравниваем без учёта тонких различий в кавычках/пробелах
+        def _normalize(s: str) -> str:
+            return " ".join(s.replace("«", '"').replace("»", '"').split())
+        if (
+            _normalize(first_company) == _normalize(target_company)
+            and first_period_end in ("по настоящее время", "настоящее время", "н.в.", "по н.в.")
+        ):
+            # БД уже синхронизирована — ничего не делаем
+            return base
 
     # 1. Чиним предыдущую запись (первую в списке — самую свежую)
     fixed_base = []
