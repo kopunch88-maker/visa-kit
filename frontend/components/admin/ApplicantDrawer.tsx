@@ -87,6 +87,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [home_address, setHomeAddress] = useState(applicant.home_address || "");
   const [passport_number, setPassportNumber] = useState(applicant.passport_number || "");
   const [passport_issue_date, setPassportIssueDate] = useState(applicant.passport_issue_date || "");
+  // Pack 37.3 — passport_expiry_date для проверки срока действия паспорта
+  const [passport_expiry_date, setPassportExpiryDate] = useState(applicant.passport_expiry_date || "");
   const [passport_issuer, setPassportIssuer] = useState(applicant.passport_issuer || "");
   // Pack 35.3 — русифицированный вариант + флаг загрузки при кнопке генерации
   const [passport_issuer_ru, setPassportIssuerRu] = useState(
@@ -409,6 +411,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         home_address: home_address.trim(),
         passport_number: passport_number.trim(),
         passport_issue_date,
+        passport_expiry_date,  // Pack 37.3
         passport_issuer: passport_issuer.trim(),
         // Pack 35.3.1: русифицированный вариант органа выдачи паспорта
         passport_issuer_ru: passport_issuer_ru.trim() || null,
@@ -592,9 +595,12 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
           <Section title="Паспорт">
             <Field label="Номер паспорта" value={passport_number} onChange={setPassportNumber}
               placeholder="U12345678 или 1234 567890" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Field label="Дата выдачи" value={passport_issue_date} onChange={setPassportIssueDate}
                 placeholder="2020-05-15" type="date" />
+              {/* Pack 37.3 — дата окончания действия паспорта */}
+              <Field label="Дата окончания" value={passport_expiry_date} onChange={setPassportExpiryDate}
+                placeholder="2030-05-14" type="date" />
               <Field label="Дата рождения" value={birth_date} onChange={setBirthDate}
                 placeholder="1972-01-01" type="date" />
             </div>

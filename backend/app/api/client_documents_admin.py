@@ -158,6 +158,7 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
                 ("birth_place_latin", "birth_place_latin"),
                 ("passport_number", "passport_number"),
                 ("passport_issue_date", "passport_issue_date"),
+                ("passport_expiry_date", "passport_expiry_date"),  # Pack 37.3
                 ("passport_issuer", "passport_issuer"),
                 ("nationality", "nationality"),
                 ("last_name_native", "last_name_native"),
@@ -180,6 +181,7 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
                 ("nationality", "nationality"),
                 ("passport_number", "passport_number"),
                 ("passport_issue_date", "passport_issue_date"),
+                ("passport_expiry_date", "passport_expiry_date"),  # Pack 37.3
                 ("passport_issuer", "passport_issuer"),
             ]:
                 if dst_field not in result and not _is_empty(p.get(src_field)):
