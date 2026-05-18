@@ -796,4 +796,45 @@ def regen_work_history(
             applicant_id, detail,
         )
         raise HTTPException(status_code=422, detail=detail)
+
+    # Pack 37.8: сохраняем сгенерированные records в БД, затем зовём sync
+    # чтобы DN-employer встал первой записью. Менеджер сразу видит правильный
+    # список без шага «сохранить → переоткрыть Drawer».
+    from app.models import Application, WorkRecordSuggestion
+    from app.services.work_history_sync import sync_dn_work_record_safe
+    from sqlmodel import select as _select
+
+    # 1. Сохраняем результат генератора в applicant.work_history
+    applicant.work_history = [r.model_dump() for r in result.records]
+    try:
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(applicant, "work_history")
+    except Exception:
+        pass
+    session.add(applicant)
+    session.commit()
+
+    # 2. Если у applicant есть Application с company+contract — sync DN-employer
+    applications = session.exec(
+        _select(Application).where(Application.applicant_id == applicant.id)
+    ).all()
+    for app in applications:
+        if app.company_id and app.contract_sign_date:
+            sync_dn_work_record_safe(app, session)
+            break
+
+    # 3. Перечитываем applicant и переупаковываем result для frontend
+    session.refresh(applicant)
+    updated_records = []
+    for wh in (applicant.work_history or []):
+        if isinstance(wh, dict):
+            updated_records.append(WorkRecordSuggestion(
+                period_start=wh.get("period_start", ""),
+                period_end=wh.get("period_end", ""),
+                company=wh.get("company", ""),
+                position=wh.get("position", ""),
+                duties=list(wh.get("duties") or []),
+            ))
+    result.records = updated_records
+
     return result
