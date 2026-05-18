@@ -616,10 +616,25 @@ def generate_default_transactions(
     total_expense = sum(
         (-t["amount"] for t in transactions if t["amount"] < 0), Decimal("0.00")
     )
-    opening_balance = DEFAULT_OPENING_BALANCE
+    # Pack 39.2: рандомный начальный остаток 50k-400k с копейками
+    rng_bal = random.Random(seed)  # детерминировано по seed клиента
+    opening_balance = Decimal(
+        f"{rng_bal.randint(50000, 400000)}.{rng_bal.randint(0, 99):02d}"
+    )
     closing_balance = (opening_balance + total_income - total_expense).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
+    # Если закрывающий остаток отрицательный — поднимаем начальный чтобы closing >= 5000
+    if closing_balance < Decimal("5000.00"):
+        shortfall = Decimal("5000.00") - closing_balance
+        # Добавляем shortfall + рандомный буфер 3k-30k
+        extra = Decimal(rng_bal.randint(3000, 30000))
+        opening_balance = (opening_balance + shortfall + extra).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        closing_balance = (opening_balance + total_income - total_expense).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
 
     return {
         "statement_date": statement_date,   # Pack 25.8
