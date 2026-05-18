@@ -853,3 +853,139 @@ def apply_pack36_1_migration() -> None:
             "ADD COLUMN IF NOT EXISTS fingerprint_date DATE"
         ))
     print("[migration] Pack 36.1: application.nie + fingerprint_date ready")
+# ============================================================================
+# Pack 37.0 — AI Document Audit
+# ============================================================================
+#
+# ВСТАВИТЬ В КОНЕЦ ФАЙЛА backend/app/db/migrations.py
+# (перед последней закрывающей строкой если есть, или просто дописать в конец)
+#
+# Сами таблицы application_audit_report и audit_finding создаются автоматически
+# через SQLModel.metadata.create_all(engine) в init_db() — нужно только чтобы
+# модели были зарегистрированы в app/models/__init__.py (см. файл 2/5).
+#
+# Эта миграция создаёт дополнительные композитные индексы для производительности
+# (поиск открытых findings по category, история прогонов по application_id+started_at).
+# Идемпотентна — IF NOT EXISTS на всех CREATE INDEX.
+# ============================================================================
+
+def apply_pack37_0_migration():
+    """
+    Pack 37.0 — AI Document Audit система.
+
+    Создаёт композитные индексы для двух таблиц:
+    - application_audit_report (история прогонов)
+    - audit_finding (findings внутри прогона)
+
+    Сами таблицы создаст SQLModel.metadata.create_all() в init_db() — здесь
+    проверяем наличие и докручиваем индексы.
+
+    Идемпотентна, безопасна для многократного запуска.
+    """
+    from sqlalchemy import text, inspect
+    from app.db.session import engine
+
+    log_prefix = "[migrations:pack37.0]"
+    print(f"{log_prefix} Starting...")
+
+    # 1. Проверка наличия таблиц (создаются автоматически через init_db).
+    #    Если их нет — значит init_db ещё не отработал, выходим и ждём
+    #    следующего старта (паттерн как в apply_pack16_migration).
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    required_tables = {"application_audit_report", "audit_finding"}
+    missing = required_tables - existing_tables
+    if missing:
+        print(
+            f"{log_prefix} ⚠️ Tables not yet created: {missing}. "
+            f"Will be created by SQLModel.metadata.create_all() in init_db(). "
+            f"Re-run migration on next startup."
+        )
+        return
+
+    print(f"{log_prefix} ✓ Tables exist: {required_tables}")
+
+    # 2. Композитные индексы для частых запросов
+    indexes_to_create = [
+        # Самый частый запрос: «последние прогоны для заявки»
+        # SELECT * FROM application_audit_report
+        # WHERE application_id = X ORDER BY started_at DESC
+        (
+            "ix_audit_report_app_started",
+            "application_audit_report",
+            "application_id, started_at DESC",
+        ),
+        # Активные прогоны для polling'а (is_running=true редко, индекс selective)
+        (
+            "ix_audit_report_running",
+            "application_audit_report",
+            "is_running",
+            "WHERE is_running = true",
+        ),
+        # Список findings отчёта с фильтром по статусу
+        # SELECT * FROM audit_finding WHERE report_id = X AND status = 'open'
+        # ORDER BY severity, sort_order
+        (
+            "ix_finding_report_status",
+            "audit_finding",
+            "report_id, status",
+        ),
+        # Список open findings по категориям (для UI группировки)
+        (
+            "ix_finding_report_category_severity",
+            "audit_finding",
+            "report_id, category, severity",
+        ),
+    ]
+
+    with engine.connect() as conn:
+        for idx_spec in indexes_to_create:
+            if len(idx_spec) == 4:
+                name, table, cols, where_clause = idx_spec
+                sql = (
+                    f"CREATE INDEX IF NOT EXISTS {name} "
+                    f"ON {table} ({cols}) {where_clause}"
+                )
+            else:
+                name, table, cols = idx_spec
+                sql = (
+                    f"CREATE INDEX IF NOT EXISTS {name} "
+                    f"ON {table} ({cols})"
+                )
+            try:
+                conn.execute(text(sql))
+                print(f"{log_prefix} ✓ Index {name} ready")
+            except Exception as e:
+                # Не критично — индексы оптимизация. Логируем и идём дальше.
+                print(f"{log_prefix} ⚠️ Failed to create {name}: {e}")
+        conn.commit()
+
+    # 3. Проверка что enum-значения в строковых полях не нарушены
+    # (на случай если в БД остались legacy записи — для свежего деплоя no-op)
+    with engine.connect() as conn:
+        # Проверка verdict
+        result = conn.execute(text(
+            "SELECT DISTINCT verdict FROM application_audit_report"
+        )).all()
+        valid_verdicts = {"PASS", "WARN", "FAIL"}
+        for row in result:
+            if row[0] not in valid_verdicts:
+                print(
+                    f"{log_prefix} ⚠️ Found invalid verdict='{row[0]}' "
+                    f"in application_audit_report — manual cleanup needed"
+                )
+
+        # Проверка severity
+        result = conn.execute(text(
+            "SELECT DISTINCT severity FROM audit_finding"
+        )).all()
+        valid_severities = {"critical", "warning", "info"}
+        for row in result:
+            if row[0] not in valid_severities:
+                print(
+                    f"{log_prefix} ⚠️ Found invalid severity='{row[0]}' "
+                    f"in audit_finding — manual cleanup needed"
+                )
+
+    print(f"{log_prefix} Done.")

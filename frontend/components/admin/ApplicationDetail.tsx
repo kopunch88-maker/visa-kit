@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Loader2, Copy, Check, Link2 } from "lucide-react";
+// Pack 37.0-D — навигация на страницу аудита
+import { useRouter } from "next/navigation";
+import { ExternalLink, Loader2, Copy, Check, Link2, ShieldCheck } from "lucide-react";
 import {
   getApplication,
   getApplicantById,
@@ -77,6 +79,9 @@ function formatRelativeTime(dateStr?: string): string {
 }
 
 export function ApplicationDetail({ applicationId, onUpdated }: Props) {
+  // Pack 37.0-D — router для перехода на страницу аудита
+  const router = useRouter();
+
   const [application, setApplication] = useState<ApplicationResponse | null>(null);
   const [applicant, setApplicant] = useState<ApplicantResponse | null>(null);
   const [companies, setCompanies] = useState<CompanyResponse[]>([]);
@@ -324,6 +329,25 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
               currentStatus={application.status}
               onChange={handleStatusChange}
             />
+
+            {/* Pack 37.0-D — кнопка ИИ-аудита пакета документов */}
+            <button
+              onClick={() => router.push(`/admin/applications/${application.id}/audit`)}
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-white flex items-center justify-center gap-1.5 transition-colors"
+              style={{
+                background: "#2563eb",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#1d4ed8";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#2563eb";
+              }}
+              title="ИИ-симуляция приёма документов в консульстве — последняя проверка перед подачей"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              🛂 Симуляция приёма документов
+            </button>
 
             <button
               onClick={handleCopyLink}

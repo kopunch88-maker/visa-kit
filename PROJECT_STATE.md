@@ -2751,6 +2751,23 @@ if last_native and first_native and last_latin and first_latin:
 4. В `builder.py` `compromiso` и `declaracion` (генерация с нуля через reportlab, без AcroForm) также обёрнуты — для consistency, no-op срабатывает.
 5. Заодно фикс старого silent-bug: `ec_map["Sp"]` был `/Sp`, в шаблоне Минюста on-state называется `/SP` (UPPERCASE). То же `/UH` для `Uh`. Раньше для семейного статуса Separado/Unión de hecho галка тихо не ставилась — приложение проставляло несуществующее значение и не падало.
 
+Инцидент 36 — Кириллический инициал в подписи и СБП-получателе: регрессия для всех клиентов (18.05.2026)
+Что случилось: После Pack 35.10 инициалы в подписи (ABIDZHANOV И. вместо ABIDZHANOV I.) и СБП-получатель (BAKHTIYAR Д.) оставались кириллическими у всех клиентов, включая тех где Pack 35.10 должен был чинить.
+Корень (подпись): substitutions.apply() вызывался ДО отправки в LLM. Параграф подписи "______________/ABIDZHANOV И." содержит кириллицу (И.) → _should_skip() возвращает False → параграф уходит в LLM с уже подменённым текстом "______________/ABIDZHANOV I.". Но LLM видит одиночный I. и "исправляет" его обратно на кириллическую И.. Результат LLM записывается в DOCX без повторного прогона substitution.
+Корень (СБП): _short_name_for_sbp() генерирует имя получателя в формате "Бахтияр Д." (имя_ru + первая буква фамилии_ru). Этот текст уходит в LLM как часть описания транзакции. LLM переводит "Перевод по СБП. Получатель:" → "Transferencia por SBP. Destinatario:" но инициал Д. оставляет кириллицей.
+Решение — Pack 39.0: в docx_translator.py добавлен повторный прогон substitutions.apply() уже после получения ответа от LLM:
+pythonfor (paragraph_idx, _original), translated_text in zip(targets, all_translations):
+    if substitutions:
+        translated_text = substitutions.apply(translated_text)
+    _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
+Решение — Pack 39.1: в generate_default_transactions() добавлен параметр applicant_short_name_latin. В bank_transactions.py и context.py он формируется как f"{first_latin} {last_latin[0]}." и передаётся в генератор. В bank_statement_generator.py:
+pythonself_short_name = applicant_short_name_latin or _short_name_for_sbp(applicant_full_name_ru)
+Уроки:
+
+LLM может откатывать substitution. Всегда прогонять substitutions.apply() и после LLM — не только до.
+СБП-получатель должен быть латиницей изначально — не надеяться что LLM или substitution поймают его в тексте транзакции.
+Правило 59: После любого LLM-перевода прогонять substitutions.apply() на результате — это защита от LLM-реверсии латинских инициалов и меток.
+
 **Уроки:**
 - **(Правило 58)** PDF AcroForm-шаблоны → **только официальные** с сайта государственного ведомства. Никогда не сохранять заполненный AcroForm PDF поверх шаблона.
 - Mobile viewer'ы (Telegram preview, iOS Files, Android system viewer) НЕ делают runtime regeneration of appearance streams. Если PDF — AcroForm и `/NeedAppearances=true`, на мобиле он будет пустым. Решение — `flatten_annotations()` перед раздачей.

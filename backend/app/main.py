@@ -29,6 +29,7 @@ from app.db.migrations import (
     apply_pack35_2_migration,  # Pack 35.2 — applicant.passport_issuer_ru
     apply_pack38_1_migration,  # Pack 38.1 — application.is_paid
     apply_pack36_1_migration,  # Pack 36.1 — application.nie + fingerprint_date
+    apply_pack37_0_migration,  # Pack 37.0 — AI Document Audit
 )
 
 
@@ -56,7 +57,7 @@ async def lifespan(app: FastAPI):
     apply_pack35_2_migration()  # Pack 35.2 applicant.passport_issuer_ru
     apply_pack38_1_migration()  # Pack 38.1 application.is_paid
     apply_pack36_1_migration()  # Pack 36.1 application.nie + fingerprint_date
-
+    apply_pack37_0_migration()  # Pack 37.0 AI Document Audit indexes
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")
@@ -102,7 +103,7 @@ from app.api import (  # noqa: E402
     registry_admin,  # Pack 17.2.4
     npd_pool_admin,  # Pack 28.2
     inn_date_refine,  # Pack 28.5
-    
+    audit,  # ← Pack 37.0 AI Document Audit
 )
 from app.api import ifns_mfc
 app.include_router(auth.router, prefix="/api")
@@ -127,7 +128,7 @@ app.include_router(inn_debug_pipeline.router, prefix="/api")
 app.include_router(registry_admin.router, prefix="/api")  # Pack 17.2.4
 app.include_router(npd_pool_admin.router, prefix="/api")  # Pack 28.2
 app.include_router(inn_date_refine.router, prefix="/api")  # Pack 28.5
-
+app.include_router(audit.router)
 
 @app.get("/", tags=["meta"])
 def root():

@@ -40,12 +40,25 @@ class OpenRouterClient(LLMClient):
         self.site_url = site_url or "https://visa-kit.vercel.app"
         self.site_name = site_name or "Visa Kit"
 
+    @staticmethod
+    def _ascii_safe(value: str) -> str:
+        """
+        Pack 37.0-C.1: httpx кодирует header values в ASCII. Если site_url
+        или site_name содержат не-ASCII символы (кириллица в env вроде
+        LLM_SITE_NAME="Виза Кит") — httpx падает с UnicodeEncodeError.
+        Заменяем не-ASCII на '?'. Эти headers OpenRouter использует только
+        для analytics, потеря красоты значения не критична.
+        """
+        if not value:
+            return ""
+        return value.encode("ascii", errors="replace").decode("ascii")
+
     def _headers(self) -> dict:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": self.site_url,
-            "X-Title": self.site_name,
+            "HTTP-Referer": self._ascii_safe(self.site_url),
+            "X-Title": self._ascii_safe(self.site_name),
         }
 
     async def complete(

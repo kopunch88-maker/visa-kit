@@ -2669,3 +2669,205 @@ export async function resolvePassportIssuerRu(
   }
   return res.json();
 }
+// ============================================================================
+// Pack 37.0-D — AI Document Audit API
+// ============================================================================
+// Endpoints системы проверки пакета документов перед подачей.
+// Backend: backend/app/api/audit.py (Pack 37.0-C).
+
+export type AuditVerdict = "PASS" | "WARN" | "FAIL";
+
+export type AuditCategory =
+  | "identity"
+  | "financial"
+  | "company"
+  | "education"
+  | "spain_pack"
+  | "formal";
+
+export type AuditSeverity = "critical" | "warning" | "info";
+
+export type AuditFindingStatus =
+  | "open"
+  | "accepted"
+  | "dismissed"
+  | "manually_fixed";
+
+export interface AuditFinding {
+  id: number;
+  report_id: number;
+  category: AuditCategory;
+  severity: AuditSeverity;
+  title: string;
+  description: string | null;
+  evidence: string | null;
+  field_path: string | null;
+  current_value: string | null;
+  suggested_value: string | null;
+  fix_action: string | null;
+  fix_payload: Record<string, unknown>;
+  can_auto_apply: boolean;
+  status: AuditFindingStatus;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution_note: string | null;
+  sort_order: number;
+}
+
+export interface AuditReport {
+  id: number;
+  application_id: number;
+  verdict: AuditVerdict;
+  model_used: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: string | number | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  is_running: boolean;
+  error: string | null;
+  triggered_by: string | null;
+  summary_counts: Record<string, number | string>;
+}
+
+export interface AuditReportWithFindings extends AuditReport {
+  findings: AuditFinding[];
+}
+
+export interface AuditAcceptResponse {
+  success: boolean;
+  applied_changes: Record<string, [unknown, unknown]>;
+  message: string | null;
+}
+
+export interface AuditRunResponse {
+  report_id: number;
+  status: string;
+}
+
+/**
+ * Запустить новый прогон аудита. Возвращает report_id сразу;
+ * сам аудит работает в фоне 30-90 сек.
+ *
+ * UI должен polling'ом проверять getAuditReport(report_id).is_running
+ * каждые 2 секунды пока он true.
+ */
+export async function runAudit(
+  applicationId: number,
+  triggeredBy?: string,
+): Promise<AuditRunResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/applications/${applicationId}/audit/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ triggered_by: triggeredBy ?? null }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to run audit: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * История прогонов аудита для заявки (последние сверху).
+ */
+export async function listAuditReports(applicationId: number): Promise<AuditReport[]> {
+  const res = await fetch(`${API_BASE_URL}/api/applications/${applicationId}/audit/reports`);
+  if (!res.ok) throw new Error(`Failed to list audit reports: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Получить полный отчёт с findings. Используется на странице /audit
+ * и для polling при is_running=true.
+ */
+export async function getAuditReport(reportId: number): Promise<AuditReportWithFindings> {
+  const res = await fetch(`${API_BASE_URL}/api/audit/reports/${reportId}`);
+  if (!res.ok) throw new Error(`Failed to get audit report: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Применить fix_action для finding через whitelist handler.
+ * Меняет только БД. Пакет 16 файлов НЕ перегенерируется автоматически
+ * — менеджер пересобирает кнопкой «Сгенерировать пакет» когда готов.
+ */
+export async function acceptAuditFinding(findingId: number): Promise<AuditAcceptResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/audit/findings/${findingId}/accept`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to accept finding: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Отклонить finding (менеджер считает что это не проблема, либо решит руками).
+ */
+export async function dismissAuditFinding(
+  findingId: number,
+  note?: string,
+): Promise<AuditFinding> {
+  const res = await fetch(`${API_BASE_URL}/api/audit/findings/${findingId}/dismiss`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note: note ?? null }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to dismiss finding: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Ручной фикс — менеджер сам ввёл правильное значение для field_path.
+ * field_path формат: "applicant.<field>" или "company.<field>" — проверяется
+ * по whitelist в backend (fix_handlers.APPLICANT_WRITABLE_FIELDS / COMPANY_WRITABLE_FIELDS).
+ */
+export async function manualFixAuditFinding(
+  findingId: number,
+  fieldPath: string,
+  newValue: string,
+  note?: string,
+): Promise<AuditFinding> {
+  const res = await fetch(`${API_BASE_URL}/api/audit/findings/${findingId}/manual-fix`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      field_path: fieldPath,
+      new_value: newValue,
+      note: note ?? null,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to apply manual fix: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// Русские лейблы для UI
+export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
+  identity: "Личные данные",
+  financial: "Финансы",
+  company: "Компания",
+  education: "Образование",
+  spain_pack: "Испанские документы",
+  formal: "Комплектность пакета",
+};
+
+export const AUDIT_SEVERITY_LABELS: Record<AuditSeverity, string> = {
+  critical: "Критично",
+  warning: "Предупреждение",
+  info: "Замечание",
+};
+
+export const AUDIT_VERDICT_LABELS: Record<AuditVerdict, string> = {
+  PASS: "Готов к подаче",
+  WARN: "Можно подавать с риском",
+  FAIL: "Подавать нельзя",
+};

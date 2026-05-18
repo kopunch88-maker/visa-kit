@@ -40,3 +40,5 @@ pillow-heif==0.18.0
 pypdfium2==4.30.0
 rarfile==4.2
 pikepdf>=10.0
+
+docx2txt==0.9

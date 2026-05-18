@@ -99,6 +99,24 @@ from .translation import (
 
 from .npd_candidate import NpdCandidate, NpdPoolStats, NpdPoolRefillResult
 
+# Pack 37.0: AI Document Audit — симуляция приёма документов в консульстве
+from .audit import (
+    AuditReport,
+    AuditFinding,
+    AuditVerdict,
+    AuditCategory,
+    AuditSeverity,
+    AuditFindingStatus,
+    AuditReportRead,
+    AuditReportWithFindings,
+    AuditFindingRead,
+    AuditRunRequest,
+    AuditRunResponse,
+    AuditDismissRequest,
+    AuditManualFixRequest,
+    AuditAcceptResponse,
+)
+
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -157,4 +175,19 @@ __all__ = [
     "MfcOffice",
     "NpdCandidate", "NpdPoolStats", "NpdPoolRefillResult",
     "NpdRefillTask",
+    # Pack 37.0: AI Document Audit
+    "AuditReport",
+    "AuditFinding",
+    "AuditVerdict",
+    "AuditCategory",
+    "AuditSeverity",
+    "AuditFindingStatus",
+    "AuditReportRead",
+    "AuditReportWithFindings",
+    "AuditFindingRead",
+    "AuditRunRequest",
+    "AuditRunResponse",
+    "AuditDismissRequest",
+    "AuditManualFixRequest",
+    "AuditAcceptResponse",
 ]

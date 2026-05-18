@@ -102,3 +102,9 @@ snrip_recon.py
 
 # Random empty text files (Windows "New Text Document.txt" etc.)
 *.txt.bak
+
+# Backend cache
+backend/_cache/
+
+# Pack-specific deploy staging (local helpers, never commit)
+/pack*_deploy/
