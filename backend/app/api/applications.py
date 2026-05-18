@@ -41,6 +41,8 @@ from app.templates_engine import (
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
+# Pack 37.2 — sync work_history with DN employer after assignment
+from app.services.work_history_sync import sync_dn_work_record_safe
 
 router = APIRouter(prefix="/admin/applications", tags=["applications"])
 
@@ -320,6 +322,15 @@ def patch_application(
     )
     session.commit()
     session.refresh(app)
+
+    # Pack 37.2: если изменились company/position/contract_sign_date — синк work_history.
+    # Это держит applicant.work_history[0] = DN-employer (Pack 25.7 на уровне БД,
+    # а не только в CV-рендерере). Безопасно — sync делает no-op если данных не хватает.
+    _wh_trigger_fields = {"company_id", "position_id", "contract_sign_date"}
+    if _wh_trigger_fields & set(update_data.keys()):
+        sync_dn_work_record_safe(app, session)
+        session.refresh(app)
+
     return _enrich(app, session)
 
 
@@ -421,6 +432,11 @@ def assign_application(
     )
     session.commit()
     session.refresh(app)
+
+    # Pack 37.2: sync applicant.work_history с DN-employer-ом
+    sync_dn_work_record_safe(app, session)
+    session.refresh(app)
+
     return _enrich(app, session)
 
 
