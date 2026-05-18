@@ -263,28 +263,20 @@ def _compute_checks(
         checks["company_ogrn_valid"] = _validate_ogrn(str(company_ogrn))
 
     # === GOST транслит сверка ===
-    # Pack 37.4: ГОСТ применим только для постсоветских паспортов. Для китайских
-    # (пиньинь), японских (Хэпбёрн), арабских и западных стран паспорт даёт
-    # свою латиницу — XIA для китайцев не "ошибка", а правильное значение.
-    # Источник истины — всегда паспорт; ГОСТ-чек — лишь хинт для LLM
-    # когда видит что менеджер при ручном вводе мог опечататься.
-    POSTSOVIET_COUNTRIES = {
-        "RUS", "BLR", "KAZ", "KGZ", "UZB", "TJK", "TKM",
-        "ARM", "AZE", "GEO", "MDA", "UKR",
-    }
-    nationality = (applicant_db.get("nationality") or "").upper()
-    apply_gost_check = nationality in POSTSOVIET_COUNTRIES
-
+    # Pack 37.5: ГОСТ применяется ко всем, но finding всегда info (не warning).
+    # Паспорт всегда источник истины — для русских ГОСТ совпадает с паспортом,
+    # для китайцев в паспорте пиньинь (XIA), для японцев Хэпбёрн.
+    # Несоответствие ГОСТ — лишь подсказка менеджеру: «обратите внимание,
+    # что латиница не построена по ГОСТ» (это нормально для большинства стран).
     last_native = applicant_db.get("last_name_native") or ""
     first_native = applicant_db.get("first_name_native") or ""
     last_latin = (applicant_db.get("last_name_latin") or "").upper()
     first_latin = (applicant_db.get("first_name_latin") or "").upper()
 
-    if apply_gost_check and last_native and last_latin:
+    if last_native and last_latin:
         expected = _gost_transliterate(last_native)
         checks["last_name_gost_expected"] = expected
         checks["last_name_gost_matches"] = (expected == last_latin)
-        # Дополнительно сохраняем разницу для дебага
         if expected != last_latin:
             checks["last_name_gost_diff"] = {
                 "native": last_native,
@@ -292,20 +284,10 @@ def _compute_checks(
                 "actual_db": last_latin,
             }
 
-    if apply_gost_check and first_native and first_latin:
+    if first_native and first_latin:
         expected = _gost_transliterate(first_native)
         checks["first_name_gost_expected"] = expected
         checks["first_name_gost_matches"] = (expected == first_latin)
-
-    if not apply_gost_check:
-        # Подсказка для LLM: эту проверку мы намеренно пропустили
-        checks["gost_check_skipped_reason"] = (
-            f"Nationality '{nationality}' не входит в постсоветский регион — "
-            f"для этой страны паспорт является единственным источником латиницы "
-            f"(пиньинь для КНР, Хэпбёрн для Японии, и т.д.). "
-            f"Не создавай findings про 'несоответствие ГОСТ' если латиница в БД "
-            f"совпадает с passport OCR last_name_latin/first_name_latin."
-        )
 
     # === OCR vs БД консистенси для имён ===
     # Это «hint» для LLM — реальную сверку делает он, но мы выделяем явные расхождения.
