@@ -2850,6 +2850,14 @@ export async function manualFixAuditFinding(
   return res.json();
 }
 
+/**
+ * URL для скачивания DOCX-отчёта. Используется как href в <a download>.
+ * Pack 37.1.
+ */
+export function getAuditReportDocxUrl(reportId: number): string {
+  return `${API_BASE_URL}/api/audit/reports/${reportId}/export.docx`;
+}
+
 // Русские лейблы для UI
 export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
   identity: "Личные данные",

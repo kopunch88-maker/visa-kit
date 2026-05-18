@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Clock,
   DollarSign,
+  Download,
 } from "lucide-react";
 import {
   AuditReport,
@@ -25,6 +26,7 @@ import {
   runAudit,
   listAuditReports,
   getAuditReport,
+  getAuditReportDocxUrl,
 } from "@/lib/api";
 import { AuditFindingCard } from "@/components/admin/AuditFindingCard";
 
@@ -203,6 +205,18 @@ export default function AuditPage() {
                   </option>
                 ))}
               </select>
+            )}
+            {/* Pack 37.1 — скачать DOCX. Показывается только если отчёт готов. */}
+            {report && !report.is_running && !report.error && (
+              <a
+                href={getAuditReportDocxUrl(report.id)}
+                download
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50"
+                title="Скачать отчёт в формате Word"
+              >
+                <Download className="w-4 h-4" />
+                Скачать DOCX
+              </a>
             )}
             <button
               onClick={handleStartAudit}

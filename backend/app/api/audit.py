@@ -413,6 +413,57 @@ def manual_fix_finding(
 
 
 # ====================================================================
+# Pack 37.1 — DOCX export
+# ====================================================================
+
+from fastapi.responses import StreamingResponse
+from urllib.parse import quote
+
+
+@router.get("/audit/reports/{report_id}/export.docx")
+def export_report_docx(
+    report_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Скачать отчёт аудита в формате DOCX.
+
+    Содержит все findings (включая принятые/отклонённые) с цветной разметкой,
+    статусами решений менеджера, обоснованиями ИИ и таблицами diff.
+    """
+    from app.services.audit.audit_export import build_audit_report_docx
+
+    report = session.get(AuditReport, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if report.is_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Audit is still running — wait for completion before exporting",
+        )
+
+    try:
+        docx_bytes, filename = build_audit_report_docx(report_id, session)
+    except Exception as e:
+        log.exception(f"[audit:api] DOCX export failed for report {report_id}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+    # filename* per RFC 5987 — для не-ASCII (кириллица в ФИО)
+    quoted_filename = quote(filename)
+    return StreamingResponse(
+        iter([docx_bytes]),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8\'\'{quoted_filename}",
+            "Content-Length": str(len(docx_bytes)),
+        },
+    )
+
+
+# ====================================================================
 # Internal: пересчёт summary
 # ====================================================================
 
