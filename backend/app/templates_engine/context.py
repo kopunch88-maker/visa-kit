@@ -1075,6 +1075,9 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
             _last_l = (applicant.last_name_latin or "").strip()
             _full = f"{_first_l} {_last_l}".strip()
         _applicant_full_name_ru = _full or None
+        _first_l = (applicant.first_name_latin or "").strip()
+        _last_l = (applicant.last_name_latin or "").strip()
+        _applicant_short_name_latin = f"{_first_l} {_last_l[0]}." if _first_l and _last_l else None
         _applicant_phone = applicant.phone
 
     result = generate_default_transactions(
@@ -1091,6 +1094,7 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
         seed=application.id or 0,
         applicant_full_name_ru=_applicant_full_name_ru,
         applicant_phone=_applicant_phone,
+        applicant_short_name_latin=_applicant_short_name_latin,
         # Pack 25.9: ручной override даты формирования (если задан в админке)
         statement_date_override=getattr(application, "bank_statement_date", None),
     )
