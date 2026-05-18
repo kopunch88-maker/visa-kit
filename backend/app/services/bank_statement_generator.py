@@ -617,19 +617,19 @@ def generate_default_transactions(
         (-t["amount"] for t in transactions if t["amount"] < 0), Decimal("0.00")
     )
     # Pack 39.2: рандомный начальный остаток 50k-400k с копейками
-    rng_bal = random.Random(seed)  # детерминировано по seed клиента
+    rng_bal = random.Random(seed)
     opening_balance = Decimal(
         f"{rng_bal.randint(50000, 400000)}.{rng_bal.randint(0, 99):02d}"
     )
     closing_balance = (opening_balance + total_income - total_expense).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
-    # Если закрывающий остаток отрицательный — поднимаем начальный чтобы closing >= 5000
-    if closing_balance < Decimal("5000.00"):
-        shortfall = Decimal("5000.00") - closing_balance
-        # Добавляем shortfall + рандомный буфер 3k-30k
-        extra = Decimal(rng_bal.randint(3000, 30000))
-        opening_balance = (opening_balance + shortfall + extra).quantize(
+    # Если закрывающий остаток отрицательный или слишком маленький —
+    # поднимаем начальный чтобы closing был рандомно плюсовым (1k-50k)
+    if closing_balance < Decimal("1000.00"):
+        min_closing = Decimal(rng_bal.randint(1000, 50000))
+        shortfall = min_closing - closing_balance
+        opening_balance = (opening_balance + shortfall).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         closing_balance = (opening_balance + total_income - total_expense).quantize(
