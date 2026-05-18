@@ -147,6 +147,10 @@ _LATIN_NAME_FIELDS = {"last_name_latin", "first_name_latin"}
 _INT_FIELDS = {"bank_id"}
 
 
+# Pack 37.7 — sync DN work_history в БД когда менеджер сохраняет Drawer
+from app.services.work_history_sync import sync_dn_work_record_safe
+
+
 @router.patch("/{applicant_id}")
 def update_applicant(
     applicant_id: int,
@@ -217,6 +221,25 @@ def update_applicant(
     session.add(applicant)
     session.commit()
     session.refresh(applicant)
+
+    # Pack 37.7: если менеджер сохранил work_history (через ручное редактирование
+    # или после "Сгенерировать опыт работы"), пробуем синкнуть с DN-employer-ом.
+    # Безопасно — sync_dn_work_record_safe вернёт False если данных не хватает
+    # (нет company/position/contract_sign_date в attached application).
+    if "work_history" in patch:
+        from app.models import Application
+        from sqlmodel import select
+        # У applicant может быть несколько applications — берём ту что с company.
+        # На практике обычно одна Application на Applicant.
+        applications = session.exec(
+            select(Application).where(Application.applicant_id == applicant.id)
+        ).all()
+        for app in applications:
+            if app.company_id and app.contract_sign_date:
+                sync_dn_work_record_safe(app, session)
+                # Перечитаем applicant — sync мог его обновить
+                session.refresh(applicant)
+                break  # одной заявки достаточно
 
     return _enrich(applicant, session)
 
