@@ -157,9 +157,7 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
                 _last_l = (_applicant.last_name_latin or "").strip()
                 _full = f"{_first_l} {_last_l}".strip()
             _applicant_full_name_ru = _full or None
-            _first_l = (_applicant.first_name_latin or "").strip()
-            _last_l = (_applicant.last_name_latin or "").strip()
-            _applicant_short_name_latin = f"{_first_l} {_last_l[0]}." if _first_l and _last_l else None
+           
             _applicant_phone = _applicant.phone
 
     return generate_default_transactions(
@@ -177,7 +175,7 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
         # Pack 35.5: пробрасываем applicant в генератор
         applicant_full_name_ru=_applicant_full_name_ru,
         applicant_phone=_applicant_phone,
-        applicant_short_name_latin=_applicant_short_name_latin,
+        
         statement_date_override=getattr(application, "bank_statement_date", None),
     )
 

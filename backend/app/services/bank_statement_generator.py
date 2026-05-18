@@ -279,7 +279,7 @@ def generate_default_transactions(
     # Pack 25.8: новые опциональные параметры
     applicant_full_name_ru: Optional[str] = None,
     applicant_phone: Optional[str] = None,
-    applicant_short_name_latin: Optional[str] = None,
+    
     statement_date_override: Optional[date] = None,
 ) -> dict:
     """
@@ -460,7 +460,7 @@ def generate_default_transactions(
     # === Pack 25.8: СБП-переводы себе ===
     self_phone = _resolve_self_phone_for_sbp(applicant_phone)
     self_phone_masked = _format_ru_phone_masked(self_phone)
-    self_short_name = applicant_short_name_latin or _short_name_for_sbp(applicant_full_name_ru)
+    self_short_name = _short_name_for_sbp(applicant_full_name_ru)
 
 
     sbp_count_total = random.randint(3, 8)  # 3-8 за весь период (~1-3 в месяц)

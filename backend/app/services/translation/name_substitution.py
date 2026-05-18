@@ -166,6 +166,11 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
                 f"{last_latin} {lat_init}.{lat_mid}.",
             ))
 
+    # Pack 39.3: СБП-формат "Имя Ф." → "NAME F." (имя + инициал фамилии)
+    if last_native and first_native and last_latin and first_latin:
+        pairs.append((f"{first_native} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
+        pairs.append((f"{first_latin} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
+
     return pairs
 
 
