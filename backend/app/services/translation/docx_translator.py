@@ -723,6 +723,8 @@ async def translate_docx(
         )
 
     for (paragraph_idx, _original), translated_text in zip(targets, all_translations):
+        if substitutions:
+            translated_text = substitutions.apply(translated_text)
         _set_paragraph_text(paragraphs[paragraph_idx], translated_text)
 
     # Pack 35.9: разбить шапку «город + дата» на 2 параграфа
