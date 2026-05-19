@@ -162,7 +162,10 @@ class FinalSubmissionDocument(SQLModel, table=True):
     original_filename: str = Field(max_length=512)
     mime_type: str = Field(max_length=128)
     file_size_bytes: int  # BigInteger в БД (см. migrations.py)
-    s3_key: str = Field(max_length=512)
+    storage_key: str = Field(max_length=512)
+    # Pack 39.0-A2: если исходный PDF конвертится в JPG для Vision/OCR,
+    # storage_key хранит JPG, а original_storage_key — исходный PDF.
+    original_storage_key: Optional[str] = Field(default=None, max_length=512)
     sha256: str = Field(max_length=64)
 
     # --- классификация ---
@@ -325,8 +328,12 @@ class FinalSubmissionDocumentRead(SQLModel):
     original_filename: str
     mime_type: str
     file_size_bytes: int
-    s3_key: str
+    storage_key: str
+    original_storage_key: Optional[str] = None
     sha256: str
+    # Pack 39.0-A2: signed URLs генерируются на лету в роуте, не хранятся в БД
+    download_url: Optional[str] = None
+    original_download_url: Optional[str] = None
 
     doc_category: Optional[FinalSubmissionDocCategory] = None
     doc_category_confidence: Optional[Decimal] = None

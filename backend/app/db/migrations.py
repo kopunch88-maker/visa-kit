@@ -1147,3 +1147,44 @@ def apply_pack39_0_migration() -> None:
         """))
 
     print("[migration] Pack 39.0: Final Submission Audit tables ready")
+
+
+# ============================================================================
+# Pack 39.0-A2 — переименование s3_key → storage_key + original_storage_key
+# ============================================================================
+def apply_pack39_0_A2_migration() -> None:
+    """Pack 39.0-A2:
+       - RENAME COLUMN final_submission_document.s3_key → storage_key
+         (если ещё не переименовано — проверка через information_schema)
+       - ADD COLUMN IF NOT EXISTS original_storage_key VARCHAR(512)
+
+       Идемпотентна. Безопасна: таблица пустая на момент применения.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # RENAME — только если ещё есть старая колонка s3_key
+        has_old = conn.execute(text("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'final_submission_document'
+              AND column_name = 's3_key'
+        """)).first()
+
+        if has_old:
+            conn.execute(text("""
+                ALTER TABLE final_submission_document
+                RENAME COLUMN s3_key TO storage_key
+            """))
+            print("[migration] Pack 39.0-A2: renamed s3_key → storage_key")
+        else:
+            print("[migration] Pack 39.0-A2: storage_key already exists, skipping rename")
+
+        # ADD original_storage_key
+        conn.execute(text("""
+            ALTER TABLE final_submission_document
+            ADD COLUMN IF NOT EXISTS original_storage_key VARCHAR(512)
+        """))
+
+    print("[migration] Pack 39.0-A2: final_submission_document schema updated")
