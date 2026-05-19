@@ -33,6 +33,7 @@ from typing import List, Optional
 
 from fastapi import (
     APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Body,
+    BackgroundTasks,  # Pack 39.0-C
 )
 from sqlmodel import Session, select
 
@@ -151,6 +152,7 @@ def _get_doc_or_404(
 )
 async def upload_final_submission_documents(
     applicant_id: int,
+    background_tasks: BackgroundTasks,  # Pack 39.0-C: extraction в фоне
     files: List[UploadFile] = File(...),
     application_id: Optional[int] = Form(default=None),
     session: Session = Depends(get_session),
@@ -230,6 +232,11 @@ async def upload_final_submission_documents(
 
     session.commit()
 
+    # Pack 39.0-C: запускаем extraction pipeline в фоне для каждого загруженного документа
+    from app.services.final_submission.extraction_pipeline import run_extraction_pipeline
+    for doc_dto in uploaded:
+        background_tasks.add_task(run_extraction_pipeline, doc_dto.id)
+
     return FinalSubmissionUploadResponse(
         uploaded=uploaded,
         skipped_duplicates=skipped_duplicates,
@@ -283,6 +290,7 @@ def list_final_submission_documents(
 async def replace_final_submission_document(
     applicant_id: int,
     doc_id: int,
+    background_tasks: BackgroundTasks,  # Pack 39.0-C
     file: UploadFile = File(...),
     keep_category: bool = Form(default=True),
     session: Session = Depends(get_session),
@@ -327,6 +335,11 @@ async def replace_final_submission_document(
 
     session.commit()
     session.refresh(new_doc)
+
+    # Pack 39.0-C: extraction pipeline для нового файла
+    from app.services.final_submission.extraction_pipeline import run_extraction_pipeline
+    background_tasks.add_task(run_extraction_pipeline, new_doc.id)
+
     return _attach_download_url(new_doc, storage)
 
 
