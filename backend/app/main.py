@@ -110,6 +110,7 @@ from app.api import (  # noqa: E402
     audit,  # ← Pack 37.0 AI Document Audit
 )
 from app.api import ifns_mfc
+from app.api import final_submission  # Pack 39.0-B
 app.include_router(auth.router, prefix="/api")
 app.include_router(companies.router, prefix="/api")
 app.include_router(positions.router, prefix="/api")
@@ -133,6 +134,7 @@ app.include_router(registry_admin.router, prefix="/api")  # Pack 17.2.4
 app.include_router(npd_pool_admin.router, prefix="/api")  # Pack 28.2
 app.include_router(inn_date_refine.router, prefix="/api")  # Pack 28.5
 app.include_router(audit.router)
+app.include_router(final_submission.router)  # Pack 39.0-B Final Submission
 
 @app.get("/", tags=["meta"])
 def root():
