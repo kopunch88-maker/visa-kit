@@ -219,7 +219,7 @@ async def upload_final_submission_documents(
             application_id=application_id,
             filename=filename,
             content=content,
-            uploaded_by=user_id,
+            uploaded_by=str(user_id) if user_id is not None else None,
         )
         if err == "duplicate":
             skipped_duplicates.append(filename)
@@ -314,7 +314,7 @@ async def replace_final_submission_document(
         new_filename=file.filename or "unnamed",
         new_content=content,
         keep_category=keep_category,
-        uploaded_by=user_id,
+        uploaded_by=str(user_id) if user_id is not None else None,
     )
 
     if err == "no_change":
