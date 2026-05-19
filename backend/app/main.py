@@ -29,7 +29,8 @@ from app.db.migrations import (
     apply_pack35_2_migration,  # Pack 35.2 — applicant.passport_issuer_ru
     apply_pack38_1_migration,  # Pack 38.1 — application.is_paid
     apply_pack36_1_migration,  # Pack 36.1 — application.nie + fingerprint_date
-    apply_pack37_0_migration,  # Pack 37.0 — AI Document Audit
+    apply_pack37_0_migration,
+    apply_pack39_0_migration,  # Pack 39.0 Final Submission Audit  # Pack 37.0 — AI Document Audit
 )
 
 
@@ -57,7 +58,8 @@ async def lifespan(app: FastAPI):
     apply_pack35_2_migration()  # Pack 35.2 applicant.passport_issuer_ru
     apply_pack38_1_migration()  # Pack 38.1 application.is_paid
     apply_pack36_1_migration()  # Pack 36.1 application.nie + fingerprint_date
-    apply_pack37_0_migration()  # Pack 37.0 AI Document Audit indexes
+    apply_pack37_0_migration()
+    apply_pack39_0_migration()  # Pack 39.0 Final Submission Audit tables  # Pack 37.0 AI Document Audit indexes
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")

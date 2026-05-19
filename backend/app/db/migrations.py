@@ -989,3 +989,161 @@ def apply_pack37_0_migration():
                 )
 
     print(f"{log_prefix} Done.")
+
+
+# ============================================================================
+# Pack 39.0 — Final Submission Audit (физическая проверка перед подачей)
+# ============================================================================
+def apply_pack39_0_migration() -> None:
+    """Pack 39.0 миграция:
+       Создаёт 3 таблицы для финальной проверки физических документов:
+         - final_submission_document       (с историей версий)
+         - final_submission_audit_report
+         - final_submission_finding
+
+       ON DELETE CASCADE на applicant_id во всех таблицах.
+       Частичный UNIQUE index на (applicant_id, sha256) WHERE is_active=TRUE.
+       Идемпотентна — CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # ----- final_submission_document -----
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS final_submission_document (
+                id                       SERIAL PRIMARY KEY,
+                applicant_id             INTEGER NOT NULL REFERENCES applicant(id) ON DELETE CASCADE,
+                application_id           INTEGER REFERENCES application(id) ON DELETE SET NULL,
+
+                original_filename        VARCHAR(512) NOT NULL,
+                mime_type                VARCHAR(128) NOT NULL,
+                file_size_bytes          BIGINT NOT NULL,
+                s3_key                   VARCHAR(512) NOT NULL,
+                sha256                   VARCHAR(64) NOT NULL,
+
+                doc_category             VARCHAR(50),
+                doc_category_confidence  NUMERIC(4,3),
+                doc_category_source      VARCHAR(20) NOT NULL DEFAULT 'ai',
+
+                extracted_text           TEXT,
+                extraction_method        VARCHAR(20),
+                extraction_cost_usd      NUMERIC(10,4) NOT NULL DEFAULT 0,
+                page_count               INTEGER,
+
+                is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+                previous_version_id      INTEGER REFERENCES final_submission_document(id) ON DELETE SET NULL,
+                replaced_at              TIMESTAMP,
+
+                uploaded_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+                uploaded_by              VARCHAR(255)
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsd_applicant
+                ON final_submission_document(applicant_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsd_application
+                ON final_submission_document(application_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsd_applicant_active
+                ON final_submission_document(applicant_id, is_active)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsd_doc_category
+                ON final_submission_document(doc_category)
+        """))
+        # Частичный UNIQUE: среди активных файлов клиента не может быть двух одинаковых.
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fsd_applicant_sha_active
+                ON final_submission_document(applicant_id, sha256)
+                WHERE is_active = TRUE
+        """))
+
+        # ----- final_submission_audit_report -----
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS final_submission_audit_report (
+                id                            SERIAL PRIMARY KEY,
+                application_id                INTEGER NOT NULL REFERENCES application(id) ON DELETE CASCADE,
+                applicant_id                  INTEGER NOT NULL REFERENCES applicant(id) ON DELETE CASCADE,
+
+                verdict                       VARCHAR(20) NOT NULL DEFAULT 'WARN',
+
+                model_used                    VARCHAR(100),
+                prompt_version                VARCHAR(20),
+                input_tokens                  INTEGER,
+                output_tokens                 INTEGER,
+                vision_pages                  INTEGER DEFAULT 0,
+                cost_usd                      NUMERIC(10,4),
+
+                included_document_ids         JSON,
+                document_categories_snapshot  JSON,
+
+                is_running                    BOOLEAN NOT NULL DEFAULT TRUE,
+                started_at                    TIMESTAMP NOT NULL DEFAULT NOW(),
+                finished_at                   TIMESTAMP,
+                duration_ms                   INTEGER,
+                error                         JSON,
+
+                triggered_by                  VARCHAR(255),
+                summary_counts                JSON,
+                inspector_summary             TEXT,
+
+                created_at                    TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsar_application
+                ON final_submission_audit_report(application_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsar_applicant
+                ON final_submission_audit_report(applicant_id)
+        """))
+
+        # ----- final_submission_finding -----
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS final_submission_finding (
+                id                  SERIAL PRIMARY KEY,
+                report_id           INTEGER NOT NULL REFERENCES final_submission_audit_report(id) ON DELETE CASCADE,
+
+                category            VARCHAR(30) NOT NULL,
+                severity            VARCHAR(20) NOT NULL,
+
+                title               VARCHAR(500) NOT NULL,
+                description         TEXT,
+                recommendation      TEXT,
+
+                affected_documents  JSON,
+                field_name          VARCHAR(128),
+                values_found        JSON,
+
+                status              VARCHAR(20) NOT NULL DEFAULT 'open',
+                resolved_at         TIMESTAMP,
+                resolved_by         VARCHAR(255),
+                resolution_note     TEXT,
+
+                sort_order          INTEGER NOT NULL DEFAULT 0,
+                created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsf_report
+                ON final_submission_finding(report_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsf_category
+                ON final_submission_finding(category)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsf_severity
+                ON final_submission_finding(severity)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_fsf_status
+                ON final_submission_finding(status)
+        """))
+
+    print("[migration] Pack 39.0: Final Submission Audit tables ready")

@@ -117,6 +117,34 @@ from .audit import (
     AuditAcceptResponse,
 )
 
+# Pack 39.0: Final Submission Audit
+from .final_submission import (
+    # Tables
+    FinalSubmissionDocument,
+    FinalSubmissionAuditReport,
+    FinalSubmissionFinding,
+    # Enums
+    FinalSubmissionVerdict,
+    FinalSubmissionCategory,
+    FinalSubmissionSeverity,
+    FinalSubmissionFindingStatus,
+    FinalSubmissionDocCategory,
+    FinalSubmissionExtractionMethod,
+    FinalSubmissionDocSource,
+    # DTO
+    FinalSubmissionDocumentRead,
+    FinalSubmissionFindingRead,
+    FinalSubmissionAuditReportRead,
+    FinalSubmissionAuditReportWithFindings,
+    FinalSubmissionRunRequest,
+    FinalSubmissionRunResponse,
+    FinalSubmissionUploadResponse,
+    FinalSubmissionReplaceRequest,
+    FinalSubmissionDismissRequest,
+    FinalSubmissionAcknowledgeRequest,
+    FinalSubmissionDocCategoryUpdateRequest,
+)
+
 __all__ = [
     # Base
     "TimestampMixin", "utcnow", "CountryCode", "CurrencyCode",
@@ -190,4 +218,26 @@ __all__ = [
     "AuditDismissRequest",
     "AuditManualFixRequest",
     "AuditAcceptResponse",
+    # Pack 39.0: Final Submission Audit
+    "FinalSubmissionDocument",
+    "FinalSubmissionAuditReport",
+    "FinalSubmissionFinding",
+    "FinalSubmissionVerdict",
+    "FinalSubmissionCategory",
+    "FinalSubmissionSeverity",
+    "FinalSubmissionFindingStatus",
+    "FinalSubmissionDocCategory",
+    "FinalSubmissionExtractionMethod",
+    "FinalSubmissionDocSource",
+    "FinalSubmissionDocumentRead",
+    "FinalSubmissionFindingRead",
+    "FinalSubmissionAuditReportRead",
+    "FinalSubmissionAuditReportWithFindings",
+    "FinalSubmissionRunRequest",
+    "FinalSubmissionRunResponse",
+    "FinalSubmissionUploadResponse",
+    "FinalSubmissionReplaceRequest",
+    "FinalSubmissionDismissRequest",
+    "FinalSubmissionAcknowledgeRequest",
+    "FinalSubmissionDocCategoryUpdateRequest",
 ]
