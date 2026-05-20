@@ -38,6 +38,8 @@ from fastapi import (
 from sqlmodel import Session, select
 
 from app.db.session import get_session
+from datetime import datetime  # Pack 39.0-D
+
 from app.models import (
     Applicant,
     FinalSubmissionDocument,
@@ -45,6 +47,14 @@ from app.models import (
     FinalSubmissionUploadResponse,
     FinalSubmissionDocCategoryUpdateRequest,
     FinalSubmissionDocCategory,
+    # Pack 39.0-D
+    FinalSubmissionRunRequest,
+    FinalSubmissionRunResponse,
+    FinalSubmissionAuditReportRead,
+    FinalSubmissionAuditReportWithFindings,
+    FinalSubmissionFindingRead,
+    FinalSubmissionAcknowledgeRequest,
+    FinalSubmissionDismissRequest,
 )
 from app.services.storage import get_storage
 from app.services.final_submission.upload_service import (
@@ -429,3 +439,186 @@ def update_final_submission_document_category(
 
     storage = get_storage()
     return _attach_download_url(doc, storage)
+
+
+# ====================================================================
+# Pack 39.0-D — Audit endpoints
+# ====================================================================
+
+@router.post(
+    "/applicants/{applicant_id}/final-submission/audit/run",
+    response_model=FinalSubmissionRunResponse,
+)
+def run_final_submission_audit(
+    applicant_id: int,
+    payload: FinalSubmissionRunRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    user_id: Optional[str] = Depends(current_user_id),
+):
+    """
+    Запустить финальный аудит пакета документов.
+
+    Создаёт FinalSubmissionAuditReport со is_running=True, запускает
+    BackgroundTask. Фронт polling'ом проверяет is_running каждые 2с.
+    """
+    from app.models import (
+        FinalSubmissionAuditReport, FinalSubmissionVerdict,
+    )
+    from app.services.final_submission.audit_runner import (
+        run_final_submission_audit_in_background,
+    )
+
+    _ensure_applicant(session, applicant_id)
+
+    # Проверим что есть активные документы для аудита
+    docs_count = session.exec(
+        select(FinalSubmissionDocument)
+        .where(FinalSubmissionDocument.applicant_id == applicant_id)
+        .where(FinalSubmissionDocument.is_active == True)  # noqa: E712
+    ).all()
+    if not docs_count:
+        raise HTTPException(
+            status_code=400,
+            detail="No active documents to audit. Upload documents first.",
+        )
+
+    report = FinalSubmissionAuditReport(
+        application_id=payload.application_id,
+        applicant_id=applicant_id,
+        verdict=FinalSubmissionVerdict.WARN,
+        is_running=True,
+        triggered_by=payload.triggered_by or (str(user_id) if user_id is not None else None),
+    )
+    session.add(report)
+    session.commit()
+    session.refresh(report)
+
+    background_tasks.add_task(run_final_submission_audit_in_background, report.id)
+
+    return FinalSubmissionRunResponse(report_id=report.id, status="started")
+
+
+@router.get(
+    "/applicants/{applicant_id}/final-submission/audit/reports",
+    response_model=List[FinalSubmissionAuditReportRead],
+)
+def list_final_submission_audit_reports(
+    applicant_id: int,
+    session: Session = Depends(get_session),
+):
+    """Список всех прогонов аудита для клиента. Свежие сверху."""
+    from app.models import FinalSubmissionAuditReport
+
+    _ensure_applicant(session, applicant_id)
+
+    stmt = (
+        select(FinalSubmissionAuditReport)
+        .where(FinalSubmissionAuditReport.applicant_id == applicant_id)
+        .order_by(FinalSubmissionAuditReport.started_at.desc())
+    )
+    reports = session.exec(stmt).all()
+    return [FinalSubmissionAuditReportRead.model_validate(r, from_attributes=True) for r in reports]
+
+
+@router.get(
+    "/final-submission/audit/reports/{report_id}",
+    response_model=FinalSubmissionAuditReportWithFindings,
+)
+def get_final_submission_audit_report(
+    report_id: int,
+    session: Session = Depends(get_session),
+):
+    """Полный отчёт: report + findings + список документов которые в нём участвовали."""
+    from app.models import (
+        FinalSubmissionAuditReport, FinalSubmissionFinding,
+    )
+
+    report = session.get(FinalSubmissionAuditReport, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    # Findings
+    findings_stmt = (
+        select(FinalSubmissionFinding)
+        .where(FinalSubmissionFinding.report_id == report_id)
+        .order_by(FinalSubmissionFinding.sort_order, FinalSubmissionFinding.id)
+    )
+    findings = session.exec(findings_stmt).all()
+    findings_dto = [FinalSubmissionFindingRead.model_validate(f, from_attributes=True) for f in findings]
+
+    # Документы (по снэпшоту included_document_ids — если задан)
+    documents_dto: List[FinalSubmissionDocumentRead] = []
+    if report.included_document_ids:
+        storage = get_storage()
+        docs_stmt = (
+            select(FinalSubmissionDocument)
+            .where(FinalSubmissionDocument.id.in_(report.included_document_ids))
+        )
+        docs = session.exec(docs_stmt).all()
+        documents_dto = [_attach_download_url(d, storage) for d in docs]
+
+    base = FinalSubmissionAuditReportRead.model_validate(report, from_attributes=True)
+    return FinalSubmissionAuditReportWithFindings(
+        **base.model_dump(),
+        findings=findings_dto,
+        documents=documents_dto,
+    )
+
+
+@router.post(
+    "/final-submission/findings/{finding_id}/acknowledge",
+    response_model=FinalSubmissionFindingRead,
+)
+def acknowledge_final_submission_finding(
+    finding_id: int,
+    payload: FinalSubmissionAcknowledgeRequest,
+    session: Session = Depends(get_session),
+    user_id: Optional[str] = Depends(current_user_id),
+):
+    """Менеджер: «учёл, иду переделывать документ». Помечает finding как acknowledged."""
+    from app.models import FinalSubmissionFinding, FinalSubmissionFindingStatus
+
+    finding = session.get(FinalSubmissionFinding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found")
+
+    finding.status = FinalSubmissionFindingStatus.ACKNOWLEDGED
+    finding.resolved_at = datetime.utcnow()
+    finding.resolved_by = str(user_id) if user_id is not None else None
+    finding.resolution_note = payload.note
+    session.add(finding)
+    session.commit()
+    session.refresh(finding)
+
+    return FinalSubmissionFindingRead.model_validate(finding, from_attributes=True)
+
+
+@router.post(
+    "/final-submission/findings/{finding_id}/dismiss",
+    response_model=FinalSubmissionFindingRead,
+)
+def dismiss_final_submission_finding(
+    finding_id: int,
+    payload: FinalSubmissionDismissRequest,
+    session: Session = Depends(get_session),
+    user_id: Optional[str] = Depends(current_user_id),
+):
+    """Менеджер: «false positive» или «не критично». Помечает dismissed."""
+    from app.models import FinalSubmissionFinding, FinalSubmissionFindingStatus
+
+    finding = session.get(FinalSubmissionFinding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found")
+
+    finding.status = FinalSubmissionFindingStatus.DISMISSED
+    finding.resolved_at = datetime.utcnow()
+    finding.resolved_by = str(user_id) if user_id is not None else None
+    finding.resolution_note = payload.note
+    session.add(finding)
+    session.commit()
+    session.refresh(finding)
+
+    return FinalSubmissionFindingRead.model_validate(finding, from_attributes=True)
+
+
