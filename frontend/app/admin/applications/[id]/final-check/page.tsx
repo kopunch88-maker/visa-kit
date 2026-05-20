@@ -86,6 +86,17 @@ export default function FinalCheckPage() {
         const docs = await listFinalSubmissionDocuments(app.applicant_id);
         if (cancelled) return;
         setDocuments(docs);
+
+        // Pack 39.0-E2: загрузить последний отчёт (если есть)
+        try {
+          const reports = await listFinalSubmissionAuditReports(app.applicant_id);
+          if (!cancelled && reports.length > 0) {
+            const latest = await getFinalSubmissionAuditReport(reports[0].id);
+            if (!cancelled) setCurrentReport(latest);
+          }
+        } catch {
+          // тихо игнорируем — нет отчётов это нормально
+        }
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -96,6 +107,50 @@ export default function FinalCheckPage() {
       cancelled = true;
     };
   }, [applicationId]);
+
+  // Pack 39.0-E2: polling прогона аудита (если is_running=true)
+  useEffect(() => {
+    if (!currentReport || !currentReport.is_running) return;
+    const interval = setInterval(async () => {
+      try {
+        const updated = await getFinalSubmissionAuditReport(currentReport.id);
+        setCurrentReport(updated);
+        if (!updated.is_running) {
+          clearInterval(interval);
+        }
+      } catch {
+        // тихо
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [currentReport?.id, currentReport?.is_running]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pack 39.0-E2: запустить аудит
+  async function handleRunAudit() {
+    if (applicantId === null) return;
+    setStartingAudit(true);
+    setError(null);
+    try {
+      const { report_id } = await runFinalSubmissionAudit(applicantId, applicationId);
+      const fresh = await getFinalSubmissionAuditReport(report_id);
+      setCurrentReport(fresh);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setStartingAudit(false);
+    }
+  }
+
+  // Pack 39.0-E2: перечитать текущий отчёт (после acknowledge/dismiss)
+  async function reloadReport() {
+    if (!currentReport) return;
+    try {
+      const fresh = await getFinalSubmissionAuditReport(currentReport.id);
+      setCurrentReport(fresh);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   // 2. Polling каждые 5 сек — extraction в фоне обновит doc_category/extracted_text
   useEffect(() => {
@@ -221,6 +276,26 @@ export default function FinalCheckPage() {
               </p>
             </div>
           </div>
+
+          {/* Pack 39.0-E2: компактная кнопка прогона в хедере */}
+          {documents.length > 0 && (
+            <button
+              onClick={handleRunAudit}
+              disabled={startingAudit || (currentReport?.is_running ?? false)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 flex-shrink-0"
+              style={{ background: "var(--color-accent)" }}
+              title="Запустить новый прогон проверки"
+            >
+              {startingAudit || currentReport?.is_running ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : currentReport ? (
+                <RefreshCw className="w-4 h-4" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              {currentReport ? "Новый прогон" : "Запустить проверку"}
+            </button>
+          )}
         </div>
 
         {/* Глобальная ошибка */}
@@ -351,9 +426,219 @@ export default function FinalCheckPage() {
                 </div>
               )}
             </div>
+
+            {/* Pack 39.0-E2: блок отчёта под списком документов */}
+            {documents.length > 0 && (
+              <div className="mt-8">
+                {!currentReport ? (
+                  <div
+                    className="rounded-lg p-8 text-center"
+                    style={{
+                      background: "var(--color-bg-primary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                    }}
+                  >
+                    <ShieldCheck
+                      className="w-12 h-12 mx-auto mb-3"
+                      style={{ color: "var(--color-accent)" }}
+                    />
+                    <h2
+                      className="text-lg font-semibold mb-2"
+                      style={{ color: "var(--color-text-primary)" }}
+                    >
+                      Запустить финальную проверку
+                    </h2>
+                    <p
+                      className="text-sm mb-4 max-w-xl mx-auto"
+                      style={{ color: "var(--color-text-secondary)" }}
+                    >
+                      AI-инспектор симулирует приём документов в консульстве:
+                      сверит ФИО, даты, суммы, реквизиты компании, переводы
+                      jurada и поищет хвосты прошлых клиентов в шаблонах.
+                    </p>
+                    <button
+                      onClick={handleRunAudit}
+                      disabled={startingAudit}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-md text-white font-medium disabled:opacity-50"
+                      style={{ background: "var(--color-accent)" }}
+                    >
+                      {startingAudit ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Play className="w-5 h-5" />
+                      )}
+                      Запустить проверку
+                    </button>
+                    <p
+                      className="text-xs mt-3"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Занимает 30-90 секунд. Стоимость ~$0.10.
+                    </p>
+                  </div>
+                ) : currentReport.is_running ? (
+                  <div
+                    className="rounded-lg p-8 text-center"
+                    style={{
+                      background: "var(--color-bg-info)",
+                      border: "1px solid var(--color-border-info)",
+                    }}
+                  >
+                    <Loader2
+                      className="w-12 h-12 mx-auto mb-3 animate-spin"
+                      style={{ color: "var(--color-text-info)" }}
+                    />
+                    <h2
+                      className="text-lg font-semibold mb-1"
+                      style={{ color: "var(--color-text-info)" }}
+                    >
+                      Проверка идёт...
+                    </h2>
+                    <p
+                      className="text-sm"
+                      style={{ color: "var(--color-text-info)" }}
+                    >
+                      AI-инспектор анализирует пакет. Это займёт 30-90 секунд.
+                    </p>
+                  </div>
+                ) : currentReport.error ? (
+                  <div
+                    className="rounded-lg p-6"
+                    style={{
+                      background: "var(--color-bg-danger)",
+                      border: "1px solid var(--color-border-secondary)",
+                    }}
+                  >
+                    <h2
+                      className="text-lg font-semibold mb-2 flex items-center gap-2"
+                      style={{ color: "var(--color-text-danger)" }}
+                    >
+                      <AlertCircle className="w-5 h-5" /> Ошибка проверки
+                    </h2>
+                    <p
+                      className="text-sm whitespace-pre-wrap font-mono"
+                      style={{ color: "var(--color-text-danger)" }}
+                    >
+                      {currentReport.error}
+                    </p>
+                    <button
+                      onClick={handleRunAudit}
+                      disabled={startingAudit}
+                      className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-md text-white text-sm font-medium disabled:opacity-50"
+                      style={{ background: "var(--color-text-danger)" }}
+                    >
+                      <RefreshCw className="w-4 h-4" /> Попробовать снова
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <FinalSubmissionVerdictBanner report={currentReport} />
+                    {currentReport.findings.length === 0 ? (
+                      <div
+                        className="rounded-lg p-6 text-center"
+                        style={{
+                          background: "var(--color-bg-success)",
+                          border: "1px solid var(--color-border-success)",
+                        }}
+                      >
+                        <p
+                          className="text-sm"
+                          style={{ color: "var(--color-text-success)" }}
+                        >
+                          AI-инспектор не нашёл замечаний. Пакет готов к подаче.
+                        </p>
+                      </div>
+                    ) : (
+                      <FindingsByCategory
+                        findings={currentReport.findings}
+                        documents={currentReport.documents}
+                        onResolved={reloadReport}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ====================================================================
+// Pack 39.0-E2 — Группировка findings по категориям A-H
+// ====================================================================
+
+function FindingsByCategory({
+  findings,
+  documents,
+  onResolved,
+}: {
+  findings: FinalSubmissionFinding[];
+  documents: FinalSubmissionDocument[];
+  onResolved: () => void;
+}) {
+  const docDownloadUrls: Record<string, string | null> = {};
+  for (const d of documents) {
+    docDownloadUrls[d.original_filename] = d.download_url;
+  }
+
+  const grouped: Record<string, FinalSubmissionFinding[]> = {};
+  for (const f of findings) {
+    if (!grouped[f.category]) grouped[f.category] = [];
+    grouped[f.category].push(f);
+  }
+
+  const order: FinalSubmissionCategory[] = [
+    "A_identity",
+    "B_numeric",
+    "C_dates",
+    "D_company",
+    "E_translation",
+    "F_completeness",
+    "G_quality",
+    "H_stale",
+  ];
+
+  return (
+    <div className="space-y-6">
+      {order.map((cat) => {
+        const items = grouped[cat];
+        if (!items || items.length === 0) return null;
+        const sorted = [...items].sort((a, b) => {
+          const sevOrder = { critical: 0, warning: 1, info: 2 };
+          const sevDiff = sevOrder[a.severity] - sevOrder[b.severity];
+          if (sevDiff !== 0) return sevDiff;
+          return a.sort_order - b.sort_order;
+        });
+        return (
+          <section key={cat}>
+            <h3
+              className="text-sm font-semibold uppercase tracking-wide mb-2 flex items-center gap-2"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              {FINAL_AUDIT_CATEGORY_LABELS[cat]}
+              <span
+                className="text-xs font-normal"
+                style={{ color: "var(--color-text-tertiary)" }}
+              >
+                ({sorted.length})
+              </span>
+            </h3>
+            <div className="space-y-2">
+              {sorted.map((f) => (
+                <FinalSubmissionFindingCard
+                  key={f.id}
+                  finding={f}
+                  docDownloadUrls={docDownloadUrls}
+                  onResolved={onResolved}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
