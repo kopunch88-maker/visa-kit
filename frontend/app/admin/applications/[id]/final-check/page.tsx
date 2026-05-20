@@ -8,6 +8,9 @@ import {
   FileCheck2,
   AlertCircle,
   UploadCloud,
+  Play,
+  RefreshCw,
+  ShieldCheck,
 } from "lucide-react";
 import {
   getApplication,
@@ -16,12 +19,22 @@ import {
   deleteFinalSubmissionDocument,
   replaceFinalSubmissionDocument,
   updateFinalSubmissionDocumentCategory,
+  // Pack 39.0-E2
+  runFinalSubmissionAudit,
+  listFinalSubmissionAuditReports,
+  getFinalSubmissionAuditReport,
+  FINAL_AUDIT_CATEGORY_LABELS,
   type FinalSubmissionDocument,
   type FinalSubmissionDocCategory,
   type FinalSubmissionUploadResponse,
+  type FinalSubmissionAuditReportWithFindings,
+  type FinalSubmissionCategory,
+  type FinalSubmissionFinding,
 } from "@/lib/api";
 import { FinalSubmissionDropZone } from "@/components/admin/FinalSubmissionDropZone";
 import { FinalSubmissionDocumentCard } from "@/components/admin/FinalSubmissionDocumentCard";
+import { FinalSubmissionVerdictBanner } from "@/components/admin/FinalSubmissionVerdictBanner";
+import { FinalSubmissionFindingCard } from "@/components/admin/FinalSubmissionFindingCard";
 
 /**
  * Pack 39.0-E1 — страница финальной проверки физических документов.
@@ -50,6 +63,11 @@ export default function FinalCheckPage() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<FinalSubmissionUploadResponse | null>(null);
+
+  // Pack 39.0-E2: текущий отчёт аудита
+  const [currentReport, setCurrentReport] =
+    useState<FinalSubmissionAuditReportWithFindings | null>(null);
+  const [startingAudit, setStartingAudit] = useState(false);
 
   // 1. Initial load: applicant_id + documents
   useEffect(() => {

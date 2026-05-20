@@ -3097,3 +3097,210 @@ export async function updateFinalSubmissionDocumentCategory(
   }
   return res.json();
 }
+
+
+// ============================================================================
+// Pack 39.0-E2 — Final Submission Audit Report API
+// ============================================================================
+
+export type FinalSubmissionVerdict = "PASS" | "WARN" | "FAIL";
+
+export type FinalSubmissionCategory =
+  | "A_identity"
+  | "B_numeric"
+  | "C_dates"
+  | "D_company"
+  | "E_translation"
+  | "F_completeness"
+  | "G_quality"
+  | "H_stale";
+
+export type FinalSubmissionSeverity = "critical" | "warning" | "info";
+
+export type FinalSubmissionFindingStatus = "open" | "acknowledged" | "dismissed";
+
+export const FINAL_AUDIT_CATEGORY_LABELS: Record<FinalSubmissionCategory, string> = {
+  A_identity: "A · Личные данные",
+  B_numeric: "B · Суммы и числа",
+  C_dates: "C · Даты",
+  D_company: "D · Реквизиты компании",
+  E_translation: "E · Переводы jurada",
+  F_completeness: "F · Комплектность",
+  G_quality: "G · Качество сканов",
+  H_stale: "H · Хвосты прошлых клиентов",
+};
+
+export const FINAL_AUDIT_VERDICT_LABELS: Record<FinalSubmissionVerdict, string> = {
+  PASS: "Пакет готов к подаче",
+  WARN: "Есть предупреждения",
+  FAIL: "Найдены критические ошибки",
+};
+
+export type AffectedDocument = {
+  document_id: number;
+  filename: string;
+  page: number | null;
+};
+
+export type FinalSubmissionFinding = {
+  id: number;
+  report_id: number;
+  category: FinalSubmissionCategory;
+  severity: FinalSubmissionSeverity;
+  title: string;
+  description: string | null;
+  recommendation: string | null;
+  affected_documents: AffectedDocument[];
+  field_name: string | null;
+  values_found: Record<string, string>;
+  status: FinalSubmissionFindingStatus;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution_note: string | null;
+  sort_order: number;
+  created_at?: string;
+};
+
+export type FinalSubmissionAuditReport = {
+  id: number;
+  application_id: number;
+  applicant_id: number;
+  verdict: FinalSubmissionVerdict;
+  model_used: string | null;
+  prompt_version: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  vision_pages: number | null;
+  cost_usd: string | null;
+  included_document_ids: number[] | null;
+  document_categories_snapshot: Record<string, number> | null;
+  is_running: boolean;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  error: string | null;
+  triggered_by: string | null;
+  summary_counts: {
+    critical?: number;
+    warning?: number;
+    info?: number;
+    total?: number;
+    open?: number;
+  } | null;
+  inspector_summary: string | null;
+};
+
+export type FinalSubmissionAuditReportWithFindings = FinalSubmissionAuditReport & {
+  findings: FinalSubmissionFinding[];
+  documents: FinalSubmissionDocument[];
+};
+
+/**
+ * Запустить финальный аудит. Создаёт report в БД (is_running=true)
+ * + запускает BackgroundTask. Polling по getFinalSubmissionAuditReport.
+ */
+export async function runFinalSubmissionAudit(
+  applicantId: number,
+  applicationId: number
+): Promise<{ report_id: number; status: string }> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/audit/run`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ application_id: applicationId }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Run audit failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Список прогонов для клиента (свежие сверху).
+ */
+export async function listFinalSubmissionAuditReports(
+  applicantId: number
+): Promise<FinalSubmissionAuditReport[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/audit/reports`,
+    { headers: authHeaders() }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`List reports failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Полный отчёт + findings + список документов которые в нём участвовали.
+ */
+export async function getFinalSubmissionAuditReport(
+  reportId: number
+): Promise<FinalSubmissionAuditReportWithFindings> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/final-submission/audit/reports/${reportId}`,
+    { headers: authHeaders() }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Get report failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Пометить finding как acknowledged ("учёл, иду исправлять").
+ */
+export async function acknowledgeFinalSubmissionFinding(
+  findingId: number,
+  note?: string
+): Promise<FinalSubmissionFinding> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/final-submission/findings/${findingId}/acknowledge`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ note: note || null }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Acknowledge failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Пометить finding как dismissed (false positive).
+ */
+export async function dismissFinalSubmissionFinding(
+  findingId: number,
+  note?: string
+): Promise<FinalSubmissionFinding> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/final-submission/findings/${findingId}/dismiss`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ note: note || null }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Dismiss failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
