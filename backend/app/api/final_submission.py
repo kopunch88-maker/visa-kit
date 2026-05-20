@@ -622,3 +622,62 @@ def dismiss_final_submission_finding(
     return FinalSubmissionFindingRead.model_validate(finding, from_attributes=True)
 
 
+
+
+# ====================================================================
+# Pack 39.0-F — DOCX export endpoint
+# ====================================================================
+
+@router.get(
+    "/final-submission/audit/reports/{report_id}/export.docx",
+)
+def export_final_submission_audit_report_docx(
+    report_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Скачать отчёт финальной проверки в формате DOCX.
+
+    Возвращает StreamingResponse с DOCX-файлом для скачивания.
+    Включает ВСЕ findings (open + acknowledged + dismissed).
+    Acknowledged/dismissed рендерятся зачёркнутыми + статусной плашкой.
+    """
+    from fastapi.responses import StreamingResponse
+    from app.models import FinalSubmissionAuditReport
+    from app.services.final_submission.audit_export import (
+        build_final_submission_audit_docx,
+    )
+
+    report = session.get(FinalSubmissionAuditReport, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    if report.is_running:
+        raise HTTPException(
+            status_code=400,
+            detail="Audit is still running — wait for completion before exporting",
+        )
+
+    try:
+        docx_bytes, filename = build_final_submission_audit_docx(report_id, session)
+    except Exception as e:
+        import logging
+        logging.exception(f"[final_submission:api] DOCX export failed for report {report_id}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+    import urllib.parse
+    filename_encoded = urllib.parse.quote(filename)
+
+    return StreamingResponse(
+        iter([docx_bytes]),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{filename}\"; "
+                f"filename*=UTF-8\'\'{filename_encoded}"
+            ),
+            "Content-Length": str(len(docx_bytes)),
+        },
+    )

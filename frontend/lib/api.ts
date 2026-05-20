@@ -3304,3 +3304,54 @@ export async function dismissFinalSubmissionFinding(
   }
   return res.json();
 }
+
+
+// ============================================================================
+// Pack 39.0-F — Final Submission DOCX export
+// ============================================================================
+
+/**
+ * Возвращает URL для скачивания DOCX отчёта финальной проверки.
+ * Используется с <a href={...} download>.
+ * NB: токен в URL не передаётся, нужно использовать window.open или fetch.
+ * Простейший вариант — fetch + Blob download.
+ */
+export function getFinalSubmissionAuditReportDocxUrl(reportId: number): string {
+  return `${API_BASE_URL}/admin/final-submission/audit/reports/${reportId}/export.docx`;
+}
+
+/**
+ * Скачать DOCX отчёт финальной проверки через fetch (нужен auth header).
+ * Автоматически инициирует загрузку браузером.
+ */
+export async function downloadFinalSubmissionAuditReportDocx(reportId: number): Promise<void> {
+  const url = getFinalSubmissionAuditReportDocxUrl(reportId);
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Download failed: ${res.status} ${text}`);
+  }
+  const blob = await res.blob();
+
+  // Извлечь имя файла из Content-Disposition
+  const cd = res.headers.get("Content-Disposition") || "";
+  let filename = `final_check_report_${reportId}.docx`;
+  const match = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+  if (match) {
+    try {
+      filename = decodeURIComponent(match[1]);
+    } catch {
+      filename = match[1];
+    }
+  }
+
+  // Браузерный download
+  const blobUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(blobUrl);
+}

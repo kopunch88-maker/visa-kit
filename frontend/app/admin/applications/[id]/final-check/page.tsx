@@ -11,6 +11,7 @@ import {
   Play,
   RefreshCw,
   ShieldCheck,
+  Download,
 } from "lucide-react";
 import {
   getApplication,
@@ -23,6 +24,7 @@ import {
   runFinalSubmissionAudit,
   listFinalSubmissionAuditReports,
   getFinalSubmissionAuditReport,
+  downloadFinalSubmissionAuditReportDocx,
   FINAL_AUDIT_CATEGORY_LABELS,
   type FinalSubmissionDocument,
   type FinalSubmissionDocCategory,
@@ -68,6 +70,20 @@ export default function FinalCheckPage() {
   const [currentReport, setCurrentReport] =
     useState<FinalSubmissionAuditReportWithFindings | null>(null);
   const [startingAudit, setStartingAudit] = useState(false);
+  const [downloadingDocx, setDownloadingDocx] = useState(false);
+
+  // Pack 39.0-F: скачать DOCX
+  async function handleDownloadDocx() {
+    if (!currentReport) return;
+    setDownloadingDocx(true);
+    try {
+      await downloadFinalSubmissionAuditReportDocx(currentReport.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloadingDocx(false);
+    }
+  }
 
   // 1. Initial load: applicant_id + documents
   useEffect(() => {
@@ -276,6 +292,30 @@ export default function FinalCheckPage() {
               </p>
             </div>
           </div>
+
+          {/* Pack 39.0-F: кнопка скачивания DOCX */}
+          {currentReport &&
+            !currentReport.is_running &&
+            !currentReport.error && (
+              <button
+                onClick={handleDownloadDocx}
+                disabled={downloadingDocx}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                style={{
+                  background: "var(--color-bg-primary)",
+                  color: "var(--color-text-secondary)",
+                  border: "1px solid var(--color-border-secondary)",
+                }}
+                title="Скачать отчёт в формате Word (.docx)"
+              >
+                {downloadingDocx ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                Скачать DOCX
+              </button>
+            )}
 
           {/* Pack 39.0-E2: компактная кнопка прогона в хедере */}
           {documents.length > 0 && (
