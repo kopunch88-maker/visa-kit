@@ -675,9 +675,9 @@ def export_final_submission_audit_report_docx(
         ),
         headers={
             "Content-Disposition": (
-                f"attachment; filename=\"{filename}\"; "
-                f"filename*=UTF-8\'\'{filename_encoded}"
-            ),
+    f"attachment; filename=\"final_check_report_{report_id}.docx\"; "
+    f"filename*=UTF-8''{filename_encoded}"
+),
             "Content-Length": str(len(docx_bytes)),
         },
     )
