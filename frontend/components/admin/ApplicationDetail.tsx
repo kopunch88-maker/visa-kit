@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 // Pack 37.0-D — навигация на страницу аудита
 import { useRouter } from "next/navigation";
-import { ExternalLink, Loader2, Copy, Check, Link2, ShieldCheck } from "lucide-react";
+import { ExternalLink, Loader2, Copy, Check, Link2, ShieldCheck, FileCheck2 } from "lucide-react";
 import {
   getApplication,
   getApplicantById,
@@ -330,6 +330,24 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
               onChange={handleStatusChange}
             />
 
+            {/* Pack 39.0-E1 — финальная проверка физических документов */}
+            <button
+              onClick={() => window.open(`/admin/applications/${application.id}/final-check`, '_blank')}
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-white flex items-center justify-center gap-1.5 transition-colors"
+              style={{
+                background: "#0ea5e9",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#0284c7";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "#0ea5e9";
+              }}
+              title="Загрузка физических документов клиента и финальная проверка пакета перед подачей"
+            >
+              <FileCheck2 className="w-4 h-4" />
+              📋 Финальная проверка
+            </button>
             {/* Pack 37.0-D — кнопка ИИ-аудита пакета документов */}
             <button
               onClick={() => router.push(`/admin/applications/${application.id}/audit`)}

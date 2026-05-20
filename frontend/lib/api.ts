@@ -2879,3 +2879,221 @@ export const AUDIT_VERDICT_LABELS: Record<AuditVerdict, string> = {
   WARN: "Можно подавать с риском",
   FAIL: "Подавать нельзя",
 };
+
+
+// ============================================================================
+// Pack 39.0 — Final Submission Audit (физическая проверка перед подачей)
+// ============================================================================
+
+export type FinalSubmissionDocCategory =
+  | "passport_main"
+  | "passport_other"
+  | "apostille"
+  | "contract"
+  | "act"
+  | "invoice"
+  | "bank_statement"
+  | "cv"
+  | "npd_certificate"
+  | "diploma"
+  | "jurada_translation"
+  | "mi_t_form"
+  | "designacion"
+  | "compromiso"
+  | "declaracion"
+  | "ex17"
+  | "photo_3x4"
+  | "medical_insurance"
+  | "criminal_record"
+  | "marriage_certificate"
+  | "other";
+
+export const FINAL_DOC_CATEGORY_LABELS: Record<FinalSubmissionDocCategory, string> = {
+  passport_main: "Паспорт (главная)",
+  passport_other: "Паспорт (доп. страницы)",
+  apostille: "Апостиль",
+  contract: "Договор",
+  act: "Акт",
+  invoice: "Счёт",
+  bank_statement: "Банковская выписка",
+  cv: "Резюме",
+  npd_certificate: "Справка НПД",
+  diploma: "Диплом",
+  jurada_translation: "Перевод jurada",
+  mi_t_form: "Форма MI-T",
+  designacion: "Designación",
+  compromiso: "Compromiso",
+  declaracion: "Declaración",
+  ex17: "Форма EX-17",
+  photo_3x4: "Фото 3×4",
+  medical_insurance: "Мед. страховка",
+  criminal_record: "Справка о несудимости",
+  marriage_certificate: "Свид. о браке",
+  other: "Прочее",
+};
+
+export type FinalSubmissionDocument = {
+  id: number;
+  applicant_id: number;
+  application_id: number | null;
+  original_filename: string;
+  mime_type: string;
+  file_size_bytes: number;
+  storage_key: string;
+  original_storage_key: string | null;
+  sha256: string;
+  doc_category: FinalSubmissionDocCategory | null;
+  doc_category_confidence: string | null; // backend возвращает Decimal как строку
+  doc_category_source: "ai" | "manual" | string;
+  extraction_method: "pypdf" | "vision" | "docx2txt" | "mixed" | string | null;
+  page_count: number | null;
+  is_active: boolean;
+  previous_version_id: number | null;
+  replaced_at: string | null;
+  uploaded_at: string;
+  uploaded_by: string | null;
+  download_url: string | null;
+  original_download_url: string | null;
+};
+
+export type FinalSubmissionUploadError = {
+  filename: string;
+  error: string;
+};
+
+export type FinalSubmissionUploadResponse = {
+  uploaded: FinalSubmissionDocument[];
+  skipped_duplicates: string[];
+  errors: FinalSubmissionUploadError[];
+};
+
+/**
+ * Загрузить N файлов для финальной проверки.
+ * Поддерживает ZIP (распаковка на сервере), дедупликацию по SHA256.
+ */
+export async function uploadFinalSubmissionDocuments(
+  applicantId: number,
+  files: File[],
+  applicationId?: number | null
+): Promise<FinalSubmissionUploadResponse> {
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  if (applicationId != null) fd.append("application_id", String(applicationId));
+
+  const res = await fetch(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/upload`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Upload failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Список документов клиента. include_history=false (default) — только активные.
+ */
+export async function listFinalSubmissionDocuments(
+  applicantId: number,
+  includeHistory: boolean = false
+): Promise<FinalSubmissionDocument[]> {
+  const url = new URL(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/documents`
+  );
+  if (includeHistory) url.searchParams.set("include_history", "true");
+
+  const res = await fetch(url.toString(), {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`List failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Заменить документ новым файлом (старый -> is_active=false с previous_version_id).
+ * keep_category=true (default) копирует категорию со старого.
+ */
+export async function replaceFinalSubmissionDocument(
+  applicantId: number,
+  docId: number,
+  newFile: File,
+  keepCategory: boolean = true
+): Promise<FinalSubmissionDocument> {
+  const fd = new FormData();
+  fd.append("file", newFile);
+  fd.append("keep_category", keepCategory ? "true" : "false");
+
+  const res = await fetch(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/documents/${docId}/replace`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Replace failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Удалить документ. hard=false (default) — soft delete (is_active=false).
+ * hard=true — permanent delete + удаление из R2.
+ */
+export async function deleteFinalSubmissionDocument(
+  applicantId: number,
+  docId: number,
+  hard: boolean = false
+): Promise<{ deleted: boolean; hard: boolean; doc_id: number }> {
+  const url = new URL(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/documents/${docId}`
+  );
+  if (hard) url.searchParams.set("hard", "true");
+
+  const res = await fetch(url.toString(), {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Delete failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+/**
+ * Ручная коррекция категории документа.
+ * doc_category_source автоматически становится 'manual'.
+ */
+export async function updateFinalSubmissionDocumentCategory(
+  applicantId: number,
+  docId: number,
+  category: FinalSubmissionDocCategory
+): Promise<FinalSubmissionDocument> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/applicants/${applicantId}/final-submission/documents/${docId}/category`,
+    {
+      method: "PATCH",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ doc_category: category }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Update category failed: ${res.status} ${text}`);
+  }
+  return res.json();
+}
