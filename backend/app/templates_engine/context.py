@@ -1219,6 +1219,290 @@ def _build_cv_work_history(applicant, application, company, position) -> list:
     return [dn_record] + fixed_base
 
 
+
+
+# ============================================================
+# Pack 40.0: Helper'ы для Tech Opinion (Техническое заключение)
+# ============================================================
+
+_DIRECTOR_POSITION_NOMINATIVE_RU = {
+    "Генерального директора": "Генеральный директор",
+    "генерального директора": "Генеральный директор",
+    "Директора": "Директор",
+    "директора": "Директор",
+    "Исполнительного директора": "Исполнительный директор",
+    "исполнительного директора": "Исполнительный директор",
+    "Управляющего": "Управляющий",
+    "управляющего": "Управляющий",
+    "Президента": "Президент",
+    "президента": "Президент",
+}
+
+
+_DIRECTOR_POSITION_ES = {
+    "Генерального директора": "Director General",
+    "генерального директора": "Director General",
+    "Генеральный директор": "Director General",
+    "генеральный директор": "Director General",
+    "Директора": "Director",
+    "директора": "Director",
+    "Директор": "Director",
+    "директор": "Director",
+    "Исполнительного директора": "Director Ejecutivo",
+    "Исполнительный директор": "Director Ejecutivo",
+    "Управляющего": "Gerente",
+    "Управляющий": "Gerente",
+    "Президента": "Presidente",
+    "Президент": "Presidente",
+}
+
+
+_RU_CITY_TO_ES = {
+    "Москва": "Moscú",
+    "москва": "Moscú",
+    "г. Москва": "Moscú",
+    "Санкт-Петербург": "San Petersburgo",
+    "Санкт-петербург": "San Petersburgo",
+    "г. Санкт-Петербург": "San Petersburgo",
+    "Новосибирск": "Novosibirsk",
+    "Екатеринбург": "Ekaterimburgo",
+    "Казань": "Kazán",
+    "Нижний Новгород": "Nizhni Nóvgorod",
+    "Челябинск": "Cheliábinsk",
+    "Самара": "Samara",
+    "Омск": "Omsk",
+    "Ростов-на-Дону": "Rostov del Don",
+    "Уфа": "Ufá",
+    "Красноярск": "Krasnoyarsk",
+    "Воронеж": "Vorónezh",
+    "Пермь": "Perm",
+    "Волгоград": "Volgogrado",
+    "Краснодар": "Krasnodar",
+    "Саратов": "Sarátov",
+    "Тюмень": "Tiumén",
+    "Тольятти": "Tolyatti",
+    "Ижевск": "Izhevsk",
+    "Барнаул": "Barnaúl",
+    "Ульяновск": "Uliánovsk",
+    "Иркутск": "Irkutsk",
+    "Хабаровск": "Jabárovsk",
+    "Ярославль": "Yaroslavl",
+    "Владивосток": "Vladivostok",
+    "Махачкала": "Majachkalá",
+    "Томск": "Tomsk",
+    "Оренбург": "Orenburgo",
+    "Кемерово": "Kémerovo",
+    "Новокузнецк": "Novokuznetsk",
+    "Рязань": "Riazán",
+    "Астрахань": "Astracán",
+    "Набережные Челны": "Náberezhnye Chelny",
+    "Пенза": "Penza",
+    "Липецк": "Lipetsk",
+    "Тула": "Tula",
+    "Киров": "Kírov",
+    "Чебоксары": "Cheboksary",
+    "Калининград": "Kaliningrado",
+    "Брянск": "Briansk",
+    "Курск": "Kursk",
+    "Иваново": "Ivánovo",
+    "Магнитогорск": "Magnitogorsk",
+    "Тверь": "Tver",
+    "Ставрополь": "Stávropol",
+    "Симферополь": "Simferópol",
+    "Белгород": "Bélgorod",
+    "Архангельск": "Arjángelsk",
+    "Владимир": "Vladímir",
+    "Сочи": "Sochi",
+    "Курган": "Kurgán",
+    "Смоленск": "Smolensko",
+    "Калуга": "Kaluga",
+    "Чита": "Chita",
+    "Орёл": "Oriol",
+    "Волжский": "Volzhski",
+    "Череповец": "Cherepovets",
+    "Владикавказ": "Vladikavkaz",
+    "Мурманск": "Múrmansk",
+    "Сургут": "Surgut",
+    "Вологда": "Vólogda",
+    "Тамбов": "Tambov",
+    "Стерлитамак": "Sterlitamak",
+    "Грозный": "Grozni",
+    "Якутск": "Yakutsk",
+    "Кострома": "Kostromá",
+    "Комсомольск-на-Амуре": "Komsomolsk del Amur",
+    "Петрозаводск": "Petrozavodsk",
+    "Таганрог": "Taganrog",
+    "Нижневартовск": "Nizhnevartovsk",
+    "Йошкар-Ола": "Yoshkar-Olá",
+    "Братск": "Bratsk",
+    "Новороссийск": "Novorossiisk",
+    "Дзержинск": "Dzerzhinsk",
+    "Шахты": "Shajty",
+    "Нальчик": "Nálchik",
+    "Орск": "Orsk",
+    "Сыктывкар": "Syktyvkar",
+    "Нижнекамск": "Nizhnekamsk",
+    "Ангарск": "Angarsk",
+    "Балашиха": "Balashija",
+    "Благовещенск": "Blagovéshchensk",
+    "Прокопьевск": "Prokópievsk",
+    "Химки": "Jimki",
+    "Псков": "Pskov",
+    "Бийск": "Biisk",
+    "Энгельс": "Engels",
+    "Рыбинск": "Rybinsk",
+    "Балаково": "Balakovo",
+    "Северодвинск": "Severodvinsk",
+    "Армавир": "Armavir",
+    "Подольск": "Podolsk",
+    "Королёв": "Koroliov",
+    "Сызрань": "Syzran",
+    "Норильск": "Norilsk",
+    "Златоуст": "Zlatoust",
+    "Каменск-Уральский": "Kámensk-Uralski",
+    "Мытищи": "Mytíshchi",
+    "Люберцы": "Liubertsy",
+    "Волгодонск": "Volgodonsk",
+    "Новочеркасск": "Novocherkassk",
+    "Абакан": "Abakán",
+    "Находка": "Najodka",
+    "Уссурийск": "Ussuriisk",
+    "Березники": "Berezniki",
+    "Салават": "Salavat",
+    "Электросталь": "Elektrostal",
+    "Миасс": "Miass",
+    "Рубцовск": "Rubtsovsk",
+    "Альметьевск": "Almétievsk",
+    "Ковров": "Kovrov",
+    "Коломна": "Kolomna",
+    "Майкоп": "Maikop",
+    "Пятигорск": "Piatigorsk",
+    "Одинцово": "Odintsovo",
+    "Копейск": "Kopeisk",
+    "Хасавюрт": "Jasaviurt",
+    "Новомосковск": "Novomoskovsk",
+    "Кисловодск": "Kislovodsk",
+    "Серпухов": "Serpújov",
+    "Первоуральск": "Pervouralsk",
+    "Нефтеюганск": "Neftéyugansk",
+    "Черкесск": "Cherkessk",
+    "Орехово-Зуево": "Orejovo-Zuyevo",
+    "Дербент": "Derbent",
+    "Камышин": "Kamyshin",
+    "Невинномысск": "Nevinnomyssk",
+    "Красногорск": "Krasnogorsk",
+    "Муром": "Murom",
+    "Батайск": "Bataisk",
+    "Новочебоксарск": "Novocheboksarsk",
+    "Тобольск": "Tobolsk",
+    "Бердск": "Berdsk",
+    "Каспийск": "Kaspiisk",
+    "Назрань": "Nazran",
+    "Артём": "Artiom",
+    "Ачинск": "Achinsk",
+    "Ноябрьск": "Noyabrsk",
+    "Северск": "Seversk",
+    "Дербент": "Derbent",
+}
+
+
+_RU_MONTH_TO_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+    5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+    9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+
+
+def _to_director_position_nominative_ru(pos_ru: str) -> str:
+    """"Генерального директора" → "Генеральный директор". Если нет в словаре — вернёт как есть."""
+    if not pos_ru:
+        return ""
+    return _DIRECTOR_POSITION_NOMINATIVE_RU.get(pos_ru.strip(), pos_ru)
+
+
+def _to_director_position_es(pos_ru: str) -> str:
+    """"Генерального директора" → "Director General". Если нет — fallback на "Director General"."""
+    if not pos_ru:
+        return "Director General"
+    return _DIRECTOR_POSITION_ES.get(pos_ru.strip(), "Director General")
+
+
+def _ru_city_to_es(ru_city: str) -> str:
+    """"Москва" → "Moscú". Если нет в словаре — вернёт исходное (транслит сделает руками либо латиницей)."""
+    if not ru_city:
+        return ""
+    s = ru_city.strip()
+    # Снимаем префикс "г. "
+    if s.startswith("г. "):
+        s = s[3:]
+    return _RU_CITY_TO_ES.get(s, s)
+
+
+def _fmt_date_es(d) -> str:
+    """"15.01.2025" → "15 de enero de 2025". Принимает date|None, возвращает str."""
+    if d is None:
+        return ""
+    try:
+        return f"{d.day} de {_RU_MONTH_TO_ES[d.month]} de {d.year}"
+    except Exception:
+        return str(d)
+
+
+def _short_latin_from_full(full_latin: str) -> str:
+    """"John Robert Smith" → "J. Smith". "Smith" → "Smith"."""
+    if not full_latin:
+        return ""
+    parts = full_latin.strip().split()
+    if len(parts) == 0:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    # Берём первую букву от первого слова + последнее слово
+    return f"{parts[0][0]}. {parts[-1]}"
+
+
+def _build_applicant_honorifics(applicant) -> dict:
+    """
+    Возвращает dict с honorific-формами по полу applicant.gender ('M'/'F'/None).
+    Если поля gender нет в модели — пробуем определить по middle_name_native (отчество на -ич/-ыч → мужской).
+    """
+    gender = getattr(applicant, "gender", None)
+    if not gender:
+        # Эвристика по отчеству
+        mn = (getattr(applicant, "middle_name_native", "") or "").strip().lower()
+        if mn.endswith(("вич", "ьич", "ыч", "ич")):
+            gender = "M"
+        elif mn.endswith(("вна", "ична", "инична")):
+            gender = "F"
+        else:
+            gender = "M"  # fallback
+
+    if gender == "F":
+        return {
+            "honorific_ru": "Гражданка",
+            "honorific_ru_genitive": "гражданки",
+            "honorific_ru_dative": "гражданке",
+            "honorific_ru_instrumental": "гражданкой",
+            "honorific_es": "la Sra.",
+        }
+    # M (default)
+    return {
+        "honorific_ru": "Гражданин",
+        "honorific_ru_genitive": "гражданина",
+        "honorific_ru_dative": "гражданину",
+        "honorific_ru_instrumental": "гражданином",
+        "honorific_es": "el Sr.",
+    }
+
+
+def _full_name_latin_combined(applicant) -> str:
+    """"first_name_latin + ' ' + last_name_latin" с защитой от None."""
+    fn = (getattr(applicant, "first_name_latin", "") or "").strip()
+    ln = (getattr(applicant, "last_name_latin", "") or "").strip()
+    return (fn + " " + ln).strip()
+
+
+
 def build_context(application: Application, session: Session) -> dict[str, Any]:
     applicant = session.get(Applicant, application.applicant_id) if application.applicant_id else None
     company = session.get(Company, application.company_id) if application.company_id else None
@@ -1283,6 +1567,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "education": applicant.education or [],
             "work_history": _build_cv_work_history(applicant, application, company, position),
             "languages": applicant.languages or [],
+            # === Pack 40.0: tech_opinion ===
+            "full_name_latin": _full_name_latin_combined(applicant),
+            **_build_applicant_honorifics(applicant),
         },
 
         "company": {
@@ -1305,6 +1592,12 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "bank_account": company.bank_account,
             "bank_bic": company.bank_bic,
             "bank_correspondent_account": company.bank_correspondent_account or "",
+            # === Pack 40.0: tech_opinion ===
+            "director_position_ru_nominative": _to_director_position_nominative_ru(company.director_position_ru),
+            "director_position_es": _to_director_position_es(company.director_position_ru),
+            "director_full_name_latin_initials": _short_latin_from_full(company.director_full_name_latin or ""),
+            "legal_address_es": company.legal_address,  # TODO: при необходимости — отдельное поле legal_address_es в модели Company
+            "bank_name_es": company.bank_name,  # TODO: при необходимости — отдельное поле bank_name_es в модели Company
         },
 
         "position": {
@@ -1312,6 +1605,19 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "title_ru_genitive": position.title_ru_genitive or position.title_ru,
             "title_es": position.title_es,
             "duties": position.duties,
+            # === Pack 40.0: tech_opinion ===
+            "international_analog_ru": position.international_analog_ru or "",
+            "international_analog_es": position.international_analog_es or "",
+            "tech_opinion_description_ru": position.tech_opinion_description_ru or "",
+            "tech_opinion_description_es": position.tech_opinion_description_es or "",
+            "tech_opinion_tools_ru": position.tech_opinion_tools_ru or [],
+            "tech_opinion_tools_es": position.tech_opinion_tools_es or [],
+            "tech_opinion_steps_ru": position.tech_opinion_steps_ru or [],
+            "tech_opinion_steps_es": position.tech_opinion_steps_es or [],
+            "tech_opinion_grounds_ru": position.tech_opinion_grounds_ru or [],
+            "tech_opinion_grounds_es": position.tech_opinion_grounds_es or [],
+            "tech_opinion_contract_clause_ru": position.tech_opinion_contract_clause_ru or "",
+            "tech_opinion_contract_clause_es": position.tech_opinion_contract_clause_es or "",
         },
 
         "contract": {
@@ -1322,6 +1628,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "salary_rub": application.salary_rub,
             "salary_rub_words": _money_to_words_ru(application.salary_rub),
             "sign_date_str": _format_date_ru(application.contract_sign_date),
+            # === Pack 40.0: tech_opinion ===
+            "sign_date_es": _fmt_date_es(application.contract_sign_date),
         },
 
         "monthly_documents": monthly_docs,
@@ -1338,6 +1646,19 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "letter": {
             "number": application.employer_letter_number or "",
             "date": application.employer_letter_date,
+        },
+
+        # === Pack 40.0: tech_opinion — application-level поля ===
+        "application": {
+            "id": application.id,
+            "reference": application.reference,
+            "contract_number": application.contract_number or "",
+            "outgoing_number": application.outgoing_number or "",
+            "outgoing_date_str": _format_date_ru(application.outgoing_date) if application.outgoing_date else "",
+            "outgoing_date_es": _fmt_date_es(application.outgoing_date),
+            "sign_city_ru": application.contract_sign_city or "",
+            "sign_city_es": _ru_city_to_es(application.contract_sign_city or ""),
+            "tech_opinion_override_text": application.tech_opinion_override_text or "",
         },
 
         "representative": {

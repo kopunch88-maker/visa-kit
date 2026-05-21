@@ -83,6 +83,56 @@ class Position(TimestampMixin, table=True):
 
     is_active: bool = Field(default=True)
 
+    # === Pack 40.0: Tech Opinion (Техническое заключение) ===
+    international_analog_ru: Optional[str] = Field(
+        default=None, max_length=255,
+        description="Международный аналог должности (для §1 заключения): 'quantity surveyor'",
+    )
+    international_analog_es: Optional[str] = Field(
+        default=None, max_length=255,
+        description="Международный аналог на испанском: 'quantity surveyor'",
+    )
+    tech_opinion_description_ru: Optional[str] = Field(
+        default=None,
+        description="§1 — длинное описание деятельности (RU)",
+    )
+    tech_opinion_description_es: Optional[str] = Field(
+        default=None,
+        description="§1 — длинное описание деятельности (ES)",
+    )
+    tech_opinion_tools_ru: Optional[List[dict]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§2 — список инструментов: [{name, purpose}, ...] (RU)",
+    )
+    tech_opinion_tools_es: Optional[List[dict]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§2 — список инструментов (ES)",
+    )
+    tech_opinion_steps_ru: Optional[List[dict]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§3 — пошаговое описание процесса: [{title, body}, ...] (RU)",
+    )
+    tech_opinion_steps_es: Optional[List[dict]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§3 — пошаговое описание процесса (ES)",
+    )
+    tech_opinion_grounds_ru: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§4 — основания, по которым физическое присутствие не требуется (RU)",
+    )
+    tech_opinion_grounds_es: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON),
+        description="§4 — основания (ES)",
+    )
+    tech_opinion_contract_clause_ru: Optional[str] = Field(
+        default=None,
+        description="§4 — цитата из договора о дистанционном характере (RU)",
+    )
+    tech_opinion_contract_clause_es: Optional[str] = Field(
+        default=None,
+        description="§4 — цитата из договора (ES)",
+    )
+
 
 # === API schemas ===
 
@@ -96,6 +146,19 @@ class PositionCreate(SQLModel):
     level: Optional[int] = None                 # Pack 20.0
     tags: List[str] = Field(default_factory=list)
     profile_description: str = ""
+    # Pack 40.0: tech_opinion
+    international_analog_ru: Optional[str] = None
+    international_analog_es: Optional[str] = None
+    tech_opinion_description_ru: Optional[str] = None
+    tech_opinion_description_es: Optional[str] = None
+    tech_opinion_tools_ru: Optional[List[dict]] = None
+    tech_opinion_tools_es: Optional[List[dict]] = None
+    tech_opinion_steps_ru: Optional[List[dict]] = None
+    tech_opinion_steps_es: Optional[List[dict]] = None
+    tech_opinion_grounds_ru: Optional[List[str]] = None
+    tech_opinion_grounds_es: Optional[List[str]] = None
+    tech_opinion_contract_clause_ru: Optional[str] = None
+    tech_opinion_contract_clause_es: Optional[str] = None
 
 
 class PositionUpdate(SQLModel):
@@ -109,6 +172,19 @@ class PositionUpdate(SQLModel):
     tags: Optional[List[str]] = None
     profile_description: Optional[str] = None
     is_active: Optional[bool] = None
+    # Pack 40.0: tech_opinion
+    international_analog_ru: Optional[str] = None
+    international_analog_es: Optional[str] = None
+    tech_opinion_description_ru: Optional[str] = None
+    tech_opinion_description_es: Optional[str] = None
+    tech_opinion_tools_ru: Optional[List[dict]] = None
+    tech_opinion_tools_es: Optional[List[dict]] = None
+    tech_opinion_steps_ru: Optional[List[dict]] = None
+    tech_opinion_steps_es: Optional[List[dict]] = None
+    tech_opinion_grounds_ru: Optional[List[str]] = None
+    tech_opinion_grounds_es: Optional[List[str]] = None
+    tech_opinion_contract_clause_ru: Optional[str] = None
+    tech_opinion_contract_clause_es: Optional[str] = None
 
 
 class PositionRead(SQLModel):
@@ -125,3 +201,16 @@ class PositionRead(SQLModel):
     is_active: bool
 
     application_count: Optional[int] = None
+    # Pack 40.0: tech_opinion
+    international_analog_ru: Optional[str] = None
+    international_analog_es: Optional[str] = None
+    tech_opinion_description_ru: Optional[str] = None
+    tech_opinion_description_es: Optional[str] = None
+    tech_opinion_tools_ru: Optional[List[dict]] = None
+    tech_opinion_tools_es: Optional[List[dict]] = None
+    tech_opinion_steps_ru: Optional[List[dict]] = None
+    tech_opinion_steps_es: Optional[List[dict]] = None
+    tech_opinion_grounds_ru: Optional[List[str]] = None
+    tech_opinion_grounds_es: Optional[List[str]] = None
+    tech_opinion_contract_clause_ru: Optional[str] = None
+    tech_opinion_contract_clause_es: Optional[str] = None

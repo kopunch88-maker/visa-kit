@@ -116,6 +116,11 @@ class Application(TimestampMixin, table=True):
     # Pack 27.0 — soft-delete с автоудалением через 7 дней
     deleted_at: Optional[datetime] = Field(default=None, index=True)
 
+    # === Pack 40.0: Tech Opinion (Техническое заключение) ===
+    outgoing_number: Optional[str] = Field(default=None, max_length=50, description="Исх. № документа для tech_opinion")
+    outgoing_date: Optional[date] = Field(default=None, description="Дата исх. документа")
+    tech_opinion_override_text: Optional[str] = Field(default=None, description="Override §1-§4 для конкретной заявки")
+
     applicant: Optional["Applicant"] = Relationship(back_populates="applications")
     family_members: List["FamilyMember"] = Relationship(back_populates="application")
     previous_residences: List["PreviousResidence"] = Relationship(back_populates="application")

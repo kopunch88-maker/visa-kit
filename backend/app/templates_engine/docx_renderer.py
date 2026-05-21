@@ -333,6 +333,13 @@ def render_cv(application: Application, session: Session) -> bytes:
     return _render("cv_template.docx", context)
 
 
+def render_tech_opinion(application: Application, session: Session) -> bytes:
+    """Pack 40.0 — Техническое заключение о дистанционном характере деятельности."""
+    context = build_context(application, session)
+    return _render("tech_opinion_template.docx", context)
+
+
+
 def render_bank_statement(application: Application, session: Session) -> bytes:
     """
     Двухфазный рендер:
