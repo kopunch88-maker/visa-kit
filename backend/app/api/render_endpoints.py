@@ -17,6 +17,7 @@ from app.templates_engine import (
     render_npd_certificate,  # Pack 18.3
     render_npd_certificate_lkn,  # Pack 18.3.3
     render_apostille,  # Pack 18.9
+    render_tech_opinion,  # Pack 40.0-G
 )
 from .dependencies import require_manager
 
@@ -178,6 +179,10 @@ def render_single_document(
             from app.templates_engine import render_bank_statement
             content = render_bank_statement(application, session)
             filename = "Выписка_по_счету.docx"
+        elif document_type == "tech_opinion":
+            # Pack 40.0-G — Техническое заключение
+            content = render_tech_opinion(application, session)
+            filename = "Техническое_заключение.docx"
         else:
             raise HTTPException(400, f"Unknown document type: {document_type}")
     except FileNotFoundError as e:

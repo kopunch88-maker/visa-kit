@@ -37,6 +37,7 @@ from app.templates_engine import (
     render_npd_certificate,
     render_npd_certificate_lkn,
     render_apostille,
+    render_tech_opinion,  # Pack 40.0-G
 )
 from app.pdf_forms_engine import build_pdf_forms
 
@@ -104,6 +105,9 @@ def build_full_package(
          render_npd_certificate_lkn, (application, session)),
         ("16_Апостиль.docx", "apostille",
          render_apostille, (application, session)),
+        # Pack 40.0-G — Техническое заключение
+        ("17_Техническое_заключение.docx", "tech_opinion",
+         render_tech_opinion, (application, session)),
     ])
 
     # Корректируем под payments_period_months

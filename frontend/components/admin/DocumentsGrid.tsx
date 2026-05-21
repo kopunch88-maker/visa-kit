@@ -39,6 +39,8 @@ const DOCUMENTS: DocItem[] = [
   { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx" },
   { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx" },
   { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },
+  // Pack 40.0-G — Техническое заключение
+  { id: "tech_opinion",        filename: "17_Техническое_заключение.docx", kind: "docx" },
 ];
 
 export function DocumentsGrid({ applicationId, companyId }: Props) {

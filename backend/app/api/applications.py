@@ -38,6 +38,7 @@ from app.templates_engine import (
     render_npd_certificate, 
     render_npd_certificate_lkn,  # Pack 18.3.3
     render_apostille,  # Pack 18.9
+    render_tech_opinion,  # Pack 40.0-G
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -537,6 +538,8 @@ _DOWNLOAD_FILES = {
     "npd_certificate_lkn": {"name": "15b_Справка_НПД_ЛКН.docx", "kind": "docx", "fn": render_npd_certificate_lkn, "args": ()},
     # Pack 18.9 — апостиль к справке НПД
     "apostille":           {"name": "16_Апостиль.docx",         "kind": "docx", "fn": render_apostille,         "args": ()},
+    # Pack 40.0-G — Техническое заключение
+    "tech_opinion":        {"name": "17_Техническое_заключение.docx", "kind": "docx", "fn": render_tech_opinion, "args": ()},
 }
 
 

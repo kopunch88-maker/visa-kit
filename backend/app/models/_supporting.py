@@ -97,6 +97,7 @@ class DocumentType(str, Enum):
     EMPLOYER_LETTER = "employer_letter"
     CV = "cv"
     BANK_STATEMENT = "bank_statement"
+    TECH_OPINION = "tech_opinion"  # Pack 40.0-G
     MIT_FORM = "mit_form"
     MIF_FORM = "mif_form"
     DESIGNACION = "designacion"

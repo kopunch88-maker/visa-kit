@@ -1524,6 +1524,35 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     # Парсим паспорт по гражданству
     passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
 
+    # === Pack 40.0-G: outgoing autogen (раньше был в API endpoint) ===
+    if not application.outgoing_number or not application.outgoing_date:
+        import re as _re
+        from datetime import date as _date
+        from sqlmodel import select as _select
+        if not application.outgoing_number:
+            _stmt = _select(Application.employer_letter_number).where(
+                Application.company_id == application.company_id,
+                Application.employer_letter_number.is_not(None),
+            )
+            _max_n = 0
+            for _raw in session.exec(_stmt).all():
+                if _raw is None:
+                    continue
+                _m = _re.search(r"(\d+)", str(_raw))
+                if _m:
+                    try:
+                        _n = int(_m.group(1))
+                        if _n > _max_n:
+                            _max_n = _n
+                    except ValueError:
+                        pass
+            application.outgoing_number = f"{_max_n + 1}/{_date.today().year}"
+        if not application.outgoing_date:
+            application.outgoing_date = _date.today()
+        session.add(application)
+        session.commit()
+        session.refresh(application)
+
     return {
         "applicant": {
             "full_name_native": _full_name_native(applicant),
