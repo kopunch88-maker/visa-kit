@@ -223,6 +223,19 @@ export type PositionResponse = {
   description_ru?: string;
   is_active: boolean;
   application_count?: number;
+  // Pack 40.0 / 41.0: tech_opinion поля
+  international_analog_ru?: string | null;
+  international_analog_es?: string | null;
+  tech_opinion_description_ru?: string | null;
+  tech_opinion_description_es?: string | null;
+  tech_opinion_tools_ru?: Array<{ name: string; purpose: string }> | null;
+  tech_opinion_tools_es?: Array<{ name: string; purpose: string }> | null;
+  tech_opinion_steps_ru?: Array<{ title: string; body: string }> | null;
+  tech_opinion_steps_es?: Array<{ title: string; body: string }> | null;
+  tech_opinion_grounds_ru?: string[] | null;
+  tech_opinion_grounds_es?: string[] | null;
+  tech_opinion_contract_clause_ru?: string | null;
+  tech_opinion_contract_clause_es?: string | null;
 };
 
 export type RepresentativeResponse = {

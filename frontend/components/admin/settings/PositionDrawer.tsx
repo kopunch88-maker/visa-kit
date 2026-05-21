@@ -9,6 +9,12 @@ import {
   createPosition,
   updatePosition,
 } from "@/lib/api";
+// Pack 41.0 — Tech Opinion editing
+import {
+  TechOpinionSection,
+  TechOpinionState,
+  EMPTY_TECH_OPINION,
+} from "./TechOpinionSection";
 
 // Pack 20.1: метки уровней
 const LEVEL_OPTIONS: { value: number; label: string; description: string }[] = [
@@ -50,6 +56,8 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
   const [dutiesText, setDutiesText] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [profileDescription, setProfileDescription] = useState("");
+  // Pack 41.0 — Tech Opinion state (12 полей в одном объекте)
+  const [techOpinion, setTechOpinion] = useState<TechOpinionState>(EMPTY_TECH_OPINION);
 
   // Pack 20.1: извлекаем уникальные specialty из уже загруженных Position'ов
   const specialtyOptions = useMemo<SpecialtyOption[]>(() => {
@@ -87,6 +95,22 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
         setDutiesText((data.duties || []).join("\n"));
         setTagsText((data.tags || []).join(", "));
         setProfileDescription(data.profile_description || "");
+        // Pack 41.0 — загружаем tech_opinion (поля могут отсутствовать)
+        const d: any = data;
+        setTechOpinion({
+          international_analog_ru: d.international_analog_ru || "",
+          international_analog_es: d.international_analog_es || "",
+          description_ru: d.tech_opinion_description_ru || "",
+          description_es: d.tech_opinion_description_es || "",
+          tools_ru: d.tech_opinion_tools_ru || [],
+          tools_es: d.tech_opinion_tools_es || [],
+          steps_ru: d.tech_opinion_steps_ru || [],
+          steps_es: d.tech_opinion_steps_es || [],
+          grounds_ru: d.tech_opinion_grounds_ru || [],
+          grounds_es: d.tech_opinion_grounds_es || [],
+          contract_clause_ru: d.tech_opinion_contract_clause_ru || "",
+          contract_clause_es: d.tech_opinion_contract_clause_es || "",
+        });
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -117,6 +141,19 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
         duties,
         tags,
         profile_description: profileDescription,
+        // Pack 41.0 — tech_opinion поля (12 шт.)
+        international_analog_ru: techOpinion.international_analog_ru || null,
+        international_analog_es: techOpinion.international_analog_es || null,
+        tech_opinion_description_ru: techOpinion.description_ru || null,
+        tech_opinion_description_es: techOpinion.description_es || null,
+        tech_opinion_tools_ru: techOpinion.tools_ru.length ? techOpinion.tools_ru : null,
+        tech_opinion_tools_es: techOpinion.tools_es.length ? techOpinion.tools_es : null,
+        tech_opinion_steps_ru: techOpinion.steps_ru.length ? techOpinion.steps_ru : null,
+        tech_opinion_steps_es: techOpinion.steps_es.length ? techOpinion.steps_es : null,
+        tech_opinion_grounds_ru: techOpinion.grounds_ru.length ? techOpinion.grounds_ru : null,
+        tech_opinion_grounds_es: techOpinion.grounds_es.length ? techOpinion.grounds_es : null,
+        tech_opinion_contract_clause_ru: techOpinion.contract_clause_ru || null,
+        tech_opinion_contract_clause_es: techOpinion.contract_clause_es || null,
       };
       if (isNew) {
         await createPosition(payload);
@@ -325,6 +362,12 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
                   style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
                 />
               </div>
+
+              {/* Pack 41.0 — Техническое заключение */}
+              <TechOpinionSection
+                value={techOpinion}
+                onChange={setTechOpinion}
+              />
 
               {error && (
                 <div className="bg-danger text-danger text-sm p-3 rounded-md flex items-start gap-2">
