@@ -190,10 +190,16 @@ def render_single_document(
     except ValueError as e:
         raise HTTPException(422, str(e))
 
+    # Pack 40.0-G fix3: RFC 5987 для кириллических filename (latin-1 codec
+    # в HTTP-хедерах не может закодировать русские буквы → 500 UnicodeEncodeError).
+    # filename=<ASCII fallback> + filename*=UTF-8''<percent-encoded> — стандарт.
+    import urllib.parse as _urlparse
+    _ascii_fallback = _urlparse.quote(filename).encode("ascii", "ignore").decode("ascii") or "document.docx"
+    _utf8_quoted = _urlparse.quote(filename, safe="")
     return StreamingResponse(
         io.BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f"attachment; filename={_ascii_fallback}; filename*=UTF-8''{_utf8_quoted}",
         },
     )
