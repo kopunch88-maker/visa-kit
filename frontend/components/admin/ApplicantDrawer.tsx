@@ -28,6 +28,8 @@ import {
   COUNTRY_OPTIONS as ALL_COUNTRIES,
 } from "@/lib/api";
 import { InnSuggestionModal } from "./InnSuggestionModal";
+// Pack 41.0-D — секция управления passports[]
+import { PassportsSection } from "./PassportsSection";
 import { RefineInnDateModal } from "./RefineInnDateModal";
 
 interface Props {
@@ -85,16 +87,14 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [nationality, setNationality] = useState(applicant.nationality || "");
   const [home_country, setHomeCountry] = useState(applicant.home_country || "");
   const [home_address, setHomeAddress] = useState(applicant.home_address || "");
-  const [passport_number, setPassportNumber] = useState(applicant.passport_number || "");
-  const [passport_issue_date, setPassportIssueDate] = useState(applicant.passport_issue_date || "");
-  // Pack 37.3 — passport_expiry_date для проверки срока действия паспорта
-  const [passport_expiry_date, setPassportExpiryDate] = useState(applicant.passport_expiry_date || "");
-  const [passport_issuer, setPassportIssuer] = useState(applicant.passport_issuer || "");
-  // Pack 35.3 — русифицированный вариант + флаг загрузки при кнопке генерации
-  const [passport_issuer_ru, setPassportIssuerRu] = useState(
-    (applicant as any).passport_issuer_ru || ""
+// Pack 41.0-D — мультипаспорт: passports[] + passport_id_for_ru_docs
+  const [passports, setPassports] = useState(
+    Array.isArray((applicant as any).passports) ? (applicant as any).passports : []
   );
-  const [resolvingIssuerRu, setResolvingIssuerRu] = useState(false);
+  const [passportIdForRuDocs, setPassportIdForRuDocs] = useState(
+    (applicant as any).passport_id_for_ru_docs || null
+  );
+ 
   const [birth_date, setBirthDate] = useState(applicant.birth_date || "");
   const [birth_place_latin, setBirthPlaceLatin] = useState(applicant.birth_place_latin || "");
   // Pack 18.10 — страна рождения (отдельно от гражданства)
@@ -353,24 +353,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   }
 
   // Pack 35.3 — кнопка генерации рядом с «Кем выдан (рус., для договора)»
-  async function handleResolvePassportIssuerRu() {
-    setResolvingIssuerRu(true);
-    setError(null);
-    try {
-      const result = await resolvePassportIssuerRu(passport_issuer, nationality);
-      if (result.resolved) {
-        setPassportIssuerRu(result.resolved);
-      } else {
-        setError(
-          "Поле «Кем выдан» пустое — нечего резолвить. Заполни сначала английский вариант."
-        );
-      }
-    } catch (e) {
-      setError(`Не удалось получить русский вариант: ${(e as Error).message}`);
-    } finally {
-      setResolvingIssuerRu(false);
-    }
-  }
+  
 
     async function handleSave() {
     setError(null);
@@ -409,12 +392,9 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         nationality,
         home_country,
         home_address: home_address.trim(),
-        passport_number: passport_number.trim(),
-        passport_issue_date,
-        passport_expiry_date,  // Pack 37.3
-        passport_issuer: passport_issuer.trim(),
-        // Pack 35.3.1: русифицированный вариант органа выдачи паспорта
-        passport_issuer_ru: passport_issuer_ru.trim() || null,
+        // Pack 41.0-D — passports[] вместо 5 скалярных полей
+        passports: passports,
+        passport_id_for_ru_docs: passportIdForRuDocs,
         birth_date,
         birth_place_latin: birth_place_latin.trim(),
         birth_country: birth_country || null,  // Pack 18.10
@@ -592,49 +572,18 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <FieldSelect label="Семейное положение" value={marital_status} onChange={setMaritalStatus} options={MARITAL_OPTIONS} />
           </Section>
 
-          <Section title="Паспорт">
-            <Field label="Номер паспорта" value={passport_number} onChange={setPassportNumber}
-              placeholder="U12345678 или 1234 567890" />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="Дата выдачи" value={passport_issue_date} onChange={setPassportIssueDate}
-                placeholder="2020-05-15" type="date" />
-              {/* Pack 37.3 — дата окончания действия паспорта */}
-              <Field label="Дата окончания" value={passport_expiry_date} onChange={setPassportExpiryDate}
-                placeholder="2030-05-14" type="date" />
-              <Field label="Дата рождения" value={birth_date} onChange={setBirthDate}
-                placeholder="1972-01-01" type="date" />
-            </div>
-            <Field label="Кем выдан" value={passport_issuer} onChange={setPassportIssuer}
-              placeholder="Ministry of Internal Affairs / ГУ МВД..." />
-            {/* Pack 35.2 + Pack 35.3: русифицированный вариант для договоров/актов/счетов */}
-            <Field
-              label="Кем выдан (рус., для договора)"
-              value={passport_issuer_ru}
-              onChange={setPassportIssuerRu}
-              placeholder="МВД Азербайджана / посольством КНР в России"
-              actionButton={
-                <button
-                  type="button"
-                  onClick={handleResolvePassportIssuerRu}
-                  disabled={resolvingIssuerRu}
-                  className="text-xs px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
-                  style={{ background: "var(--color-accent)" }}
-                  title="Сгенерировать на основе английского варианта и гражданства"
-                >
-                  {resolvingIssuerRu ? (
-                    <>
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      Генерация...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3 h-3" />
-                      Сгенерировать
-                    </>
-                  )}
-                </button>
-              }
-            />
+          {/* Pack 41.0-D — мультипаспортная секция */}
+          <PassportsSection
+            passports={passports}
+            setPassports={setPassports}
+            passportIdForRuDocs={passportIdForRuDocs}
+            setPassportIdForRuDocs={setPassportIdForRuDocs}
+            nationality={nationality}
+          />
+
+          <Section title="Место и дата рождения">
+            <Field label="Дата рождения" value={birth_date} onChange={setBirthDate}
+              placeholder="1972-01-01" type="date" />
             <Field label="Место рождения" value={birth_place_latin} onChange={setBirthPlaceLatin}
               placeholder="EDIRNE / MOSCOW" />
             {/* Pack 18.10 — страна рождения (для Pais в MI-T, отдельно от гражданства) */}

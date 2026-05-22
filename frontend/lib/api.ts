@@ -16,6 +16,22 @@ export const API_BASE_URL =
 // Types
 // ============================================================================
 
+// Pack 41.0-D — запись о паспорте в applicant.passports[]
+export type PassportRecord = {
+  id: string;
+  number: string;
+  issue_date?: string | null;
+  expiry_date?: string | null;
+  issuer?: string | null;
+  issuer_ru?: string | null;
+  passport_type?: "RU_INTERNAL" | "RU_FOREIGN" | "FOREIGN" | null;
+  is_primary: boolean;
+  notes?: string | null;
+  source?: "ocr" | "manual" | "legacy_backfill" | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type ApplicantData = {
   last_name_native?: string;
   first_name_native?: string;
@@ -33,6 +49,9 @@ export type ApplicantData = {
   passport_number?: string;
   passport_issue_date?: string;
   passport_issuer?: string;
+  // Pack 41.0-D — мультипаспорт на applicant
+  passports?: PassportRecord[];
+  passport_id_for_ru_docs?: string | null;
   inn?: string;
   // Pack 17 — INN auto-generation
   inn_registration_date?: string | null;
@@ -1045,6 +1064,9 @@ export async function updateApplicant(
     passport_issue_date: string;
     passport_issuer: string;
     passport_issuer_ru: string;
+    // Pack 41.0-D — multi-passport (опциональные, чтобы не ломать вызовы)
+    passports?: PassportRecord[];
+    passport_id_for_ru_docs?: string | null;
     birth_date: string;
     birth_place_latin: string;
     email: string;
