@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Loader2, FileText, Image as ImageIcon, Download, RefreshCw,
   CheckCircle2, AlertCircle, Inbox, ExternalLink, Sparkles,
-  X, FileWarning, Trash2,
+  X, FileWarning, Trash2, UploadCloud,
 } from "lucide-react";
 import {
   ClientDocument,
@@ -14,8 +14,12 @@ import {
   adminListClientDocuments,
   adminRecognizeClientDocument,
   adminDeleteClientDocument,  // Pack 42.1
+  // Pack 42.3 — для ImportPackageDialog (drag-and-drop)
+  ApplicationResponse,
+  listApplications,
 } from "@/lib/api";
 import { pdfToImagePages, PdfPagePreview } from "@/lib/pdfConverter";
+import { ImportPackageDialog } from "./ImportPackageDialog";  // Pack 42.3
 
 interface Props {
   applicationId: number;
@@ -57,6 +61,10 @@ export function AdminClientDocuments({ applicationId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [recognizingId, setRecognizingId] = useState<number | null>(null);
   const [pageSelectorDoc, setPageSelectorDoc] = useState<ClientDocument | null>(null);
+  // Pack 42.3 — drag-and-drop в эту секцию
+  const [applications, setApplications] = useState<ApplicationResponse[]>([]);
+  const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   async function load() {
     setError(null);
@@ -75,6 +83,45 @@ export function AdminClientDocuments({ applicationId }: Props) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationId]);
+
+  // Pack 42.3 — загружаем applications один раз для ImportPackageDialog
+  useEffect(() => {
+    listApplications()
+      .then(setApplications)
+      .catch((e) => console.warn("Failed to load applications for drag-and-drop:", e));
+  }, []);
+
+  // Pack 42.3 — drag-and-drop хендлеры
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Сбрасываем только если ушли с самого корневого контейнера, а не с дочернего
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) return;
+    setDroppedFiles(files);
+  }
 
   // Простое распознавание (для не-PDF или когда страница не нужна)
   async function handleRecognizeSimple(docId: number) {
@@ -132,9 +179,34 @@ export function AdminClientDocuments({ applicationId }: Props) {
 
   return (
     <div
-      className="bg-primary rounded-xl border p-5"
-      style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+      className="bg-primary rounded-xl border p-5 relative transition-colors"
+      style={{
+        borderColor: isDragOver ? "var(--color-accent)" : "var(--color-border-tertiary)",
+        borderWidth: isDragOver ? 2 : 0.5,
+        background: isDragOver ? "var(--color-bg-secondary)" : undefined,
+      }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {/* Pack 42.3 — overlay при drag-over */}
+      {isDragOver && (
+        <div
+          className="absolute inset-0 rounded-xl pointer-events-none flex items-center justify-center z-10"
+          style={{
+            background: "rgba(0, 100, 200, 0.05)",
+            border: "2px dashed var(--color-accent)",
+          }}
+        >
+          <div className="flex flex-col items-center gap-2">
+            <UploadCloud className="w-8 h-8" style={{ color: "var(--color-accent)" }} />
+            <div className="text-sm font-medium" style={{ color: "var(--color-accent)" }}>
+              Отпустите файлы для импорта
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <h3 className="text-base font-semibold text-primary mb-0.5">
@@ -203,6 +275,21 @@ export function AdminClientDocuments({ applicationId }: Props) {
           isRecognizing={recognizingId === pageSelectorDoc.id}
           onClose={() => setPageSelectorDoc(null)}
           onSelect={(page) => handleRecognizeWithPage(pageSelectorDoc.id, page)}
+        />
+      )}
+
+      {/* Pack 42.3 — ImportPackageDialog в quick mode при drop'е файлов */}
+      {droppedFiles && droppedFiles.length > 0 && (
+        <ImportPackageDialog
+          applications={applications}
+          initialFiles={droppedFiles}
+          initialApplicationId={applicationId}
+          onClose={() => setDroppedFiles(null)}
+          onImported={() => {
+            setDroppedFiles(null);
+            setLoading(true);
+            load();
+          }}
         />
       )}
     </div>

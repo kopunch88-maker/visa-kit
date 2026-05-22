@@ -36,6 +36,9 @@ interface Props {
   applications: ApplicationResponse[];
   onClose: () => void;
   onImported: (result: ImportFinalizeResult) => void;
+  // Pack 42.3 — drag-and-drop quick mode
+  initialFiles?: File[];           // pre-loaded файлы (из drop'а в "Документы клиента")
+  initialApplicationId?: number;   // pre-selected заявка (текущая открытая)
 }
 
 type FileChoice = {
@@ -77,7 +80,7 @@ function getExt(name: string): string {
   return idx >= 0 ? name.slice(idx).toLowerCase() : "";
 }
 
-export function ImportPackageDialog({ applications, onClose, onImported }: Props) {
+export function ImportPackageDialog({ applications, onClose, onImported, initialFiles, initialApplicationId }: Props) {
   const [step, setStep] = useState<Step>("upload");
   const [error, setError] = useState<string | null>(null);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
@@ -90,6 +93,21 @@ export function ImportPackageDialog({ applications, onClose, onImported }: Props
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [internalNotes, setInternalNotes] = useState("");
   const [existingApplicationId, setExistingApplicationId] = useState<number | null>(null);
+
+  // Pack 42.3 — quick mode: если переданы initialFiles + initialApplicationId,
+  // сразу настраиваем target="existing" и запускаем upload (минуя UploadStep)
+  useEffect(() => {
+    if (initialFiles && initialFiles.length > 0 && initialApplicationId) {
+      setTarget("existing");
+      setExistingApplicationId(initialApplicationId);
+      // handleFilesSelected будет вызвана после рендера через requestAnimationFrame
+      // чтобы state успел обновиться
+      requestAnimationFrame(() => {
+        handleFilesSelected(initialFiles, "");
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Pack 14b — данные для второго шага (создание компании)
   const [pendingCompany, setPendingCompany] = useState<PendingCompanyData | null>(null);
