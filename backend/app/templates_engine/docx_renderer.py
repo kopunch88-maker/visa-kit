@@ -300,7 +300,10 @@ def render_contract(application: Application, session: Session) -> bytes:
     # Pack 41.0-G — для договора override паспортных полей на выбранный
     # менеджером passport_id_for_ru_docs (если задан). Для всех остальных
     # русских/испанских форм паспорт остаётся primary через скаляр-зеркало.
+    # Pack 41.0-G fix2 — passports[] хранит issue_date как ISO-строку,
+    # нужно конвертить в date перед передачей в fmt_date_ru().
     from app.services.applicant_passports import get_passport_dict_for_ru_docs
+    from datetime import date as _date
     _applicant = application.applicant
     _ru_passport = get_passport_dict_for_ru_docs(_applicant)
     if _ru_passport.get("number"):
@@ -309,13 +312,22 @@ def render_contract(application: Application, session: Session) -> bytes:
             _resolve_passport_issuer_for_template_from_dict,
             fmt_date_ru,
         )
+        # Конвертим issue_date: либо ISO-string из passports[], либо уже date из legacy
+        _raw_issue_date = _ru_passport.get("issue_date")
+        if isinstance(_raw_issue_date, str) and _raw_issue_date:
+            try:
+                _issue_date = _date.fromisoformat(_raw_issue_date)
+            except ValueError:
+                _issue_date = None
+        else:
+            _issue_date = _raw_issue_date  # уже date или None
         _pdata = _parse_passport(_ru_passport["number"], _applicant.nationality)
         context["applicant"]["passport_number"] = _ru_passport["number"]
         context["applicant"]["passport_series"] = _pdata["series"]
         context["applicant"]["passport_number_only"] = _pdata["number_only"]
         context["applicant"]["passport_formatted"] = _pdata["formatted"]
-        context["applicant"]["passport_issue_date"] = _ru_passport["issue_date"]
-        context["applicant"]["passport_issue_date_str"] = fmt_date_ru(_ru_passport["issue_date"])
+        context["applicant"]["passport_issue_date"] = _issue_date
+        context["applicant"]["passport_issue_date_str"] = fmt_date_ru(_issue_date)
         context["applicant"]["passport_issuer"] = _resolve_passport_issuer_for_template_from_dict(
             _ru_passport, _applicant.nationality
         )
