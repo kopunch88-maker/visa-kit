@@ -841,23 +841,34 @@ def _process_uploaded_file(
     storage = get_storage()
     doc_type_str = doc_type_enum.value
 
-    existing = session.exec(
-        select(ApplicantDocument)
-        .where(ApplicantDocument.application_id == application_id)
-        .where(ApplicantDocument.doc_type == doc_type_enum)
-    ).first()
-    if existing:
-        try:
-            storage.delete(existing.storage_key)
-        except Exception as e:
-            log.warning(f"Failed to delete old primary: {e}")
-        if existing.original_storage_key:
+    # Pack 42.2 — паспорта НЕ перезаписываем друг другом.
+    # Клиент может загрузить старый + новый паспорт (или внутренний РФ + загранник).
+    # Каждый паспорт = отдельная ApplicantDocument запись.
+    # Для остальных типов (диплом, справка, апостиль) — старая логика upsert.
+    _PASSPORT_MULTI_TYPES = {
+        ApplicantDocumentType.PASSPORT_NATIONAL,
+        ApplicantDocumentType.PASSPORT_FOREIGN,
+        ApplicantDocumentType.PASSPORT_INTERNAL_MAIN,
+        ApplicantDocumentType.PASSPORT_INTERNAL_ADDRESS,
+    }
+    if doc_type_enum not in _PASSPORT_MULTI_TYPES:
+        existing = session.exec(
+            select(ApplicantDocument)
+            .where(ApplicantDocument.application_id == application_id)
+            .where(ApplicantDocument.doc_type == doc_type_enum)
+        ).first()
+        if existing:
             try:
-                storage.delete(existing.original_storage_key)
+                storage.delete(existing.storage_key)
             except Exception as e:
-                log.warning(f"Failed to delete old original: {e}")
-        session.delete(existing)
-        session.flush()
+                log.warning(f"Failed to delete old primary: {e}")
+            if existing.original_storage_key:
+                try:
+                    storage.delete(existing.original_storage_key)
+                except Exception as e:
+                    log.warning(f"Failed to delete old original: {e}")
+            session.delete(existing)
+            session.flush()
 
     # === Изображение ===
     if not file_info["is_pdf"]:
