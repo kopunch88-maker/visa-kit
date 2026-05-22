@@ -488,10 +488,9 @@ def render_package(
         raise HTTPException(422, detail={"problems": problems})
 
     zip_bytes, status = build_full_package(app, session, include_bank_statement=True)
-    if app.status == ApplicationStatus.ASSIGNED:
-        app.status = ApplicationStatus.DRAFTS_GENERATED
-        session.add(app)
-        session.commit()
+    # Pack 42.0 — авто-выставление статуса DRAFTS_GENERATED убрано.
+    # Менеджер вручную через dropdown выставляет "Документы готовы"
+    # после того как САМ проверил все документы.
     _log_event(
         session, app.id, "manager", user_id, "package_generated",
         f"Generated package with {sum(1 for v in status.values() if v == 'ok')} docs",
