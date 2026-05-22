@@ -38,6 +38,7 @@ from app.services.bank_statement_generator import (
     generate_default_transactions, deserialize_from_storage,
     DEFAULT_NPD_RATE, DEFAULT_BANK_FEE_PER_MONTH,
 )
+from app.services.applicant_passports import get_passport_dict_for_ru_docs  # Pack 41.0-E
 
 
 def _format_date_ru(d):
