@@ -1744,3 +1744,32 @@ def _resolve_passport_issuer_for_template(applicant) -> str:
 
     return applicant.passport_issuer or ""
 
+
+def _resolve_passport_issuer_for_template_from_dict(passport_dict: dict, nationality) -> str:
+    """
+    Pack 41.0-E — аналог _resolve_passport_issuer_for_template, но работает
+    с произвольным passport_dict (для случая когда паспорт != primary,
+    выбран через passport_id_for_ru_docs).
+
+    Приоритет:
+      1. passport_dict["issuer_ru"] если непуст.
+      2. Иначе резолвим passport_dict["issuer"] + nationality.
+      3. Иначе fallback на passport_dict["issuer"] как есть.
+    """
+    from app.services.passport_issuer_ru import resolve_passport_issuer_ru
+
+    issuer_ru_val = passport_dict.get("issuer_ru") if passport_dict else None
+    existing_ru = (issuer_ru_val or "").strip() if issuer_ru_val else ""
+    if existing_ru:
+        return existing_ru
+
+    issuer = (passport_dict.get("issuer") if passport_dict else None) or ""
+    if not issuer.strip():
+        return ""
+
+    resolved = resolve_passport_issuer_ru(issuer, nationality)
+    if resolved:
+        return resolved
+
+    return issuer
+

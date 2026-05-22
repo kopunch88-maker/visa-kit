@@ -341,6 +341,67 @@ LEGACY_FIELDS = (
 )
 
 
+def get_passport_dict_for_ru_docs(applicant) -> dict:
+    """
+    Pack 41.0-E — паспорт для русских документов.
+
+    Возвращает dict с ключами number/issue_date/expiry_date/issuer/issuer_ru/
+    passport_type, по приоритету:
+
+      1. applicant.passport_id_for_ru_docs указан И есть такая запись в
+         passports[] → возвращаем её.
+      2. Иначе primary паспорт (max issue_date среди не-RU_INTERNAL).
+      3. Иначе fallback на скалярные applicant.passport_* (legacy).
+      4. Если и скаляры пусты — dict со всеми None.
+
+    Используется в context.py и context_npd_certificate.py для рендера
+    русских документов (договор, акты, счета, выписка, НПД-справка, апостиль).
+
+    Испанские PDF формы (MI-T, EX-17, compromiso, declaracion, designacion,
+    mi_tie) НЕ используют эту функцию — они идут через applicant.passport_number
+    (= зеркало primary), чтобы независимо от выбора менеджера попадать на
+    основной паспорт.
+    """
+    passports = applicant.passports or []
+
+    # Шаг 1: явный выбор менеджера через passport_id_for_ru_docs
+    chosen_id = getattr(applicant, "passport_id_for_ru_docs", None)
+    if chosen_id and passports:
+        for p in passports:
+            if p.get("id") == chosen_id:
+                return {
+                    "number": p.get("number"),
+                    "issue_date": p.get("issue_date"),
+                    "expiry_date": p.get("expiry_date"),
+                    "issuer": p.get("issuer"),
+                    "issuer_ru": p.get("issuer_ru"),
+                    "passport_type": p.get("passport_type"),
+                }
+        # chosen_id не найден в passports — fallthrough на primary
+
+    # Шаг 2: primary паспорт
+    primary = get_primary(passports)
+    if primary:
+        return {
+            "number": primary.get("number"),
+            "issue_date": primary.get("issue_date"),
+            "expiry_date": primary.get("expiry_date"),
+            "issuer": primary.get("issuer"),
+            "issuer_ru": primary.get("issuer_ru"),
+            "passport_type": primary.get("passport_type"),
+        }
+
+    # Шаг 3: fallback на скалярные поля (legacy applicant без passports[])
+    return {
+        "number": getattr(applicant, "passport_number", None),
+        "issue_date": getattr(applicant, "passport_issue_date", None),
+        "expiry_date": getattr(applicant, "passport_expiry_date", None),
+        "issuer": getattr(applicant, "passport_issuer", None),
+        "issuer_ru": getattr(applicant, "passport_issuer_ru", None),
+        "passport_type": None,
+    }
+
+
 def sync_primary_to_legacy_fields(applicant) -> None:
     """
     Зеркалит поля primary паспорта в скалярные applicant.passport_*.
