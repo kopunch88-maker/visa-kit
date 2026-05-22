@@ -27,6 +27,10 @@ from app.models.applicant_document import (
 from app.services.storage import get_storage
 from app.services.ocr import recognize_document, OCRError
 from app.services.transliteration import transliterate_name
+from app.services.applicant_passports import (
+    upsert_by_number,
+    reconcile_applicant_passports,
+)  # Pack 41.0-C
 
 from .dependencies import require_manager
 
@@ -107,10 +111,92 @@ def _is_empty(value) -> bool:
     return False
 
 
-def _collect_ocr_data_from_application(session: Session, application_id: int) -> dict:
+
+# Pack 41.0-C: helper для извлечения PassportRecord из OCR parsed_data
+def _extract_passport_from_ocr(parsed_data: dict, doc_type: "ApplicantDocumentType") -> Optional[dict]:
     """
-    Собирает данные из всех OCR_DONE документов заявки с приоритетами.
-    (Та же логика что в import_package.py, продублирована для изоляции.)
+    Pack 41.0-C: собирает PassportRecord-словарь из parsed_data OCR-документа.
+
+    Возвращает dict готовый для upsert_by_number(), либо None если у документа
+    нет валидного passport_number.
+
+    Карта doc_type → passport_type:
+      PASSPORT_INTERNAL_MAIN  → "RU_INTERNAL" (series+number склеивается)
+      PASSPORT_FOREIGN        → "RU_FOREIGN"  (российский загранник)
+      PASSPORT_NATIONAL       → берём из LLM (passport_type), fallback "FOREIGN"
+      прочие                  → None (не паспорт)
+
+    Не идёт в passports[]:
+      PASSPORT_INTERNAL_ADDRESS — это страница регистрации, не сам паспорт
+      RESIDENCE_CARD, CRIMINAL_RECORD — содержат имя/номер, но это НЕ паспорт
+    """
+    if not parsed_data:
+        return None
+
+    if doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_MAIN:
+        # Российский внутренний — склеиваем series + number
+        series = (parsed_data.get("passport_series") or "").strip()
+        number_only = (parsed_data.get("passport_number") or "").strip()
+        if not (series and number_only):
+            return None
+        return {
+            "number": f"{series}{number_only}",  # '4612' + '978898' → '4612978898'
+            "issue_date": parsed_data.get("passport_issue_date"),
+            "expiry_date": None,  # у внутреннего нет expiry
+            "issuer": parsed_data.get("passport_issuer"),
+            "issuer_ru": None,    # для RU_INTERNAL issuer и так на кириллице
+            "passport_type": "RU_INTERNAL",
+        }
+
+    if doc_type == ApplicantDocumentType.PASSPORT_FOREIGN:
+        # Российский загранник — passport_type всегда RU_FOREIGN (для P)
+        number = (parsed_data.get("passport_number") or "").strip()
+        if not number:
+            return None
+        return {
+            "number": number,
+            "issue_date": parsed_data.get("passport_issue_date"),
+            "expiry_date": parsed_data.get("passport_expiry_date"),
+            "issuer": parsed_data.get("passport_issuer"),
+            "issuer_ru": None,
+            "passport_type": "RU_FOREIGN",
+        }
+
+    if doc_type == ApplicantDocumentType.PASSPORT_NATIONAL:
+        # Иностранный паспорт — passport_type из LLM (Pack 41.0-C OCR prompt),
+        # fallback FOREIGN если LLM не вернул.
+        number = (parsed_data.get("passport_number") or "").strip()
+        if not number:
+            return None
+        llm_type = (parsed_data.get("passport_type") or "").strip().upper()
+        if llm_type not in ("P", "PP", "D", "O"):
+            llm_type = None
+        # PassportRecord.passport_type — наш внутренний enum; P/PP/D/O — это
+        # ICAO-категория паспорта, мы их все храним под "FOREIGN" для логики
+        # primary, а сам ICAO-тип кладём в notes для информации.
+        return {
+            "number": number,
+            "issue_date": parsed_data.get("passport_issue_date"),
+            "expiry_date": parsed_data.get("passport_expiry_date"),
+            "issuer": parsed_data.get("passport_issuer"),
+            "issuer_ru": None,
+            "passport_type": "FOREIGN",
+            "notes": f"ICAO type: {llm_type}" if llm_type else None,
+        }
+
+    return None
+
+
+def _collect_ocr_data_from_application(session: Session, application_id: int) -> tuple[dict, list[dict]]:
+    """
+    Pack 41.0-C: возвращает (scalar_data, passport_records).
+
+    scalar_data — поля для применения к Applicant через setattr (имя, ДР, sex,
+    nationality, и т.д.). Паспортные поля из scalar_data ИСКЛЮЧЕНЫ — они идут
+    в passports[] через upsert_by_number.
+
+    passport_records — список PassportRecord-словарей, по одному на каждый
+    OCR'нутый паспорт (PASSPORT_INTERNAL_MAIN/FOREIGN/NATIONAL).
     """
     docs = session.exec(
         select(ApplicantDocument)
@@ -131,12 +217,18 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
         ApplicantDocumentType.OTHER: 99,
     }
     sorted_docs = sorted(docs, key=lambda d: priority.get(d.doc_type, 99))
-    result = {}
+    result: dict = {}
+    passport_records: list[dict] = []  # Pack 41.0-C
 
     for doc in sorted_docs:
         p = doc.parsed_data or {}
         if not p:
             continue
+
+        # Pack 41.0-C: извлекаем PassportRecord (если документ — паспорт)
+        passport_rec = _extract_passport_from_ocr(p, doc.doc_type)
+        if passport_rec:
+            passport_records.append(passport_rec)
 
         if doc.doc_type == ApplicantDocumentType.PASSPORT_INTERNAL_MAIN:
             for f in ["last_name_native", "first_name_native", "middle_name_native", "birth_date", "sex"]:
@@ -156,10 +248,6 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
                 ("last_name_latin", "last_name_latin"),
                 ("first_name_latin", "first_name_latin"),
                 ("birth_place_latin", "birth_place_latin"),
-                ("passport_number", "passport_number"),
-                ("passport_issue_date", "passport_issue_date"),
-                ("passport_expiry_date", "passport_expiry_date"),  # Pack 37.3
-                ("passport_issuer", "passport_issuer"),
                 ("nationality", "nationality"),
                 ("last_name_native", "last_name_native"),
                 ("first_name_native", "first_name_native"),
@@ -179,10 +267,6 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
                 ("birth_place", "birth_place_latin"),
                 ("sex", "sex"),
                 ("nationality", "nationality"),
-                ("passport_number", "passport_number"),
-                ("passport_issue_date", "passport_issue_date"),
-                ("passport_expiry_date", "passport_expiry_date"),  # Pack 37.3
-                ("passport_issuer", "passport_issuer"),
             ]:
                 if dst_field not in result and not _is_empty(p.get(src_field)):
                     result[dst_field] = p[src_field]
@@ -214,7 +298,7 @@ def _collect_ocr_data_from_application(session: Session, application_id: int) ->
                 if dst_field not in result and not _is_empty(p.get(src_field)):
                     result[dst_field] = p[src_field]
 
-    return result
+    return result, passport_records
 
 
 # Pack 34.1 — нормализация degree (EN→RU + инженер по коду ОКСО)
@@ -261,7 +345,8 @@ def _auto_apply_ocr_to_applicant(application_id: int):
             log.warning(f"Auto-apply: application {application_id} not found")
             return
 
-        ocr_data = _collect_ocr_data_from_application(session, application_id)
+        # Pack 41.0-C: collect_ocr_data возвращает кортеж
+        ocr_data, passport_records = _collect_ocr_data_from_application(session, application_id)
         if not ocr_data:
             log.info(f"Auto-apply: no OCR data for app {application_id}")
             return
@@ -296,7 +381,7 @@ def _auto_apply_ocr_to_applicant(application_id: int):
         if edu_record:
             update_data["education"] = [edu_record]
 
-        if not update_data:
+        if not update_data and not passport_records:
             log.info(f"Auto-apply: nothing to update for app {application_id}")
             return
 
@@ -334,6 +419,30 @@ def _auto_apply_ocr_to_applicant(application_id: int):
         for d in all_docs:
             d.applied_to_applicant = True
             session.add(d)
+
+        # Pack 41.0-C: применяем passport_records через upsert + reconcile
+        if passport_records:
+            new_passports = list(applicant.passports or [])
+            for rec in passport_records:
+                if not rec.get("number"):
+                    continue
+                new_passports, _affected, created = upsert_by_number(
+                    new_passports,
+                    number=rec["number"],
+                    issue_date=rec.get("issue_date"),
+                    expiry_date=rec.get("expiry_date"),
+                    issuer=rec.get("issuer"),
+                    issuer_ru=rec.get("issuer_ru"),
+                    passport_type=rec.get("passport_type"),
+                    source="ocr",
+                )
+                log.info(
+                    f"Pack 41.0-C: passport upsert num={rec['number']!r} "
+                    f"type={rec.get('passport_type')} created={created}"
+                )
+            applicant.passports = new_passports
+            reconcile_applicant_passports(applicant)
+            session.add(applicant)
 
         session.commit()
 

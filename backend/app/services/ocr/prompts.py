@@ -208,6 +208,13 @@ Fields to extract:
 - passport_issue_date: Date of issue in ISO format YYYY-MM-DD
 - passport_expiry_date: Date of expiry in ISO format YYYY-MM-DD
 - passport_issuer: Issuing authority as written (e.g. "Ministry of Internal Affairs", "Министерство иностранных дел")
+- passport_type: Passport ICAO type from the document header / MRZ (Pack 41.0-C). One of:
+  - "P"  — regular tourist passport (most common)
+  - "PP" — service / official passport (служебный)
+  - "D"  — diplomatic passport (дипломатический)
+  - "O"  — other / temporary travel document
+  Look for letters near "Type / Tipo / TÜR" field or first character of MRZ line 1
+  (e.g. "P<ALB" → "P", "PP<TUR" → "PP", "D<RUS" → "D"). null if cannot tell.
 
 Rules:
 - If a field is unclear or not visible → return null
@@ -231,7 +238,8 @@ Output schema:
   "passport_number": "U12345678" or null,
   "passport_issue_date": "2020-05-15" or null,
   "passport_expiry_date": "2030-05-14" or null,
-  "passport_issuer": "Ministry of Internal Affairs" or null
+  "passport_issuer": "Ministry of Internal Affairs" or null,
+  "passport_type": "P" or "PP" or "D" or "O" or null
 }
 
 Return ONLY the JSON object."""

@@ -135,6 +135,9 @@ _PATCHABLE_FIELDS = {
     "education",
     "work_history",
     "languages",
+    # Pack 41.0 — two-passport split
+    "passports",
+    "passport_id_for_ru_docs",
 }
 
 # Поля русского ФИО — к ним применяется normalize_russian_case при сохранении
@@ -149,6 +152,7 @@ _INT_FIELDS = {"bank_id"}
 
 # Pack 37.7 — sync DN work_history в БД когда менеджер сохраняет Drawer
 from app.services.work_history_sync import sync_dn_work_record_safe
+from app.services.applicant_passports import reconcile_applicant_passports  # Pack 41.0-B
 
 
 @router.patch("/{applicant_id}")
@@ -217,6 +221,9 @@ def update_applicant(
 
         # Pack 16.1: bank_id может прийти как число напрямую — это ок
         setattr(applicant, field, value)
+
+    # Pack 41.0-B — пересчёт primary паспорта и sync скалярных passport_* полей
+    reconcile_applicant_passports(applicant)
 
     session.add(applicant)
     session.commit()

@@ -26,6 +26,7 @@ from typing import Optional, List, TYPE_CHECKING
 
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, JSON
+from sqlalchemy.dialects.postgresql import JSONB  # Pack 41.0
 
 from ._base import TimestampMixin, CountryCode
 
@@ -91,6 +92,28 @@ class Applicant(TimestampMixin, table=True):
     # nationality через services.passport_issuer_ru.resolve_passport_issuer_ru.
     # Менеджер может править вручную в админке.
     passport_issuer_ru: Optional[str] = Field(default=None, max_length=256)
+
+    # === Pack 41.0 — Two-passport split ===
+    # Список паспортов клиента. У одного is_primary=True (тот, что в MI-T/EX-17/
+    # designacion и других испанских формах). Primary вычисляется автоматом по
+    # max(issue_date) через reconcile_applicant_passports() в applicant_passports.py.
+    # Скалярные passport_number/issue_date/expiry_date/issuer/issuer_ru остаются
+    # как зеркало primary — для backward compat с шаблонами DOCX и существующим
+    # кодом (~30 мест чтения по grep'у).
+    passports: List[dict] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default="[]"),
+        description="[{id, number, issue_date, expiry_date, issuer, issuer_ru, "
+                    "passport_type, is_primary, notes, source, created_at, updated_at}]",
+    )
+    # ID паспорта из passports[] для РУССКИХ документов: договор, акты, счета,
+    # письмо работодателю, банковская выписка, справка НПД, апостиль.
+    # NULL → используется primary. Испанские формы ВСЕГДА используют primary.
+    passport_id_for_ru_docs: Optional[str] = Field(
+        default=None,
+        max_length=36,
+        description="Pack 41.0: выбранный паспорт для русских доков. NULL = primary.",
+    )
 
     inn: Optional[str] = Field(default=None, max_length=12)
 
@@ -275,6 +298,10 @@ class ApplicantUpdate(SQLModel):
     passport_issue_date: Optional[date] = None
     passport_expiry_date: Optional[date] = None
     passport_issuer: Optional[str] = None
+    # Pack 41.0 — two-passport split
+    passport_issuer_ru: Optional[str] = None
+    passports: Optional[List[dict]] = None
+    passport_id_for_ru_docs: Optional[str] = None
     inn: Optional[str] = None
     # Pack 17: INN auto-generation
     inn_registration_date: Optional[date] = None
