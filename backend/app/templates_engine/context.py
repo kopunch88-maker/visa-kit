@@ -1523,9 +1523,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     bank_data = _enrich_bank_with_statement_fields(bank_data, application)
 
     # Парсим паспорт по гражданству
-    # Pack 41.0-E — паспорт для русских документов через passport_id_for_ru_docs
-    _ru_passport = get_passport_dict_for_ru_docs(applicant)
-    passport_data = _parse_passport(_ru_passport["number"], applicant.nationality)
+    # Pack 41.0-G — context по умолчанию на primary (через скаляр-зеркало).
+    # Только render_contract в docx_renderer.py переопределяет на passport_id_for_ru_docs.
+    passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
 
     # === Pack 40.0-G: outgoing autogen (раньше был в API endpoint) ===
     if not application.outgoing_number or not application.outgoing_date:
@@ -1569,13 +1569,13 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "birth_place_latin": applicant.birth_place_latin,
             "nationality": applicant.nationality,
             # Паспорт — структурированные поля
-            "passport_number": _ru_passport["number"] or "",  # Pack 41.0-E
+            "passport_number": applicant.passport_number,  # Pack 41.0-G — primary
             "passport_series": passport_data["series"],
             "passport_number_only": passport_data["number_only"],
             "passport_formatted": passport_data["formatted"],
-            "passport_issue_date": _ru_passport["issue_date"],  # Pack 41.0-E
-            "passport_issue_date_str": fmt_date_ru(_ru_passport["issue_date"]),  # Pack 41.0-E
-            "passport_issuer": _resolve_passport_issuer_for_template_from_dict(_ru_passport, applicant.nationality),  # Pack 41.0-E
+            "passport_issue_date": applicant.passport_issue_date,  # Pack 41.0-G — primary
+            "passport_issue_date_str": fmt_date_ru(applicant.passport_issue_date),  # Pack 41.0-G — primary
+            "passport_issuer": _resolve_passport_issuer_for_template(applicant),  # Pack 41.0-G — primary
             "inn": applicant.inn or "",
             "home_address": abbreviate_address(applicant.home_address or ""),
             "home_address_line1": _bank_statement_address_line1(applicant),

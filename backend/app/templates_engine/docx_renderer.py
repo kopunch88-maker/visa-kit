@@ -297,6 +297,28 @@ def render_contract(application: Application, session: Session) -> bytes:
             raise NeedsContractTemplateError(company)
 
     context = build_context(application, session)
+    # Pack 41.0-G — для договора override паспортных полей на выбранный
+    # менеджером passport_id_for_ru_docs (если задан). Для всех остальных
+    # русских/испанских форм паспорт остаётся primary через скаляр-зеркало.
+    from app.services.applicant_passports import get_passport_dict_for_ru_docs
+    _applicant = application.applicant
+    _ru_passport = get_passport_dict_for_ru_docs(_applicant)
+    if _ru_passport.get("number"):
+        from app.templates_engine.context import (
+            _parse_passport,
+            _resolve_passport_issuer_for_template_from_dict,
+            fmt_date_ru,
+        )
+        _pdata = _parse_passport(_ru_passport["number"], _applicant.nationality)
+        context["applicant"]["passport_number"] = _ru_passport["number"]
+        context["applicant"]["passport_series"] = _pdata["series"]
+        context["applicant"]["passport_number_only"] = _pdata["number_only"]
+        context["applicant"]["passport_formatted"] = _pdata["formatted"]
+        context["applicant"]["passport_issue_date"] = _ru_passport["issue_date"]
+        context["applicant"]["passport_issue_date_str"] = fmt_date_ru(_ru_passport["issue_date"])
+        context["applicant"]["passport_issuer"] = _resolve_passport_issuer_for_template_from_dict(
+            _ru_passport, _applicant.nationality
+        )
     relative_path = resolve_contract_template_path(company)
     rendered = _render_from_repo_path(relative_path, context)
     # Pack 33.0

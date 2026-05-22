@@ -40,7 +40,6 @@ from sqlmodel import Session, select
 
 from app.models import Applicant, Application
 from app.models.ifns_mfc import IfnsOffice, MfcOffice
-from app.services.applicant_passports import get_passport_dict_for_ru_docs  # Pack 41.0-E
 
 log = logging.getLogger(__name__)
 
@@ -340,9 +339,8 @@ def build_npd_certificate_context(
     missing: list[str] = []
     if not applicant.inn:
         missing.append("inn")
-    # Pack 41.0-E — паспорт для русских документов
-    _ru_passport = get_passport_dict_for_ru_docs(applicant)
-    if not _ru_passport["number"]:
+    # Pack 41.0-G — НПД-справка на primary
+    if not applicant.passport_number:
         missing.append("passport_number")
     if missing:
         raise ValueError(
@@ -417,7 +415,7 @@ def build_npd_certificate_context(
         "applicant": {
             "inn": applicant.inn,
             "full_name_caps": _full_name_caps(applicant),
-            "passport_number": _ru_passport["number"] or "",  # Pack 41.0-E
+            "passport_number": applicant.passport_number or "",  # Pack 41.0-G — primary
         },
         "certificate": {
             "number": str(cert_number),
