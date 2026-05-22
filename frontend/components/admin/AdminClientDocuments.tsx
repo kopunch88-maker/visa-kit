@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Loader2, FileText, Image as ImageIcon, Download, RefreshCw,
   CheckCircle2, AlertCircle, Inbox, ExternalLink, Sparkles,
-  X, FileWarning,
+  X, FileWarning, Trash2,
 } from "lucide-react";
 import {
   ClientDocument,
@@ -13,6 +13,7 @@ import {
   FIELD_LABELS,
   adminListClientDocuments,
   adminRecognizeClientDocument,
+  adminDeleteClientDocument,  // Pack 42.1
 } from "@/lib/api";
 import { pdfToImagePages, PdfPagePreview } from "@/lib/pdfConverter";
 
@@ -105,6 +106,20 @@ export function AdminClientDocuments({ applicationId }: Props) {
   }
 
   // Обработчик клика по «Распознать» / «↻»: для PDF — открыть пикер страниц, иначе сразу
+  // Pack 42.1 — удаление документа клиента
+  async function handleDelete(docId: number) {
+    if (!window.confirm("Удалить этот документ? Действие необратимо — файл будет полностью удалён.")) {
+      return;
+    }
+    setError(null);
+    try {
+      await adminDeleteClientDocument(applicationId, docId);
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   function handleRecognizeClick(doc: ClientDocument) {
     if (doc.has_original && doc.original_download_url) {
       // Это PDF, у которого есть оригинал. Открываем выбор страницы.
@@ -175,6 +190,7 @@ export function AdminClientDocuments({ applicationId }: Props) {
               doc={doc}
               isRecognizing={recognizingId === doc.id}
               onRecognize={() => handleRecognizeClick(doc)}
+              onDelete={() => handleDelete(doc.id)}
             />
           ))}
         </div>
@@ -217,10 +233,12 @@ function DocumentCard({
   doc,
   isRecognizing,
   onRecognize,
+  onDelete,  // Pack 42.1
 }: {
   doc: ClientDocument;
   isRecognizing: boolean;
   onRecognize: () => void;
+  onDelete: () => void;  // Pack 42.1
 }) {
   const statusColor = STATUS_COLORS[doc.status] || STATUS_COLORS.uploaded;
   const isImage = doc.content_type.startsWith("image/");
@@ -350,6 +368,21 @@ function DocumentCard({
 
         {/* Действия */}
         <div className="flex flex-wrap gap-1.5">
+          {/* Pack 42.1 — кнопка удаления документа */}
+          <button
+            onClick={onDelete}
+            className="text-xs px-2.5 py-1 rounded-md border transition-colors flex items-center gap-1"
+            style={{
+              borderColor: "var(--color-border-danger)",
+              borderWidth: 0.5,
+              color: "var(--color-text-danger)",
+              background: "transparent",
+            }}
+            title="Удалить документ полностью (БД + файл)"
+          >
+            <Trash2 className="w-3 h-3" />
+            Удалить
+          </button>
           {doc.download_url && (
             <a
               href={doc.download_url}

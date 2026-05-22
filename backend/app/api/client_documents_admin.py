@@ -634,3 +634,63 @@ async def admin_recognize_document(
             log.error(f"Auto-apply after re-OCR failed: {e}", exc_info=True)
 
     return _enrich_document(doc)
+# =============================================================================
+# Pack 42.1 — удаление документа клиента
+# =============================================================================
+
+@router.delete("/{application_id}/client-documents/{doc_id}")
+def admin_delete_client_document(
+    application_id: int,
+    doc_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Pack 42.1 — удалить документ клиента полностью (БД + R2 storage).
+
+    Используется когда клиент ошибочно загрузил не тот файл и менеджер
+    хочет очистить карточку перед повторной загрузкой.
+
+    Удаляются:
+      - Запись ApplicantDocument из БД
+      - storage_key файл в R2 (текущая JPEG/изображение)
+      - original_storage_key файл в R2 (оригинальный PDF, если был)
+
+    Не сбрасывает applied данные на applicant — если документ был ранее
+    распознан и применён, поля в applicant остаются. Это намеренно:
+    менеджер может удалить ошибочный документ не теряя уже исправленные
+    вручную данные клиента.
+    """
+    application = session.get(Application, application_id)
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    doc = session.get(ApplicantDocument, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if doc.application_id != application_id:
+        raise HTTPException(403, "Document does not belong to this application")
+
+    storage = get_storage()
+
+    # Удаляем оба storage-файла (молча игнорируем ошибки удаления,
+    # чтобы не блокировать удаление из БД из-за уже-удалённого файла).
+    if doc.storage_key:
+        try:
+            storage.delete(doc.storage_key)
+            log.info(f"Pack 42.1: deleted storage {doc.storage_key}")
+        except Exception as e:
+            log.warning(f"Pack 42.1: failed to delete {doc.storage_key}: {e}")
+
+    if doc.original_storage_key and doc.original_storage_key != doc.storage_key:
+        try:
+            storage.delete(doc.original_storage_key)
+            log.info(f"Pack 42.1: deleted original storage {doc.original_storage_key}")
+        except Exception as e:
+            log.warning(f"Pack 42.1: failed to delete {doc.original_storage_key}: {e}")
+
+    # Удаляем из БД
+    session.delete(doc)
+    session.commit()
+
+    log.info(f"Pack 42.1: client document {doc_id} (app={application_id}) deleted")
+    return {"deleted": True, "doc_id": doc_id}

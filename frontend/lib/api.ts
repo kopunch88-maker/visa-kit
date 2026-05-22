@@ -1723,6 +1723,34 @@ export function getClientLink(token: string): string {
   return `/client/${token}`;
 }
 
+/**
+ * Pack 42.1 — удалить документ клиента (БД + R2 storage).
+ * Возвращает {deleted: true, doc_id} при успехе.
+ */
+export async function adminDeleteClientDocument(
+  applicationId: number,
+  docId: number,
+): Promise<{ deleted: boolean; doc_id: number }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/client-documents/${docId}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let errMessage = `Не удалось удалить документ (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      errMessage = errJson.detail || errMessage;
+    } catch {}
+    throw new Error(errMessage);
+  }
+  return res.json();
+}
+
+
 export const DOCUMENT_TYPE_LABELS: Record<ClientDocumentType, string> = {
   passport_internal_main: "Паспорт РФ — главный разворот",
   passport_internal_address: "Паспорт РФ — страница прописки",
