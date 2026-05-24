@@ -3441,7 +3441,7 @@ export async function translatePositionToSpanish(positionId: number): Promise<{
   title_es?: string;
 }> {
   const response = await fetch(
-    `${API_BASE_URL}/admin/positions/${positionId}/translate-spanish`,
+    `${API_BASE_URL}/api/admin/positions/${positionId}/translate-spanish`,
     {
       method: "POST",
       credentials: "include",
