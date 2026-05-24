@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { X, Loader2, AlertCircle } from "lucide-react";
+import { X, Loader2, AlertCircle, Sparkles } from "lucide-react";
 import {
   PositionResponse,
   CompanyResponse,
   getPosition,
   createPosition,
   updatePosition,
+  // Pack 45.0 — LLM-генерация русских полей
+  generatePositionRussian,
 } from "@/lib/api";
 // Pack 41.0 — Tech Opinion editing
 import {
@@ -119,6 +121,70 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
     })();
   }, [positionId, isNew]);
 
+  // ====== Pack 45.0: LLM-генерация русских полей ======
+  const [generatingAll, setGeneratingAll] = useState(false);
+  const canGenerateAll =
+    titleRu.trim().length > 0 &&
+    titleEs.trim().length > 0 &&
+    primarySpecialtyId !== "" &&
+    level !== "" &&
+    !generatingAll;
+
+  async function handleGenerateAll() {
+    if (!canGenerateAll) return;
+
+    // Проверка непустоты RU-полей
+    const hasFilledRu =
+      dutiesText.trim().length > 0 ||
+      tagsText.trim().length > 0 ||
+      profileDescription.trim().length > 0 ||
+      techOpinion.description_ru.trim().length > 0 ||
+      techOpinion.tools_ru.length > 0 ||
+      techOpinion.steps_ru.length > 0 ||
+      techOpinion.grounds_ru.length > 0 ||
+      techOpinion.contract_clause_ru.trim().length > 0 ||
+      techOpinion.international_analog_ru.trim().length > 0;
+
+    if (hasFilledRu) {
+      const ok = window.confirm(
+        "Все русские поля (обязанности, теги, описание, техническое заключение) будут перезаписаны генерацией из LLM. Продолжить?"
+      );
+      if (!ok) return;
+    }
+
+    setError(null);
+    setGeneratingAll(true);
+    try {
+      const result = await generatePositionRussian({
+        title_ru: titleRu,
+        title_es: titleEs,
+        primary_specialty_id: primarySpecialtyId as number,
+        level: level as number,
+        title_ru_genitive: titleRuGenitive || null,
+        profile_description_existing: profileDescription || null,
+        salary_rub_default: (salary as number) || null,
+      });
+      // Заполняем верхние поля
+      setDutiesText(result.duties.join("\n"));
+      setTagsText(result.tags.join(", "));
+      setProfileDescription(result.profile_description);
+      // Заполняем tech_opinion RU-поля (ES не трогаем — для них отдельная кнопка)
+      setTechOpinion((prev) => ({
+        ...prev,
+        international_analog_ru: result.international_analog_ru,
+        description_ru: result.tech_opinion_description_ru,
+        tools_ru: result.tech_opinion_tools_ru,
+        steps_ru: result.tech_opinion_steps_ru,
+        grounds_ru: result.tech_opinion_grounds_ru,
+        contract_clause_ru: result.tech_opinion_contract_clause_ru,
+      }));
+    } catch (e) {
+      setError("Не удалось сгенерировать: " + ((e as Error).message || "ошибка LLM"));
+    } finally {
+      setGeneratingAll(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
     if (!titleRu || !titleEs || !salary) {
@@ -182,12 +248,39 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
           <h2 className="text-lg font-semibold text-primary">
             {isNew ? "Новая должность" : `Должность #${positionId}`}
           </h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-secondary"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Pack 45.0 — кнопка генерации всех русских полей через LLM */}
+            <button
+              type="button"
+              onClick={handleGenerateAll}
+              disabled={!canGenerateAll}
+              title={
+                !titleRu.trim() || !titleEs.trim() || primarySpecialtyId === "" || level === ""
+                  ? "Сначала заполни: Специальность, Уровень, Название (рус), Название (исп)"
+                  : "Сгенерировать все русские поля через LLM (~30-50 сек): обязанности, теги, описание, тех. заключение"
+              }
+              className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded text-primary border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+            >
+              {generatingAll ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Генерация...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Сгенерировать всё
+                </>
+              )}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-md text-tertiary hover:text-primary hover:bg-secondary"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {loading ? (

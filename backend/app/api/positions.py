@@ -29,6 +29,9 @@ from .dependencies import require_manager
 
 # Pack 43.0: сервис перевода полей Position на испанский через LLM
 from app.services.position_translator import translate_position_to_spanish
+# Pack 45.0: сервис генерации русских полей Position по названию и специальности
+from app.services.position_generator import generate_position_fields, PositionGenerateInput
+from app.models import Specialty
 
 router = APIRouter(prefix="/admin/positions", tags=["positions"])
 
@@ -147,6 +150,36 @@ def delete_position(
 
 # Pack 43.0: автоперевод полей tech_opinion на испанский через LLM.
 # Возвращает dict с ES-полями. В БД НЕ пишет — фронт сам сохранит через PATCH.
+# Pack 45.0: автогенерация русских полей Position по 4 обязательным входам.
+# Возвращает dict с 9 полями. В БД НЕ пишет — фронт сам сохранит через PATCH/POST.
+@router.post("/generate-russian")
+async def generate_position_russian(
+    payload: PositionGenerateInput,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 45.0: сгенерировать русские поля Position через LLM.
+
+    Принимает 4 обязательных поля (title_ru, title_es, primary_specialty_id, level)
+    + опциональные подсказки. БД НЕ изменяет — менеджер сам сохранит после правок.
+    """
+    # Резолвим имя специальности из БД для контекста LLM
+    specialty = session.get(Specialty, payload.primary_specialty_id)
+    if not specialty:
+        raise HTTPException(422, f"Specialty id={payload.primary_specialty_id} not found")
+    payload.specialty_code = specialty.code
+    payload.specialty_name = specialty.name
+
+    try:
+        result = await generate_position_fields(payload)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, f"LLM service error: {e}")
+
+    return result
+
+
 @router.post("/{position_id}/translate-spanish")
 async def translate_position_spanish(
     position_id: int,

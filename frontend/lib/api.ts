@@ -3456,3 +3456,58 @@ export async function translatePositionToSpanish(positionId: number): Promise<{
   }
   return response.json();
 }
+
+
+// ============================================================
+// Pack 45.0 — LLM-генерация русских полей Position
+// ============================================================
+
+export interface PositionGenerateInput {
+  title_ru: string;
+  title_es: string;
+  primary_specialty_id: number;
+  level: number;
+  title_ru_genitive?: string | null;
+  profile_description_existing?: string | null;
+  salary_rub_default?: number | null;
+}
+
+export interface PositionGenerateResult {
+  duties: string[];
+  tags: string[];
+  profile_description: string;
+  tech_opinion_description_ru: string;
+  tech_opinion_tools_ru: Array<{ name: string; purpose: string }>;
+  tech_opinion_steps_ru: Array<{ title: string; body: string }>;
+  tech_opinion_grounds_ru: string[];
+  tech_opinion_contract_clause_ru: string;
+  international_analog_ru: string;
+}
+
+/**
+ * Pack 45.0: сгенерировать 9 русских полей Position через LLM.
+ * НЕ сохраняет в БД. Менеджер видит результат в форме, может править, потом сохраняет.
+ *
+ * Endpoint: POST /api/admin/positions/generate-russian
+ * Время: ~30-50 сек (один LLM-вызов Sonnet 4.6)
+ */
+export async function generatePositionRussian(
+  input: PositionGenerateInput
+): Promise<PositionGenerateResult> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/positions/generate-russian`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+      },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
