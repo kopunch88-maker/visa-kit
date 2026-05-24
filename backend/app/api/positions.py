@@ -27,6 +27,9 @@ from app.models import (
 )
 from .dependencies import require_manager
 
+# Pack 43.0: сервис перевода полей Position на испанский через LLM
+from app.services.position_translator import translate_position_to_spanish
+
 router = APIRouter(prefix="/admin/positions", tags=["positions"])
 
 
@@ -140,3 +143,32 @@ def delete_position(
     session.add(position)
     session.flush()
     return None
+
+
+# Pack 43.0: автоперевод полей tech_opinion на испанский через LLM.
+# Возвращает dict с ES-полями. В БД НЕ пишет — фронт сам сохранит через PATCH.
+@router.post("/{position_id}/translate-spanish")
+async def translate_position_spanish(
+    position_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 43.0: перевести русские tech_opinion поля Position на испанский.
+
+    НЕ сохраняет результат в БД — менеджер видит результат в форме,
+    может отредактировать, потом сохраняет через обычный PATCH.
+    """
+    position = session.get(Position, position_id)
+    if not position:
+        raise HTTPException(404, "Position not found")
+
+    try:
+        result = await translate_position_to_spanish(position)
+    except ValueError as e:
+        # невалидный JSON от LLM или пустые русские поля
+        raise HTTPException(422, str(e))
+    except RuntimeError as e:
+        # LLM-клиент не настроен (нет API_KEY и т.п.)
+        raise HTTPException(500, f"LLM service error: {e}")
+
+    return result

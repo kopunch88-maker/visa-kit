@@ -3418,3 +3418,39 @@ export async function downloadFinalSubmissionAuditReportDocx(reportId: number): 
   document.body.removeChild(a);
   window.URL.revokeObjectURL(blobUrl);
 }
+
+
+// ============================================================
+// Pack 43.0 — LLM-перевод полей Position на испанский
+// ============================================================
+
+/**
+ * Pack 43.0: переводит русские tech_opinion поля Position на испанский.
+ * НЕ сохраняет в БД. Возвращает dict с ES-полями.
+ * Менеджер видит результат в форме, может править, потом сохраняет через updatePosition.
+ *
+ * Endpoint: POST /api/admin/positions/{id}/translate-spanish
+ * Время: ~30-60 сек (один LLM-вызов Sonnet 4.6)
+ */
+export async function translatePositionToSpanish(positionId: number): Promise<{
+  tech_opinion_description_es: string;
+  tech_opinion_tools_es: Array<{ name: string; purpose: string }>;
+  tech_opinion_steps_es: Array<{ title: string; body: string }>;
+  tech_opinion_grounds_es: string[];
+  tech_opinion_contract_clause_es: string;
+  title_es?: string;
+}> {
+  const response = await fetch(
+    `${API_BASE}/admin/positions/${positionId}/translate-spanish`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.json();
+}

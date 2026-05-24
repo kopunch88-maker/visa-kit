@@ -19,7 +19,9 @@
  */
 
 import { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X, Sparkles, Loader2 } from "lucide-react";
+// Pack 43.0 — LLM-перевод полей Position на испанский
+import { translatePositionToSpanish } from "@/lib/api";
 
 // ====== Типы ======
 
@@ -65,6 +67,9 @@ export const EMPTY_TECH_OPINION: TechOpinionState = {
 interface Props {
   value: TechOpinionState;
   onChange: (next: TechOpinionState) => void;
+  // Pack 43.0 — если null, кнопка "Сгенерировать испанский" дизейблена
+  // (новая несохранённая должность ещё не имеет id для endpoint'а)
+  positionId?: number | null;
 }
 
 // ====== Хелперы для immutable-обновления списков ======
@@ -81,7 +86,7 @@ function removeAt<T>(arr: T[], idx: number): T[] {
 
 // ====== Главный компонент ======
 
-export function TechOpinionSection({ value, onChange }: Props) {
+export function TechOpinionSection({ value, onChange, positionId }: Props) {
   // Считаем заполненность для бейджа
   const isFilled = useMemo(() => {
     return (
@@ -124,6 +129,49 @@ export function TechOpinionSection({ value, onChange }: Props) {
     lang === "ru" ? value.contract_clause_ru : value.contract_clause_es;
   const setContractClause = (v: string) =>
     set(lang === "ru" ? { contract_clause_ru: v } : { contract_clause_es: v });
+
+  // ====== Pack 43.0: LLM-перевод RU → ES ======
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  async function handleTranslate() {
+    if (positionId == null) return; // safety guard, кнопка должна быть disabled
+
+    // Проверка: есть ли уже непустые ES-поля?
+    const hasFilledEs =
+      value.description_es.trim().length > 0 ||
+      value.tools_es.length > 0 ||
+      value.steps_es.length > 0 ||
+      value.grounds_es.length > 0 ||
+      value.contract_clause_es.trim().length > 0;
+
+    if (hasFilledEs) {
+      const ok = window.confirm(
+        "Испанские поля уже заполнены. Они будут перезаписаны переводом из LLM. Продолжить?"
+      );
+      if (!ok) return;
+    }
+
+    setTranslateError(null);
+    setTranslating(true);
+    try {
+      const result = await translatePositionToSpanish(positionId);
+      onChange({
+        ...value,
+        description_es: result.tech_opinion_description_es,
+        tools_es: result.tech_opinion_tools_es,
+        steps_es: result.tech_opinion_steps_es,
+        grounds_es: result.tech_opinion_grounds_es,
+        contract_clause_es: result.tech_opinion_contract_clause_es,
+      });
+      // Переключаем на ES чтобы менеджер сразу увидел результат
+      setLang("es");
+    } catch (e) {
+      setTranslateError((e as Error).message || "Ошибка перевода");
+    } finally {
+      setTranslating(false);
+    }
+  }
 
   // ====== Render ======
 
@@ -213,7 +261,40 @@ export function TechOpinionSection({ value, onChange }: Props) {
             >
               🇪🇸 Español
             </button>
+            {/* Pack 43.0 — кнопка LLM-перевода RU→ES */}
+            <div className="ml-auto flex items-center">
+              <button
+                type="button"
+                onClick={handleTranslate}
+                disabled={translating || positionId == null}
+                title={
+                  positionId == null
+                    ? "Сначала сохраните должность"
+                    : "Сгенерировать испанский перевод всех полей из русских через LLM (~30-60 сек)"
+                }
+                className="text-xs flex items-center gap-1 px-2 py-1 rounded text-tertiary hover:text-primary hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {translating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Перевод...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Сгенерировать испанский
+                  </>
+                )}
+              </button>
+            </div>
           </div>
+
+          {/* Pack 43.0 — ошибка LLM-перевода */}
+          {translateError && (
+            <div className="text-xs text-danger bg-danger/10 p-2 rounded border" style={borderStyle}>
+              ⚠ Не удалось сгенерировать перевод: {translateError}
+            </div>
+          )}
 
           {/* ────── 1. International analog ────── */}
           <div>

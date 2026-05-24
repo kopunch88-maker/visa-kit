@@ -364,9 +364,11 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
               </div>
 
               {/* Pack 41.0 — Техническое заключение */}
+              {/* Pack 43.0 — positionId передан для кнопки "Сгенерировать испанский" */}
               <TechOpinionSection
                 value={techOpinion}
                 onChange={setTechOpinion}
+                positionId={positionId}
               />
 
               {error && (
