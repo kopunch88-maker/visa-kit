@@ -463,8 +463,13 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
         _replace_markers_in_tr(new_tr, tx)
 
         # Pack 16.5: серый фон у строк дохода (зарплата от компании).
+        # Pack 47.3: серая заливка и жирная сумма — стиль эталона Алиева (Альфа).
+        # Применяется ТОЛЬКО для дефолтного шаблона. Сбер и другие банки со
+        # своим шаблоном имеют белый фон строк-доходов (как в их реальных
+        # выписках). Резолв через имя файла: дефолтный = "bank_statement_template.docx".
+        _is_default_template = template_path.name == "bank_statement_template.docx"
         amount = tx.get("amount")
-        if amount is not None:
+        if amount is not None and _is_default_template:
             try:
                 amount_val = float(amount)
             except (TypeError, ValueError):
