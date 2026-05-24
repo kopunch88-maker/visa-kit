@@ -566,16 +566,19 @@ def _replace_ep_badge_marker(doc, bank_data: dict) -> None:
     run = target_paragraph.add_run()
     pic = run.add_picture(png_io, width=Mm(80))
 
-    # Pack 47.17 FIX: python-docx ставит <pic:cNvPr id="0"> по умолчанию,
-    # что конфликтует с sber_logo.png (id="0") в шапке шаблона. Word считает
-    # дубликат id поврежденным контентом и удаляет картинку при открытии.
-    # Меняем id на уникальный 1002.
+    # Pack 47.17 FIX (extended in Pack 47.18): python-docx ставит
+    # <pic:cNvPr id="0"> по умолчанию для каждой add_picture. Word ругается
+    # на ЛЮБОЙ id="0" (OOXML schema требует id >= 1).
+    # 
+    # Pack 47.18: проходим по ВСЕМУ документу, ищем <pic:cNvPr id="0"> и
+    # ставим уникальные id (1002, 1003, ...). Это исправляет не только нашу
+    # вставленную картинку, но и sber_logo.png из шаблона.
     from docx.oxml.ns import qn as _qn
-    drawing_el = run._r.find(_qn("w:drawing"))
-    if drawing_el is not None:
-        for cNvPr in drawing_el.iter():
-            if cNvPr.tag.endswith("}cNvPr") and cNvPr.get("id") == "0":
-                cNvPr.set("id", "1002")
+    next_id = 1002
+    for el in doc.element.iter():
+        if el.tag.endswith("}cNvPr") and el.get("id") == "0":
+            el.set("id", str(next_id))
+            next_id += 1
 
 
 def _replace_markers_in_tr(tr_element, tx: dict):
