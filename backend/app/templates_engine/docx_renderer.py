@@ -508,9 +508,39 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     # этот маркер). Для Альфы и других шаблонов без маркера — no-op.
     _replace_ep_badge_marker(doc, bank_data)
 
+    # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
+    # OOXML schema требует это; Word иначе ругается "Обнаружено неоднозначное
+    # сопоставление ячеек". Мои функции _strip_empty_paragraphs_before_tables
+    # и _replace_ep_badge_marker могли удалить параграф который оказался
+    # последним в ячейке.
+    _ensure_paragraphs_at_tc_end(doc)
+
     result_buffer = io.BytesIO()
     doc.save(result_buffer)
     return result_buffer.getvalue()
+
+
+def _ensure_paragraphs_at_tc_end(doc) -> None:
+    """
+    Pack 47.19: проходит по всем <w:tc> в документе и если последний дочерний
+    элемент НЕ <w:p>, добавляет пустой <w:p/> в конец ячейки.
+
+    Гарантирует валидность OOXML — Word требует чтобы каждая ячейка таблицы
+    заканчивалась параграфом.
+    """
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OxmlElement
+
+    for tc in doc.element.iter(_qn("w:tc")):
+        children = list(tc)
+        if not children:
+            # Ячейка вообще пустая — добавляем <w:p/>
+            tc.append(_OxmlElement("w:p"))
+            continue
+        last = children[-1]
+        if last.tag != _qn("w:p"):
+            # Последний элемент не параграф — добавляем пустой <w:p/>
+            tc.append(_OxmlElement("w:p"))
 
 
 def _replace_ep_badge_marker(doc, bank_data: dict) -> None:
