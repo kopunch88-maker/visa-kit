@@ -1450,16 +1450,30 @@ def _fmt_date_es(d) -> str:
 
 
 def _short_latin_from_full(full_latin: str) -> str:
-    """"John Robert Smith" → "J. Smith". "Smith" → "Smith"."""
+    """Pack 44.0: русский порядок ФИО (Фамилия Имя Отчество) → испанский стиль подписи.
+
+    "KAYTUKTI KONSTANTIN PETROVICH" → "K.P. KAYTUKTI"
+    "Vasilevskaia Anna Vadimovna"   → "A.V. VASILEVSKAIA"
+    "Smith"                          → "SMITH"
+    ""                               → ""
+
+    Логика:
+        - parts[0]  = фамилия (первая в русском ФИО)
+        - parts[1:] = имя + отчество → становятся инициалами
+        - Результат: "{INITIALS}. {LASTNAME_UPPER}"
+        - Фамилия в UPPERCASE — испанский визовый стиль (как MRZ).
+    """
     if not full_latin:
         return ""
     parts = full_latin.strip().split()
     if len(parts) == 0:
         return ""
     if len(parts) == 1:
-        return parts[0]
-    # Берём первую букву от первого слова + последнее слово
-    return f"{parts[0][0]}. {parts[-1]}"
+        return parts[0].upper()
+    last_name = parts[0]
+    given_names = parts[1:]
+    initials = ".".join(p[0] for p in given_names if p) + "."
+    return f"{initials} {last_name.upper()}"
 
 
 def _build_applicant_honorifics(applicant) -> dict:
