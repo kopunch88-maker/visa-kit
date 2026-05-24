@@ -395,6 +395,7 @@ def generate_default_transactions(
                 "description": income_desc,
                 "amount": Decimal(salary_rub).quantize(Decimal("0.01")),
                 "currency": "RUR",
+                "category": "Прочие операции",
             })
 
         # 2. KWIKPAY (~10-15 числа того же месяца, в котором пришла зарплата)
@@ -415,6 +416,7 @@ def generate_default_transactions(
                 "description": "Перевод   JSC*KWIKPAY online.",
                 "amount": -kwikpay_amount,
                 "currency": "RUR",
+                "category": "Прочие операции",
             })
 
         # 3. НПД — Pack 35.0: диапазон 17-22 (плательщики НПД успевают «до 22 числа»),
@@ -435,6 +437,7 @@ def generate_default_transactions(
                 "description": npd_desc,
                 "amount": -tax_amount,
                 "currency": "RUR",
+                "category": "Прочие операции",
             })
 
         # 4. Комиссия за пакет (~1 числа месяца, следующего за месяцем дохода = next+1)
@@ -455,6 +458,7 @@ def generate_default_transactions(
                 "description": fee_desc,
                 "amount": -bank_fee,
                 "currency": "RUR",
+                "category": "Прочие операции",
             })
 
     # === Pack 25.8: СБП-переводы себе ===
@@ -484,6 +488,7 @@ def generate_default_transactions(
             "description": sbp_desc,
             "amount": -sbp_amount,
             "currency": "RUR",
+            "category": "Перевод СБП",
         })
 
     # === Pack 25.8: онлайн-подписки и оплаты сервисов ===
@@ -502,6 +507,7 @@ def generate_default_transactions(
             "description": sub_desc,
             "amount": -sub_amount,
             "currency": "RUR",
+            "category": "Прочие операции",
         })
 
     # === Pack 25.8: hard-фильтр + sanity check ===
@@ -661,6 +667,10 @@ def serialize_for_storage(generated: dict) -> dict:
                 "description": t["description"],
                 "amount": str(t["amount"]),
                 "currency": t["currency"],
+                # Pack 47.2: category — опциональное поле для мульти-банк системы.
+                # Старые сериализованные tx без него восстанавливаются через
+                # _sber_category_from_description в _build_bank_context.
+                "category": t.get("category", ""),
             }
             for t in generated["transactions"]
         ],
@@ -684,6 +694,8 @@ def deserialize_from_storage(stored: dict) -> dict:
                 "description": t["description"],
                 "amount": Decimal(t["amount"]),
                 "currency": t["currency"],
+                # Pack 47.2: см. serialize_for_storage. Старые БД без поля -> "".
+                "category": t.get("category", ""),
             }
             for t in stored["transactions"]
         ],

@@ -304,6 +304,167 @@ def fmt_amount_signed(amount: Decimal | int | float | None) -> str:
     return fmt_money_kop(amount) + " RUR"
 
 
+# === Pack 47.2: форматтеры для мульти-банк системы ===
+
+def fmt_amount_sber(amount: Decimal | int | float | None) -> str:
+    """
+    Pack 47.2: формат суммы как в эталоне Сбера.
+    - Без " RUR" в конце (в шапке выписки уже указано "Российский рубль").
+    - Положительные с префиксом "+" (поступления).
+    - Отрицательные БЕЗ минуса (списания) — в выписке Сбера все расходы
+      отображаются как абсолютное значение без знака, направление операции
+      понятно из контекста (категория, описание).
+
+    Примеры:
+      Decimal("2500.00")  -> "+2 500,00"
+      Decimal("-2243.64") -> "2 243,64"
+      Decimal("0")        -> "0,00"
+    """
+    if amount is None:
+        return ""
+    n_decimal = Decimal(amount).quantize(Decimal("0.01"))
+    sign = ""
+    if n_decimal > 0:
+        sign = "+"
+    abs_amount = n_decimal.copy_abs()
+    int_part = int(abs_amount)
+    frac = (abs_amount - Decimal(int_part)).copy_abs()
+    frac_str = f"{frac:.2f}".split(".")[1]
+    formatted = f"{int_part:,}".replace(",", " ") + "," + frac_str
+    return f"{sign}{formatted}"
+
+
+def fmt_amount_sber_unsigned(amount: Decimal | int | float | None) -> str:
+    """
+    Pack 47.2: формат суммы как в эталоне Сбера БЕЗ знака
+    (для блока "Итого по операциям": Пополнение / Списание / Остаток).
+    """
+    if amount is None:
+        return ""
+    n_decimal = Decimal(amount).quantize(Decimal("0.01"))
+    abs_amount = n_decimal.copy_abs()
+    int_part = int(abs_amount)
+    frac = (abs_amount - Decimal(int_part)).copy_abs()
+    frac_str = f"{frac:.2f}".split(".")[1]
+    return f"{int_part:,}".replace(",", " ") + "," + frac_str
+
+
+# === Pack 47.2: эвристика category из description (backfill для старых tx) ===
+
+# Sber-категории по началу description. Применяется ТОЛЬКО если category
+# отсутствует в tx (старые сохранённые выписки). После backfill значение
+# не записывается обратно в БД — следующий ребилд выписки менеджером запишет
+# его автоматически через generate_default_transactions.
+_SBER_CATEGORY_BY_PREFIX = (
+    ("Перевод по СБП", "Перевод СБП"),
+    ("Перевод СБП", "Перевод СБП"),
+    # все остальные распознанные паттерны — категория "Прочие операции"
+    # (как делает реальный Сбер для зарплат/налогов/комиссий/подписок)
+)
+
+
+def _sber_category_from_description(description: str) -> str:
+    """
+    Pack 47.2: backfill категории для tx без поля "category".
+
+    Используется в _apply_sber_postprocess для старых выписок которые
+    были сохранены до Pack 47.2. По умолчанию возвращает "Прочие операции"
+    (стандартная категория Сбера для платежей без MCC-маппинга).
+    """
+    if not description:
+        return "Прочие операции"
+    desc_stripped = description.lstrip()
+    for prefix, category in _SBER_CATEGORY_BY_PREFIX:
+        if desc_stripped.startswith(prefix):
+            return category
+    return "Прочие операции"
+
+
+# === Pack 47.2: резолв "это Сбер-выписка?" по applicant.bank_id ===
+
+# БИК Сбера в нашей БД. Один источник правды — этот константный список.
+# Когда подключим ВТБ/ТБанк/Открытие — добавятся новые pack-функции с
+# их БИК, не трогая Sber-функцию.
+_SBER_BIK = "044525225"
+
+
+def _is_sber_applicant(applicant, session) -> bool:
+    """Pack 47.2: True если у applicant.bank указан Сбер."""
+    if applicant is None or not getattr(applicant, "bank_id", None):
+        return False
+    if session is None:
+        return False
+    from app.models import Bank
+    bank = session.get(Bank, applicant.bank_id)
+    if bank is None:
+        return False
+    return getattr(bank, "bik", None) == _SBER_BIK
+
+
+# === Pack 47.2: пост-процессинг bank_data для Сбер-выписки ===
+
+def _apply_sber_postprocess(bank_data: dict, applicant, session) -> dict:
+    """
+    Pack 47.2: если applicant — Сбер-клиент, применяем:
+      1. backfill category в каждом tx (если поле отсутствует или пустое).
+      2. running_balance: сортируем tx по дате asc, накапливаем баланс,
+         сортируем обратно по дате desc для вывода (как в эталоне Сбера).
+         Каждой tx добавляется ключ running_balance + running_balance_formatted.
+      3. amount_formatted переформатируем через fmt_amount_sber.
+      4. opening/closing/total_*_formatted переформатируем через
+         fmt_amount_sber_unsigned (без знака — в блоке "Итого").
+
+    Если applicant НЕ Сбер — возвращаем bank_data без изменений.
+    Это сохраняет поведение Альфы.
+    """
+    if not _is_sber_applicant(applicant, session):
+        return bank_data
+
+    transactions = bank_data.get("transactions") or []
+
+    # === 1. Backfill category ===
+    for tx in transactions:
+        if not tx.get("category"):
+            tx["category"] = _sber_category_from_description(tx.get("description", ""))
+
+    # === 2. Running balance ===
+    # Берём opening_balance уже из bank_data (он мог быть скорректирован
+    # MIN_CLOSING в _build_bank_context — нам нужен финальный)
+    opening = bank_data.get("opening_balance") or Decimal("0")
+    txs_sorted_asc = sorted(
+        transactions,
+        key=lambda t: t.get("transaction_date") or date.min,
+    )
+    running = opening
+    for tx in txs_sorted_asc:
+        amount = tx.get("amount") or Decimal("0")
+        running = Decimal(running) + Decimal(amount)
+        tx["running_balance"] = running
+        tx["running_balance_formatted"] = fmt_amount_sber_unsigned(running)
+
+    # Сортируем выводимые транзакции по дате desc (новые сверху, как в эталоне)
+    transactions_desc = sorted(
+        transactions,
+        key=lambda t: t.get("transaction_date") or date.min,
+        reverse=True,
+    )
+    bank_data["transactions"] = transactions_desc
+
+    # === 3. amount_formatted через Sber-форматтер ===
+    for tx in transactions_desc:
+        tx["amount_formatted"] = fmt_amount_sber(tx.get("amount"))
+
+    # === 4. Итоги через Sber-форматтер без знака ===
+    for key in ("opening_balance_formatted", "closing_balance_formatted",
+                "total_income_formatted", "total_expense_formatted"):
+        raw_key = key[: -len("_formatted")]
+        if raw_key in bank_data:
+            bank_data[key] = fmt_amount_sber_unsigned(bank_data[raw_key])
+
+    return bank_data
+
+
+
 def _money_to_words_ru(amount) -> str:
     if amount is None:
         return ""
@@ -1535,6 +1696,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     bank_data = _build_bank_context(application, company, applicant)
     # Pack 16.2: добавляем поля для шапки выписки
     bank_data = _enrich_bank_with_statement_fields(bank_data, application)
+    # Pack 47.2: Sber-постпроцессинг (категории, running_balance, формат сумм).
+    # No-op для не-Сбер клиентов. Резолв через applicant.bank.bik.
+    bank_data = _apply_sber_postprocess(bank_data, applicant, session)
 
     # Парсим паспорт по гражданству
     # Pack 41.0-G — context по умолчанию на primary (через скаляр-зеркало).

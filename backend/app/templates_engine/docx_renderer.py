@@ -517,6 +517,10 @@ def _replace_markers_in_tr(tr_element, tx: dict):
         "__TX_CODE__": tx.get("code", ""),
         "__TX_DESCRIPTION__": tx.get("description", "") or "",
         "__TX_AMOUNT__": tx.get("amount_formatted", ""),
+        # Pack 47.2: мульти-банк маркеры. Шаблоны без них (Альфа) — игнорят:
+        # _replace_markers_in_tr ищет маркер в тексте параграфа, нет — нет замены.
+        "__TX_CATEGORY__": tx.get("category", "") or "",
+        "__TX_BALANCE__": tx.get("running_balance_formatted", "") or "",
     }
 
     cells = tr_element.findall('.//w:tc', NS)

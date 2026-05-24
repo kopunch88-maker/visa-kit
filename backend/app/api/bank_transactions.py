@@ -44,6 +44,10 @@ class BankTransactionItem(BaseModel):
     description: str
     amount: Decimal
     currency: str = "RUR"
+    # Pack 47.2: category — мульти-банк поле для отображения в шаблонах,
+    # которые делят строку транзакции на "категория + описание" (Сбер).
+    # Альфа игнорирует. Опционально для back-compat со старыми tx в БД.
+    category: Optional[str] = None
 
 
 class BankStatementData(BaseModel):
