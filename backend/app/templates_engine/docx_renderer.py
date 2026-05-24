@@ -37,7 +37,7 @@ from docxtpl import DocxTemplate
 from sqlmodel import Session
 import lxml.etree as etree
 
-from app.models import Application, Company
+from app.models import Application, Applicant, Bank, Company
 from .context import build_context
 
 
@@ -374,13 +374,50 @@ def render_tech_opinion(application: Application, session: Session) -> bytes:
 
 
 
+def _resolve_bank_statement_template_path(
+    application: Application,
+    session: Session,
+) -> "Path":
+    """
+    Pack 47.0: резолв шаблона выписки по applicant.bank_id.
+
+    Логика (схема из models/bank.py:8):
+      1. applicant.bank_id != None → достаём Bank → пробуем
+         templates/docx/bank_statement_template_<bik>.docx
+      2. Если файла нет — fallback на bank_statement_template.docx (Альфа).
+
+    Это обратно совместимо: все существующие заявки без bank_id или с
+    bank_id под который нет файла — продолжают рендериться шаблоном Альфы.
+    """
+    default_path = TEMPLATES_DIR / "bank_statement_template.docx"
+
+    if not application.applicant_id:
+        return default_path
+
+    applicant = session.get(Applicant, application.applicant_id)
+    if applicant is None or not applicant.bank_id:
+        return default_path
+
+    bank = session.get(Bank, applicant.bank_id)
+    if bank is None or not bank.bik:
+        return default_path
+
+    candidate = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}.docx"
+    if candidate.exists():
+        return candidate
+
+    return default_path
+
+
 def render_bank_statement(application: Application, session: Session) -> bytes:
     """
     Двухфазный рендер:
     1. docxtpl подставляет шапку (период, балансы) через Jinja
     2. python-docx клонирует строку-образец таблицы для каждой транзакции
+
+    Pack 47.0: шаблон выбирается по applicant.bank_id (см. _resolve_bank_statement_template_path).
     """
-    template_path = TEMPLATES_DIR / "bank_statement_template.docx"
+    template_path = _resolve_bank_statement_template_path(application, session)
     if not template_path.exists():
         raise FileNotFoundError(f"Template not found: {template_path}")
 
