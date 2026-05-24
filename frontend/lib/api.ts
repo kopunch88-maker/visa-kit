@@ -3444,8 +3444,10 @@ export async function translatePositionToSpanish(positionId: number): Promise<{
     `${API_BASE_URL}/api/admin/positions/${positionId}/translate-spanish`,
     {
       method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+      },
     }
   );
   if (!response.ok) {
