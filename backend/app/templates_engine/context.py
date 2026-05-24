@@ -306,6 +306,24 @@ def fmt_amount_signed(amount: Decimal | int | float | None) -> str:
 
 # === Pack 47.2: форматтеры для мульти-банк системы ===
 
+def _fmt_bank_account_groups(account: str | None) -> str:
+    """
+    Pack 47.7: формат 20-значного российского расчётного счёта с разделителями.
+
+    Формат Сбера: 5-3-1-4-7 (как в реальной выписке).
+    Пример: "40817810130850859826" -> "40817 810 1 3085 0859826"
+
+    Если account != 20 цифр — возвращаем как есть (back-compat для тестовых /
+    неполных значений).
+    """
+    if not account:
+        return ""
+    digits = "".join(c for c in account if c.isdigit())
+    if len(digits) != 20:
+        return account
+    return f"{digits[0:5]} {digits[5:8]} {digits[8:9]} {digits[9:13]} {digits[13:20]}"
+
+
 def fmt_amount_sber(amount: Decimal | int | float | None) -> str:
     """
     Pack 47.2: формат суммы как в эталоне Сбера.
@@ -1771,6 +1789,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "named_suffix": _build_named_suffix(applicant),
             "passport_country_code": applicant.nationality,
             "bank_account": applicant.bank_account or "",
+            # Pack 47.7: derived поле для Sber-шаблона (формат "XXXXX XXX X XXXX XXXXXXX").
+            # Альфа продолжает использовать "bank_account" (без пробелов).
+            "bank_account_formatted": _fmt_bank_account_groups(applicant.bank_account),
             "bank_name": applicant.bank_name or "",
             "bank_bic": applicant.bank_bic or "",
             "bank_correspondent_account": applicant.bank_correspondent_account or "",
