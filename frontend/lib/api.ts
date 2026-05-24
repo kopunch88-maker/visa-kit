@@ -3511,3 +3511,77 @@ export async function generatePositionRussian(
   }
   return response.json();
 }
+
+// ============================================================
+// Pack 46.0 — Диплом для хурадо
+// ============================================================
+
+export interface DiplomaSigner {
+  name: string;
+  position?: string | null;
+}
+
+export interface DiplomaFieldsResult {
+  diploma_number: string;
+  registration_number: string;
+  protocol_number: string;
+  protocol_date: string; // ISO YYYY-MM-DD
+  issue_date: string; // ISO YYYY-MM-DD
+  signers: DiplomaSigner[];
+}
+
+/**
+ * Pack 46.0: сгенерировать 6 полей диплома через LLM.
+ * Возвращает dict — фронт сам сохраняет через PATCH applicant.education.
+ * Endpoint: POST /api/admin/applicants/{id}/education/{idx}/generate-fields
+ */
+export async function generateDiplomaFields(
+  applicantId: number,
+  idx: number
+): Promise<DiplomaFieldsResult> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/education/${idx}/generate-fields`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Pack 46.0: URL для PDF-диплома (открывается через window.open в новой вкладке).
+ * Endpoint: GET /api/admin/applicants/{id}/education/{idx}/diploma.pdf
+ *
+ * Поскольку PDF идёт inline и нужен Authorization header, открываем через blob:
+ */
+export async function openDiplomaPdf(
+  applicantId: number,
+  idx: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/${applicantId}/education/${idx}/diploma.pdf`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  // URL отзываем через минуту — даём времени браузеру прогрузить
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

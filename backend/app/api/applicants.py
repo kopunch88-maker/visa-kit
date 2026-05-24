@@ -19,6 +19,13 @@ from app.models import Applicant, Application
 from app.models.self_employed_registry import SelfEmployedRegistry
 from app.services.transliteration import transliterate_lat_to_ru, normalize_russian_case
 from .dependencies import require_manager
+# Pack 46.0 — диплом для хурадо
+from fastapi.responses import Response as _Pack46Response
+from app.services.diploma_pdf_renderer import render_diploma_pdf
+from app.services.diploma_field_generator import (
+    DiplomaFieldsInput,
+    generate_diploma_fields,
+)
 
 router = APIRouter(prefix="/admin/applicants", tags=["applicants"])
 
@@ -369,3 +376,127 @@ def resolve_passport_issuer_ru_endpoint(
 
     resolved = resolve_passport_issuer_ru(issuer, nationality)
     return {"resolved": resolved}
+
+# ============================================================================
+# Pack 46.0 — Диплом для хурадо
+# ============================================================================
+# Документ-аналог титульного листа диплома (БЕЗ гербовых элементов и печатей),
+# для передачи присяжному переводчику в Испании как source для перевода + апостиля.
+# Не в общем ZIP — отдельная кнопка в разделе Образование.
+
+
+@router.post("/{applicant_id}/education/{idx}/generate-fields")
+async def generate_diploma_fields_endpoint(
+    applicant_id: int,
+    idx: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 46.0: LLM генерит 6 полей диплома по institution+specialty+year.
+
+    Возвращает dict — фронт сам сохраняет через PATCH education.
+    """
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(404, f"Applicant id={applicant_id} not found")
+
+    education = applicant.education or []
+    if idx < 0 or idx >= len(education):
+        raise HTTPException(
+            404, f"Education[{idx}] not found (applicant has {len(education)} records)"
+        )
+
+    edu = education[idx]
+    institution = (edu.get("institution") or "").strip()
+    specialty = (edu.get("specialty") or "").strip()
+    graduation_year = edu.get("graduation_year")
+    degree = (edu.get("degree") or "").strip() or None
+
+    if not institution or not specialty or not graduation_year:
+        raise HTTPException(
+            422,
+            "Для генерации нужны institution, specialty и graduation_year. "
+            f"Сейчас: institution={institution!r}, specialty={specialty!r}, year={graduation_year!r}",
+        )
+
+    # ФИО для контекста промпта
+    full_name_parts = [
+        (applicant.first_name_native or "").strip(),
+        (applicant.last_name_native or "").strip(),
+    ]
+    full_name = " ".join(p for p in full_name_parts if p) or None
+
+    try:
+        inp = DiplomaFieldsInput(
+            institution=institution,
+            specialty=specialty,
+            graduation_year=int(graduation_year),
+            degree=degree,
+            full_name_native=full_name,
+        )
+        result = await generate_diploma_fields(inp)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, f"LLM service error: {e}")
+
+    return result
+
+
+@router.get("/{applicant_id}/education/{idx}/diploma.pdf")
+async def get_diploma_pdf_endpoint(
+    applicant_id: int,
+    idx: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+):
+    """Pack 46.0: рендерит PDF диплома для хурадо. Открывается inline в браузере."""
+    applicant = session.get(Applicant, applicant_id)
+    if not applicant:
+        raise HTTPException(404, f"Applicant id={applicant_id} not found")
+
+    education = applicant.education or []
+    if idx < 0 or idx >= len(education):
+        raise HTTPException(
+            404, f"Education[{idx}] not found (applicant has {len(education)} records)"
+        )
+
+    edu = education[idx]
+
+    # Собираем ФИО на русском (фамилия + имя + отчество если есть)
+    parts = [
+        (applicant.last_name_native or "").strip(),
+        (applicant.first_name_native or "").strip(),
+    ]
+    middle = (getattr(applicant, "middle_name_native", "") or "").strip()
+    if middle:
+        parts.append(middle)
+    full_name = " ".join(p for p in parts if p)
+
+    if not full_name:
+        raise HTTPException(422, "У applicant пустое ФИО — не могу собрать диплом")
+
+    try:
+        pdf_bytes = render_diploma_pdf(
+            full_name_native=full_name,
+            education=edu,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка рендера PDF: {e}")
+
+    # ASCII-safe filename + RFC 5987 для кириллицы (Правило 61)
+    from urllib.parse import quote
+    safe_last = (applicant.last_name_native or f"applicant_{applicant_id}").strip()
+    pretty_name = f"Диплом_{safe_last}.pdf"
+    ascii_fallback = f"diploma_{applicant_id}_{idx}.pdf"
+
+    return _Pack46Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{ascii_fallback}"; '
+                f"filename*=UTF-8''{quote(pretty_name)}"
+            ),
+        },
+    )

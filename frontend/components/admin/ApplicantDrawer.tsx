@@ -19,6 +19,9 @@ import {
   generateAccount,
   regenerateAddress, // Pack 18.8: перегенерация адреса
   regenerateEducation, // Pack 19.0: автогенерация образования
+  // Pack 46.0 — диплом для хурадо
+  generateDiplomaFields,
+  openDiplomaPdf,
   regenerateWorkHistory, // Pack 19.1: автогенерация work_history
   // Pack 25.10 — банковская выписка
   ApplicationResponse,
@@ -150,6 +153,63 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   >((applicant.education as any) || []);
   const [educationRegenerating, setEducationRegenerating] = useState(false);
   const [educationFallbackUsed, setEducationFallbackUsed] = useState(false);
+  // Pack 46.0 — состояния для генерации диплома (по индексу записи)
+  const [diplomaGenerating, setDiplomaGenerating] = useState<number | null>(null);
+  const [diplomaOpening, setDiplomaOpening] = useState<number | null>(null);
+  const [diplomaError, setDiplomaError] = useState<string | null>(null);
+
+  // Pack 46.0 — handler генерации полей диплома через LLM
+  async function handleGenerateDiplomaFields(i: number) {
+    const edu = education[i];
+    if (!edu.institution || !edu.specialty || !edu.graduation_year) {
+      setDiplomaError(
+        "Сначала заполни ВУЗ, специальность и год выпуска"
+      );
+      return;
+    }
+    // Проверка непустоты — confirm если поля уже заполнены
+    const hasFilled =
+      !!(edu as any).diploma_number ||
+      !!(edu as any).registration_number ||
+      !!(edu as any).protocol_number ||
+      !!(edu as any).issue_date;
+    if (hasFilled) {
+      const ok = window.confirm(
+        "Поля диплома (номер, регистрационный, дата, подписанты) будут перезаписаны генерацией из LLM. Продолжить?"
+      );
+      if (!ok) return;
+    }
+    setDiplomaError(null);
+    setDiplomaGenerating(i);
+    try {
+      const result = await generateDiplomaFields(applicant.id, i);
+      const next = [...education];
+      next[i] = { ...next[i], ...result };
+      setEducation(next);
+    } catch (e) {
+      setDiplomaError(
+        "Не удалось сгенерировать: " +
+          ((e as Error).message || "ошибка LLM")
+      );
+    } finally {
+      setDiplomaGenerating(null);
+    }
+  }
+
+  // Pack 46.0 — handler открытия PDF диплома
+  async function handleOpenDiplomaPdf(i: number) {
+    setDiplomaError(null);
+    setDiplomaOpening(i);
+    try {
+      await openDiplomaPdf(applicant.id, i);
+    } catch (e) {
+      setDiplomaError(
+        "Не удалось открыть PDF: " + ((e as Error).message || "ошибка")
+      );
+    } finally {
+      setDiplomaOpening(null);
+    }
+  }
   // Pack 19.1 — работа (List[WorkRecord]) с генератором + editable полями.
   // period_start/period_end — свободные строки ("Сентябрь 2022", "по настоящее время").
   const [workHistory, setWorkHistory] = useState<
@@ -1047,6 +1107,266 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                       color: "var(--color-text-primary)",
                     }}
                   />
+                </div>
+
+                {/* ===================================================== */}
+                {/* Pack 46.0 — поля для диплома для хурадо               */}
+                {/* ===================================================== */}
+                <div
+                  className="mt-3 pt-3"
+                  style={{
+                    borderTop: "1px solid var(--color-border-tertiary)",
+                  }}
+                >
+                  <div
+                    className="text-xs font-semibold mb-2"
+                    style={{ color: "var(--color-text-secondary)" }}
+                  >
+                    📄 Диплом для хурадо
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div>
+                      <label
+                        className="text-xs block mb-1"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        Номер бланка
+                      </label>
+                      <input
+                        type="text"
+                        value={(edu as any).diploma_number || ""}
+                        onChange={(e) => {
+                          const next = [...education];
+                          next[i] = { ...next[i], diploma_number: e.target.value } as any;
+                          setEducation(next);
+                        }}
+                        placeholder="107724  0170246"
+                        className="w-full px-2 py-1 rounded text-sm"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className="text-xs block mb-1"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        Регистрационный номер
+                      </label>
+                      <input
+                        type="text"
+                        value={(edu as any).registration_number || ""}
+                        onChange={(e) => {
+                          const next = [...education];
+                          next[i] = { ...next[i], registration_number: e.target.value } as any;
+                          setEducation(next);
+                        }}
+                        placeholder="2.10.3-13.1/423"
+                        className="w-full px-2 py-1 rounded text-sm"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div>
+                      <label
+                        className="text-xs block mb-1"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        № протокола
+                      </label>
+                      <input
+                        type="text"
+                        value={(edu as any).protocol_number || ""}
+                        onChange={(e) => {
+                          const next = [...education];
+                          next[i] = { ...next[i], protocol_number: e.target.value } as any;
+                          setEducation(next);
+                        }}
+                        placeholder="1"
+                        className="w-full px-2 py-1 rounded text-sm"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className="text-xs block mb-1"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        Дата протокола
+                      </label>
+                      <input
+                        type="date"
+                        value={(edu as any).protocol_date || ""}
+                        onChange={(e) => {
+                          const next = [...education];
+                          next[i] = { ...next[i], protocol_date: e.target.value } as any;
+                          setEducation(next);
+                        }}
+                        className="w-full px-2 py-1 rounded text-sm"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className="text-xs block mb-1"
+                        style={{ color: "var(--color-text-tertiary)" }}
+                      >
+                        Дата выдачи
+                      </label>
+                      <input
+                        type="date"
+                        value={(edu as any).issue_date || ""}
+                        onChange={(e) => {
+                          const next = [...education];
+                          next[i] = { ...next[i], issue_date: e.target.value } as any;
+                          setEducation(next);
+                        }}
+                        className="w-full px-2 py-1 rounded text-sm"
+                        style={{
+                          background: "var(--color-bg-primary)",
+                          border: "1px solid var(--color-border-tertiary)",
+                          color: "var(--color-text-primary)",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mb-2">
+                    <label
+                      className="text-xs block mb-1"
+                      style={{ color: "var(--color-text-tertiary)" }}
+                    >
+                      Подписанты (по одному на строку, формат «Фамилия И.О.»)
+                    </label>
+                    <textarea
+                      value={
+                        ((edu as any).signers || [])
+                          .map((s: any) => (typeof s === "string" ? s : s?.name || ""))
+                          .filter(Boolean)
+                          .join("\n")
+                      }
+                      onChange={(e) => {
+                        const next = [...education];
+                        const lines = e.target.value
+                          .split("\n")
+                          .map((s) => s.trim())
+                          .filter(Boolean);
+                        next[i] = {
+                          ...next[i],
+                          signers: lines.map((name) => ({ name, position: null })),
+                        } as any;
+                        setEducation(next);
+                      }}
+                      rows={2}
+                      placeholder="Афанасьев А.П.&#10;Радаев В.В."
+                      className="w-full px-2 py-1 rounded text-sm"
+                      style={{
+                        background: "var(--color-bg-primary)",
+                        border: "1px solid var(--color-border-tertiary)",
+                        color: "var(--color-text-primary)",
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Pack 46.0 — кнопка LLM-генерации 6 полей */}
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateDiplomaFields(i)}
+                      disabled={
+                        diplomaGenerating === i ||
+                        !edu.institution ||
+                        !edu.specialty ||
+                        !edu.graduation_year
+                      }
+                      title={
+                        !edu.institution || !edu.specialty || !edu.graduation_year
+                          ? "Сначала заполни ВУЗ, специальность и год выпуска"
+                          : "Сгенерировать номер бланка, регистрационный, протокол, даты и подписантов через LLM"
+                      }
+                      className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded text-primary border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{
+                        borderColor: "var(--color-border-tertiary)",
+                      }}
+                    >
+                      {diplomaGenerating === i ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Генерация...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Сгенерировать
+                        </>
+                      )}
+                    </button>
+
+                    {/* Pack 46.0 — кнопка открытия PDF */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDiplomaPdf(i)}
+                      disabled={
+                        diplomaOpening === i ||
+                        !(edu as any).diploma_number ||
+                        !(edu as any).registration_number ||
+                        !(edu as any).issue_date
+                      }
+                      title={
+                        !(edu as any).diploma_number ||
+                        !(edu as any).registration_number ||
+                        !(edu as any).issue_date
+                          ? "Сначала заполни поля диплома (или сгенерируй)"
+                          : "Открыть PDF диплома в новой вкладке"
+                      }
+                      className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded text-primary border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{
+                        borderColor: "var(--color-border-tertiary)",
+                      }}
+                    >
+                      {diplomaOpening === i ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Открытие...
+                        </>
+                      ) : (
+                        <>
+                          📄 Скачать диплом
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {diplomaError && (
+                    <div
+                      className="text-xs mt-2 px-2 py-1 rounded"
+                      style={{
+                        background: "rgba(220, 38, 38, 0.1)",
+                        color: "#b91c1c",
+                        border: "1px solid rgba(220, 38, 38, 0.3)",
+                      }}
+                    >
+                      {diplomaError}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
