@@ -564,7 +564,18 @@ def _replace_ep_badge_marker(doc, bank_data: dict) -> None:
     import io as _io
     png_io = _io.BytesIO(png_bytes)
     run = target_paragraph.add_run()
-    run.add_picture(png_io, width=Mm(80))
+    pic = run.add_picture(png_io, width=Mm(80))
+
+    # Pack 47.17 FIX: python-docx ставит <pic:cNvPr id="0"> по умолчанию,
+    # что конфликтует с sber_logo.png (id="0") в шапке шаблона. Word считает
+    # дубликат id поврежденным контентом и удаляет картинку при открытии.
+    # Меняем id на уникальный 1002.
+    from docx.oxml.ns import qn as _qn
+    drawing_el = run._r.find(_qn("w:drawing"))
+    if drawing_el is not None:
+        for cNvPr in drawing_el.iter():
+            if cNvPr.tag.endswith("}cNvPr") and cNvPr.get("id") == "0":
+                cNvPr.set("id", "1002")
 
 
 def _replace_markers_in_tr(tr_element, tx: dict):
