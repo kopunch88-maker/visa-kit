@@ -43,12 +43,12 @@ _SBER_EP_CARD_PATH = (
     / "templates" / "docx" / "sber_ep_card.png"
 )
 
-# Координаты текстовых полей в PNG (привязаны к 1046x453 — размеру эталонной PNG).
+# Координаты текстовых полей в PNG (привязаны к 1134x537 — размеру эталонной PNG).
 # Если когда-то PNG заменим на другую — эти координаты нужно будет пересчитать.
-_LABEL_X = 70
-_VALUE_X = 320
-_START_Y = 270
-_ROW_GAP = 38
+_LABEL_X = 76
+_VALUE_X = 347
+_START_Y = 310
+_ROW_GAP = 45
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -101,8 +101,8 @@ def render_ep_badge_png(
     img = Image.open(_SBER_EP_CARD_PATH).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
-    font_regular = _load_font(22, bold=False)
-    font_bold = _load_font(22, bold=True)
+    font_regular = _load_font(24, bold=False)
+    font_bold = _load_font(24, bold=True)
 
     rows = [
         ("Сертификат:",   cert_no,                              False),
