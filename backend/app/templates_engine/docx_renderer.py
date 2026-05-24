@@ -503,9 +503,68 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
         _add_bottom_border_to_row(last_row)
     _set_keep_next_on_paragraph_between_tables(doc)
 
+    # Pack 47.15: ФАЗА 3 — замена маркера __EP_BADGE__ на runtime-сгенерированную
+    # картинку плашки ЭП. Применяется только для Sber-шаблона (только он имеет
+    # этот маркер). Для Альфы и других шаблонов без маркера — no-op.
+    _replace_ep_badge_marker(doc, bank_data)
+
     result_buffer = io.BytesIO()
     doc.save(result_buffer)
     return result_buffer.getvalue()
+
+
+def _replace_ep_badge_marker(doc, bank_data: dict) -> None:
+    """
+    Pack 47.15: ищет в документе ячейку с текстом "__EP_BADGE__", очищает её
+    и вставляет inline-картинку плашки ЭП Сбербанка.
+
+    Картинка генерируется через ep_badge_renderer.render_ep_badge_png с
+    актуальной датой подписи (bank.statement_date_formatted).
+
+    Если маркер не найден — функция ничего не делает (back-compat для Альфы
+    и других банков).
+    """
+    from .ep_badge_renderer import render_ep_badge_png
+    from docx.shared import Mm
+
+    MARKER = "__EP_BADGE__"
+    statement_date = bank_data.get("statement_date_formatted", "") if bank_data else ""
+
+    # Перебираем все ячейки всех таблиц (включая вложенные)
+    target_cell = None
+    target_paragraph = None
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if MARKER in cell.text:
+                    for p in cell.paragraphs:
+                        if MARKER in p.text:
+                            target_cell = cell
+                            target_paragraph = p
+                            break
+                if target_cell:
+                    break
+            if target_cell:
+                break
+        if target_cell:
+            break
+
+    if target_cell is None or target_paragraph is None:
+        return  # Маркера нет — нечего делать
+
+    # Очищаем параграф (удаляем все runs)
+    for r in list(target_paragraph.runs):
+        r._r.getparent().remove(r._r)
+
+    # Генерируем PNG плашки
+    png_bytes = render_ep_badge_png(statement_date_str=statement_date)
+
+    # Вставляем как inline-картинку шириной 80mm (соответствует ширине
+    # right-колонки sig_tbl в шаблоне Сбера).
+    import io as _io
+    png_io = _io.BytesIO(png_bytes)
+    run = target_paragraph.add_run()
+    run.add_picture(png_io, width=Mm(80))
 
 
 def _replace_markers_in_tr(tr_element, tx: dict):
