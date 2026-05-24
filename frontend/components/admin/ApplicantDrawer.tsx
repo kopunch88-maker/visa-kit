@@ -186,6 +186,19 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
       const next = [...education];
       next[i] = { ...next[i], ...result };
       setEducation(next);
+
+      // Pack 46.0 / fix1 — автосохранение в БД, чтобы кнопка 📄 Скачать диплом
+      // сразу работала на актуальных данных (без ожидания клика «Сохранить»).
+      try {
+        await updateApplicant(applicant.id, { education: next });
+        onSaved();
+      } catch (saveErr) {
+        setDiplomaError(
+          "Поля сгенерированы, но не удалось сохранить в БД: " +
+            ((saveErr as Error).message || "ошибка PATCH") +
+            ". Нажми «Сохранить» вручную перед скачиванием PDF."
+        );
+      }
     } catch (e) {
       setDiplomaError(
         "Не удалось сгенерировать: " +
