@@ -26,6 +26,9 @@ import {
   importPackagePresignBatch,
   importPackageFinalizeUploads,
   uploadToR2WithProgress,
+  // Pack 50.0-C5
+  ApplicationType,
+  APPLICATION_TYPE_BADGE,
 } from "@/lib/api";
 import {
   pdfToImagePages,
@@ -93,6 +96,9 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [internalNotes, setInternalNotes] = useState("");
   const [existingApplicationId, setExistingApplicationId] = useState<number | null>(null);
+  // Pack 50.0-C5 — тип заявки для нового импорта
+  const [selectedImportType, setSelectedImportType] = useState<ApplicationType>("SELF_EMPLOYED");
+  const [showImportTypeModal, setShowImportTypeModal] = useState(false);
 
   // Pack 42.3 — quick mode: если переданы initialFiles + initialApplicationId,
   // сразу настраиваем target="existing" и запускаем upload (минуя UploadStep)
@@ -368,6 +374,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
       const result = await importPackageFinalize(importSession.session_id, {
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        // Pack 50.0-C5 — тип заявки только для target=new
+        application_type: target === "new" ? selectedImportType : undefined,
         files: fileAssignments,
         run_ocr: true,
       });
@@ -440,6 +448,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
         company: companyForm,
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        // Pack 50.0-C5 — тип заявки только для target=new
+        application_type: target === "new" ? selectedImportType : undefined,
         files: buildAssignments(),
         run_ocr: true,
       });
@@ -463,6 +473,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
       const result = await importPackageFinalizeSkipCompany(importSession.session_id, {
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        // Pack 50.0-C5 — тип заявки только для target=new
+        application_type: target === "new" ? selectedImportType : undefined,
         files: buildAssignments(),
         run_ocr: true,
       });
@@ -622,6 +634,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
               existingApplicationId={existingApplicationId}
               setExistingApplicationId={setExistingApplicationId}
               applications={applications}
+              selectedImportType={selectedImportType}
+              openImportTypeModal={() => setShowImportTypeModal(true)}
             />
           )}
 
@@ -664,6 +678,88 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
               <div className="text-xs text-tertiary">Открываем заявку...</div>
             </div>
           )}
+
+      {/* Pack 50.0-C5 — модалка выбора типа заявки (только для импорта в новую) */}
+      {showImportTypeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.55)" }}
+          onClick={() => setShowImportTypeModal(false)}
+        >
+          <div
+            className="bg-primary rounded-xl border p-6 w-full max-w-md shadow-xl"
+            style={{
+              borderColor: "var(--color-border-tertiary)",
+              borderWidth: 0.5,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-1">
+              <h2 className="text-lg font-semibold text-primary">
+                Тип заявки на визу
+              </h2>
+              <button
+                onClick={() => setShowImportTypeModal(false)}
+                className="text-tertiary hover:text-primary transition-colors"
+                title="Закрыть"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-tertiary mb-5">
+              От типа зависит набор документов, который будем готовить для подачи.
+            </p>
+
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedImportType("SELF_EMPLOYED");
+                  setShowImportTypeModal(false);
+                }}
+                className="w-full text-left px-4 py-4 rounded-lg border transition-colors hover:bg-secondary"
+                style={{
+                  borderColor: selectedImportType === "SELF_EMPLOYED" ? "var(--color-accent)" : "var(--color-border-tertiary)",
+                  borderWidth: selectedImportType === "SELF_EMPLOYED" ? 1.5 : 0.5,
+                }}
+              >
+                <div className="text-base font-semibold text-primary mb-0.5">
+                  🆔 Самозанятый
+                </div>
+                <div className="text-xs text-tertiary">
+                  Клиент работает по ГПХ с заказчиком, оформлен как самозанятый (НПД).
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedImportType("EMPLOYMENT");
+                  setShowImportTypeModal(false);
+                }}
+                className="w-full text-left px-4 py-4 rounded-lg border-2 transition-colors"
+                style={{
+                  borderColor: "#eab308",
+                  background: selectedImportType === "EMPLOYMENT" ? "#fde68a" : "#fef3c7",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "#fde68a";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = selectedImportType === "EMPLOYMENT" ? "#fde68a" : "#fef3c7";
+                }}
+              >
+                <div className="text-base font-semibold mb-0.5" style={{ color: "#92400e" }}>
+                  💼 Найм
+                </div>
+                <div className="text-xs" style={{ color: "#78350f" }}>
+                  Клиент работает по трудовому договору с работодателем.
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
         </div>
 
         {/* Footer */}
@@ -1076,6 +1172,8 @@ function ClassifyStep({
   existingApplicationId,
   setExistingApplicationId,
   applications,
+  selectedImportType,
+  openImportTypeModal,
 }: {
   session: ImportSession;
   choices: Record<string, FileChoice>;
@@ -1089,6 +1187,9 @@ function ClassifyStep({
   existingApplicationId: number | null;
   setExistingApplicationId: (id: number | null) => void;
   applications: ApplicationResponse[];
+  // Pack 50.0-C5
+  selectedImportType: ApplicationType;
+  openImportTypeModal: () => void;
 }) {
   const egrylCount = Object.values(choices).filter((c) => c.docType === "egryl_extract").length;
 
@@ -1130,19 +1231,43 @@ function ClassifyStep({
               </span>
             </div>
             {target === "new" && (
-              <input
-                type="text"
-                value={internalNotes}
-                onChange={(e) => setInternalNotes(e.target.value)}
-                placeholder="Имя клиента или внутренняя заметка"
-                className="mt-2 w-full px-2 py-1.5 rounded-md text-sm border"
-                style={{
-                  borderColor: "var(--color-border-tertiary)",
-                  borderWidth: 0.5,
-                  background: "var(--color-bg-primary)",
-                  color: "var(--color-text-primary)",
-                }}
-              />
+              <>
+                <input
+                  type="text"
+                  value={internalNotes}
+                  onChange={(e) => setInternalNotes(e.target.value)}
+                  placeholder="Имя клиента или внутренняя заметка"
+                  className="mt-2 w-full px-2 py-1.5 rounded-md text-sm border"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                {/* Pack 50.0-C5 — индикатор типа заявки */}
+                <div
+                  className="mt-2 flex items-center justify-between gap-2 px-2 py-1.5 rounded-md"
+                  style={{
+                    background: selectedImportType === "EMPLOYMENT" ? "#fef3c7" : "var(--color-bg-primary)",
+                    border: selectedImportType === "EMPLOYMENT" ? "1px solid #eab308" : "0.5px solid var(--color-border-tertiary)",
+                  }}
+                >
+                  <div
+                    className="text-xs font-medium"
+                    style={{ color: selectedImportType === "EMPLOYMENT" ? "#92400e" : "var(--color-text-secondary)" }}
+                  >
+                    {APPLICATION_TYPE_BADGE[selectedImportType].emoji} Тип заявки: {APPLICATION_TYPE_BADGE[selectedImportType].label}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openImportTypeModal}
+                    className="text-xs text-tertiary hover:text-primary transition-colors underline"
+                  >
+                    изменить
+                  </button>
+                </div>
+              </>
             )}
           </label>
 

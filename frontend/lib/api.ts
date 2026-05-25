@@ -640,6 +640,8 @@ export type ImportFinalizeRequest = {
   internal_notes?: string | null;
   files: ImportFileAssignment[];
   run_ocr: boolean;
+  // Pack 50.0-C5 — тип заявки (только для target=new)
+  application_type?: ApplicationType;
 };
 
 export type EgrylOcrData = {
@@ -725,6 +727,8 @@ export type ImportFinalizeWithCompanyRequest = {
   internal_notes?: string | null;
   files: ImportFileAssignment[];
   run_ocr: boolean;
+  // Pack 50.0-C5 — тип заявки (только для target=new)
+  application_type?: ApplicationType;
 };
 
 /**
