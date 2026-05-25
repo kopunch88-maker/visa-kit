@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
-import { createApplication } from "@/lib/api";
+import { ArrowLeft, Loader2, X } from "lucide-react";
+import { createApplication, ApplicationType } from "@/lib/api";
 
 export default function NewApplicationPage() {
   const router = useRouter();
@@ -12,17 +12,28 @@ export default function NewApplicationPage() {
   const [applicantEmail, setApplicantEmail] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Pack 50.0-C3 — модалка выбора типа заявки
+  const [showTypeModal, setShowTypeModal] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
+    // Pack 50.0-C3: вместо немедленного создания — открываем модалку
+    // выбора типа. Создание происходит в handleTypeSelected.
+    setShowTypeModal(true);
+  }
+
+  // Pack 50.0-C3 — выбор типа в модалке → создание заявки → редирект
+  async function handleTypeSelected(type: ApplicationType) {
+    setShowTypeModal(false);
     setCreating(true);
     setError(null);
-
     try {
       const created = await createApplication({
         notes: notes || undefined,
         submission_date: submissionDate || undefined,
         applicant_email: applicantEmail || undefined,
+        application_type: type,
       });
       router.push(`/admin/applications/${created.id}`);
     } catch (e) {
@@ -148,6 +159,84 @@ export default function NewApplicationPage() {
           </div>
         </form>
       </div>
+
+      {/* Pack 50.0-C3 — модалка выбора типа заявки */}
+      {showTypeModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={() => setShowTypeModal(false)}
+        >
+          <div
+            className="bg-primary rounded-xl border p-6 w-full max-w-md shadow-xl"
+            style={{
+              borderColor: "var(--color-border-tertiary)",
+              borderWidth: 0.5,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-1">
+              <h2 className="text-lg font-semibold text-primary">
+                Тип заявки на визу
+              </h2>
+              <button
+                onClick={() => setShowTypeModal(false)}
+                className="text-tertiary hover:text-primary transition-colors"
+                title="Закрыть"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-tertiary mb-5">
+              Выбери тип. От этого зависит набор документов и пакет, который будем готовить.
+            </p>
+
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => handleTypeSelected("SELF_EMPLOYED")}
+                className="w-full text-left px-4 py-4 rounded-lg border transition-colors hover:bg-secondary"
+                style={{
+                  borderColor: "var(--color-border-tertiary)",
+                  borderWidth: 0.5,
+                }}
+              >
+                <div className="text-base font-semibold text-primary mb-0.5">
+                  🆔 Самозанятый
+                </div>
+                <div className="text-xs text-tertiary">
+                  Клиент работает по ГПХ с заказчиком, оформлен как самозанятый (НПД).
+                  Договор оказания услуг, акты, счета, НПД-справка.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTypeSelected("EMPLOYMENT")}
+                className="w-full text-left px-4 py-4 rounded-lg border-2 transition-colors"
+                style={{
+                  borderColor: "#eab308",
+                  background: "#fef3c7",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "#fde68a";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "#fef3c7";
+                }}
+              >
+                <div className="text-base font-semibold mb-0.5" style={{ color: "#92400e" }}>
+                  💼 Найм
+                </div>
+                <div className="text-xs" style={{ color: "#78350f" }}>
+                  Клиент работает по трудовому договору с работодателем.
+                  Расчётные листки, 2-НДФЛ, ЭТК, свидетельство об отъезде из СФР.
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
