@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, X } from "lucide-react";
-import { createApplication, ApplicationType } from "@/lib/api";
+import { createApplication, ApplicationType, APPLICATION_TYPE_BADGE } from "@/lib/api";
 
 export default function NewApplicationPage() {
   const router = useRouter();
@@ -12,20 +12,48 @@ export default function NewApplicationPage() {
   const [applicantEmail, setApplicantEmail] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Pack 50.0-C3 — модалка выбора типа заявки
-  const [showTypeModal, setShowTypeModal] = useState(false);
+  // Pack 50.0-C3 + fix1 — модалка выбора типа заявки
+  // Открывается СРАЗУ при заходе на страницу (первое действие менеджера).
+  const [showTypeModal, setShowTypeModal] = useState(true);
+  // Запомненный тип — выставляется в handleInitialTypeSelected.
+  const [selectedType, setSelectedType] = useState<ApplicationType | null>(null);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    // Pack 50.0-C3: вместо немедленного создания — открываем модалку
-    // выбора типа. Создание происходит в handleTypeSelected.
-    setShowTypeModal(true);
+  // Pack 50.0-C3 fix1 — открыть модалку при заходе (на случай если
+  // useState(true) был перебит каким-то ре-рендером, плюс прозрачно отражает намерение).
+  useEffect(() => {
+    if (!selectedType) {
+      setShowTypeModal(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Pack 50.0-C3 fix1 — закрытие модалки без выбора → редирект на /admin
+  function handleModalClose() {
+    if (!selectedType) {
+      // менеджер передумал создавать заявку — возвращаем в список
+      router.push("/admin");
+      return;
+    }
+    // тип уже выбран ранее — просто закрываем (менеджер открывал чтобы посмотреть/изменить)
+    setShowTypeModal(false);
   }
 
-  // Pack 50.0-C3 — выбор типа в модалке → создание заявки → редирект
-  async function handleTypeSelected(type: ApplicationType) {
+  // Pack 50.0-C3 fix1 — выбор типа в модалке (первое окно).
+  // Только запоминаем тип и закрываем модалку, форма становится доступной.
+  function handleInitialTypeSelected(type: ApplicationType) {
+    setSelectedType(type);
     setShowTypeModal(false);
+  }
+
+  // Pack 50.0-C3 fix1 — submit формы → создание заявки с уже выбранным типом.
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedType) {
+      // защита: на форму ничего не нажмётся без выбранного типа,
+      // но на всякий случай открываем модалку повторно.
+      setShowTypeModal(true);
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -33,7 +61,7 @@ export default function NewApplicationPage() {
         notes: notes || undefined,
         submission_date: submissionDate || undefined,
         applicant_email: applicantEmail || undefined,
-        application_type: type,
+        application_type: selectedType,
       });
       router.push(`/admin/applications/${created.id}`);
     } catch (e) {
@@ -62,9 +90,31 @@ export default function NewApplicationPage() {
         <h1 className="text-xl font-semibold text-primary mb-1">
           Создать новую заявку
         </h1>
-        <p className="text-sm text-tertiary mb-6">
+        <p className="text-sm text-tertiary mb-4">
           После создания вы получите магическую ссылку для отправки клиенту.
         </p>
+
+        {/* Pack 50.0-C3 fix1 — индикатор выбранного типа + кнопка изменить */}
+        {selectedType && (
+          <div
+            className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg mb-5"
+            style={{
+              background: selectedType === "EMPLOYMENT" ? "#fef3c7" : "var(--color-bg-secondary)",
+              border: selectedType === "EMPLOYMENT" ? "1px solid #eab308" : "0.5px solid var(--color-border-tertiary)",
+            }}
+          >
+            <div className="text-sm font-medium" style={{ color: selectedType === "EMPLOYMENT" ? "#92400e" : "var(--color-text-primary)" }}>
+              {APPLICATION_TYPE_BADGE[selectedType].emoji} Тип заявки: {APPLICATION_TYPE_BADGE[selectedType].label}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTypeModal(true)}
+              className="text-xs text-tertiary hover:text-primary transition-colors underline"
+            >
+              изменить
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -165,7 +215,7 @@ export default function NewApplicationPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.45)" }}
-          onClick={() => setShowTypeModal(false)}
+          onClick={handleModalClose}
         >
           <div
             className="bg-primary rounded-xl border p-6 w-full max-w-md shadow-xl"
@@ -180,7 +230,7 @@ export default function NewApplicationPage() {
                 Тип заявки на визу
               </h2>
               <button
-                onClick={() => setShowTypeModal(false)}
+                onClick={handleModalClose}
                 className="text-tertiary hover:text-primary transition-colors"
                 title="Закрыть"
               >
@@ -194,7 +244,7 @@ export default function NewApplicationPage() {
             <div className="space-y-3">
               <button
                 type="button"
-                onClick={() => handleTypeSelected("SELF_EMPLOYED")}
+                onClick={() => handleInitialTypeSelected("SELF_EMPLOYED")}
                 className="w-full text-left px-4 py-4 rounded-lg border transition-colors hover:bg-secondary"
                 style={{
                   borderColor: "var(--color-border-tertiary)",
@@ -212,7 +262,7 @@ export default function NewApplicationPage() {
 
               <button
                 type="button"
-                onClick={() => handleTypeSelected("EMPLOYMENT")}
+                onClick={() => handleInitialTypeSelected("EMPLOYMENT")}
                 className="w-full text-left px-4 py-4 rounded-lg border-2 transition-colors"
                 style={{
                   borderColor: "#eab308",
