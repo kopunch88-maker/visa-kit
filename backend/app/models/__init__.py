@@ -71,7 +71,7 @@ from .family_member import (
 )
 from .application import (
     Application, ApplicationCreate, ApplicationAssign, ApplicationStatusUpdate,
-    ApplicationRead, ApplicationStatus, TasaType,
+    ApplicationRead, ApplicationStatus, ApplicationType, TasaType,
 )
 
 # Supporting entities
@@ -183,7 +183,7 @@ __all__ = [
     "EducationRecord", "WorkRecord",
     "FamilyMember", "FamilyMemberCreate", "FamilyMemberUpdate", "FamilyMemberRead",
     "Application", "ApplicationCreate", "ApplicationAssign", "ApplicationStatusUpdate",
-    "ApplicationRead", "ApplicationStatus", "TasaType",
+    "ApplicationRead", "ApplicationStatus", "ApplicationType", "TasaType",
     # Supporting
     "PreviousResidence",
     "UploadedFile", "UploadedFileKind",

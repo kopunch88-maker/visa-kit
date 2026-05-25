@@ -27,6 +27,7 @@ from app.db.session import get_session
 from app.models import (
     Application, ApplicationCreate, ApplicationAssign, ApplicationStatusUpdate,
     ApplicationStatus,
+    ApplicationType,  # Pack 50.0-B
     Applicant, Company, Position, Representative, SpainAddress,
     TimelineEvent,
 )
@@ -199,7 +200,9 @@ def create_application(
     next_num = 1 if not last else int(last.reference.split("-")[1]) + 1
     reference = f"{year}-{next_num:04d}"
 
-    app = Application(
+    # Pack 50.0-B: если передан application_type — применяем,
+    # иначе default из модели (SELF_EMPLOYED).
+    _app_kwargs = dict(
         reference=reference,
         client_access_token=secrets.token_urlsafe(32),
         status=ApplicationStatus.AWAITING_DATA,
@@ -207,6 +210,9 @@ def create_application(
         internal_notes=payload.notes,
         submission_date=payload.submission_date,
     )
+    if getattr(payload, "application_type", None) is not None:
+        _app_kwargs["application_type"] = payload.application_type
+    app = Application(**_app_kwargs)
     session.add(app)
     session.flush()
     session.refresh(app)
@@ -250,6 +256,8 @@ class ApplicationPatch(BaseModel):
     # Pack 36.1: TIE поля (заполняются после одобрения и получения NIE)
     nie: Optional[str] = None
     fingerprint_date: Optional[date] = None
+    # Pack 50.0-B: тип заявки (самозанятый/найм)
+    application_type: Optional[ApplicationType] = None
 
 
 @router.patch("/{app_id}")
@@ -892,3 +900,139 @@ def permanent_delete_application_endpoint(
     session.commit()
     return {"deleted": True, "reference": ref}
 
+
+
+
+# ============================================================================
+# Pack 50.0-B — смена типа заявки (Самозанятый / Найм)
+# ============================================================================
+
+class ApplicationChangeTypeRequest(BaseModel):
+    """Pack 50.0-B — payload для смены типа заявки."""
+    application_type: ApplicationType
+    # Не требуется confirm=true в payload — двойное window.confirm() делается
+    # на фронтенде (UX-решение из обсуждения Pack 50.0).
+
+
+@router.post("/{app_id}/change-type")
+def change_application_type(
+    app_id: int,
+    payload: ApplicationChangeTypeRequest,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Pack 50.0-B — сменить тип заявки.
+
+    При смене типа выполняется КАСКАД:
+    1. Удаляются все сгенерированные документы (generated_document) — R2 + БД.
+       (Не трогаем applicant_document — сканы клиента не зависят от типа;
+        не трогаем uploaded_file — импортный сырой материал.)
+    2. Сбрасываются поля, специфичные для типа заявки:
+       company_id, position_id, contract_*, salary_rub, employer_letter_*,
+       outgoing_*, tech_opinion_override_text, recommendation_snapshot,
+       bank_* поля (выписка перегенерируется в другом режиме), tasa_nrc,
+       monthly_documents_override, eur_rate_override.
+    3. Статус сбрасывается в AWAITING_DATA (потому что critical поля очищены).
+    4. Сам тип меняется на payload.application_type.
+
+    Это безвозвратное действие — на фронте уже было два window.confirm().
+    """
+    from app.services.storage import get_storage
+    from sqlalchemy import text as sql_text
+    import logging
+    log = logging.getLogger(__name__)
+
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    old_type = app.application_type
+    new_type = payload.application_type
+
+    if old_type == new_type:
+        # No-op, но возвращаем актуальное состояние без перетряски документов.
+        return _enrich(app, session)
+
+    # 1. Удаляем generated_document из R2 + БД.
+    storage = get_storage()
+    rows = session.connection().execute(
+        sql_text("SELECT s3_key FROM generated_document WHERE application_id = :aid"),
+        {"aid": app.id},
+    ).fetchall()
+    r2_keys = [sk for (sk,) in rows if sk]
+
+    deleted_count = 0
+    for key in r2_keys:
+        try:
+            if hasattr(storage, "delete"):
+                storage.delete(key)
+            elif hasattr(storage, "delete_object"):
+                storage.delete_object(key)
+            elif hasattr(storage, "client") and hasattr(storage, "bucket_name"):
+                storage.client.delete_object(Bucket=storage.bucket_name, Key=key)
+            deleted_count += 1
+        except Exception as e:
+            log.warning(f"Pack 50.0-B: failed to delete R2 key {key}: {e}")
+
+    log.info(
+        f"Pack 50.0-B: change-type app {app.id} {old_type} -> {new_type}, "
+        f"R2 deleted {deleted_count}/{len(r2_keys)}"
+    )
+
+    # Удаляем записи в БД
+    session.connection().execute(
+        sql_text("DELETE FROM generated_document WHERE application_id = :aid"),
+        {"aid": app.id},
+    )
+
+    # 2. Сбрасываем type-specific поля.
+    _fields_to_reset = [
+        # связи
+        "company_id", "position_id",
+        # договор
+        "contract_number", "contract_sign_date", "contract_sign_city",
+        "contract_end_date", "salary_rub",
+        # письмо работодателя
+        "employer_letter_number", "employer_letter_date",
+        "outgoing_number", "outgoing_date",
+        # tech opinion
+        "tech_opinion_override_text",
+        # recommendation snapshot (она для конкретного типа специальности/уровня)
+        "recommendation_snapshot",
+        # банковская выписка — для найма режим другой (SALARY_ONLY mode в Pack 50.8)
+        "bank_transactions_override",
+        "bank_statement_date",
+        "bank_period_start", "bank_period_end",
+        "bank_opening_balance",
+        "bank_npd_rate", "bank_monthly_fee",
+        # ежемесячные акты/счета (для DN — список месяцев)
+        "monthly_documents_override",
+        "eur_rate_override",
+        # пошлина
+        "tasa_nrc",
+    ]
+    for field in _fields_to_reset:
+        if hasattr(app, field):
+            setattr(app, field, None)
+
+    # 3. Статус сбрасываем — поля очищены, заявка снова в "ждём данных".
+    app.status = ApplicationStatus.AWAITING_DATA
+
+    # 4. Меняем тип.
+    app.application_type = new_type
+
+    session.add(app)
+    _log_event(
+        session, app.id, "manager", user_id, "application_type_changed",
+        f"Changed type {old_type} -> {new_type}, "
+        f"reset type-specific fields, deleted {deleted_count} generated docs",
+        {
+            "old_type": str(old_type),
+            "new_type": str(new_type),
+            "deleted_generated_documents": deleted_count,
+        },
+    )
+    session.commit()
+    session.refresh(app)
+
+    return _enrich(app, session)

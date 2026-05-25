@@ -175,6 +175,8 @@ class ApplicationCreate(SQLModel):
     has_lived_abroad: bool = False
     notes: Optional[str] = None
     submission_date: Optional[date] = None
+    # Pack 50.0-B: тип заявки на стадии создания (опционально)
+    application_type: Optional[ApplicationType] = None
 
 
 class ApplicationAssign(SQLModel):
