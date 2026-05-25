@@ -629,6 +629,21 @@ def _replace_markers_in_tr(tr_element, tx: dict):
         # _replace_markers_in_tr ищет маркер в тексте параграфа, нет — нет замены.
         "__TX_CATEGORY__": tx.get("category", "") or "",
         "__TX_BALANCE__": tx.get("running_balance_formatted", "") or "",
+        # Pack 48.0: маркеры для шаблона ТБанка.
+        # __TX_DATE_SETTLE__ — "дата+время списания" (правый столбец дат у ТБанка);
+        #   значение может содержать 
+ → multiline-логика разобьёт на 2 параграфа.
+        #   Fallback на date_formatted если settle_date_formatted не задан
+        #   (применимо к Сбер/Альфа-tx где этого поля нет — но в их шаблонах
+        #   нет и маркера, так что fallback срабатывает только при ошибках данных).
+        # __TX_AMOUNT_CARD__ — "сумма операции в валюте карты". Для рублёвых
+        #   счетов = amount_formatted (та же сумма в той же валюте). Поле может
+        #   появиться в Tx-модели позже для валютных операций.
+        # __TX_CARD__ — 4 цифры "номера карты". Заполняет _apply_tbank_postprocess
+        #   детерминированно по bank_account. Для не-ТБанк — пустая строка.
+        "__TX_DATE_SETTLE__": tx.get("settle_date_formatted") or tx.get("date_formatted", ""),
+        "__TX_AMOUNT_CARD__": tx.get("amount_card_formatted") or tx.get("amount_formatted", ""),
+        "__TX_CARD__": tx.get("card_number", "") or "",
     }
 
     cells = tr_element.findall('.//w:tc', NS)
