@@ -2,7 +2,7 @@
 
 // Pack 30.0
 import { Flame, Briefcase, Calendar } from "lucide-react";
-import { ApplicationResponse, STATUS_LABELS } from "@/lib/api";
+import { ApplicationResponse, STATUS_LABELS, APPLICATION_TYPE_BADGE } from "@/lib/api";
 
 // Pack 34.3 — режимы сортировки списка
 export type SortMode = "default" | "alphabet" | "submission_date";
@@ -230,6 +230,16 @@ export function ApplicationsList({ applications, selectedId, onSelect, sortMode 
               >
                 {statusLabel}
               </span>
+              {/* Pack 50.0-C2 — badge для НАЙМа (САМОЗАНЯТЫЙ = дефолт, не показываем) */}
+              {app.application_type && APPLICATION_TYPE_BADGE[app.application_type]?.show && (
+                <span
+                  className="inline-block px-2 py-0.5 rounded text-xs font-semibold"
+                  style={{ background: "#fef3c7", color: "#92400e" }}
+                  title="Тип заявки: найм по трудовому договору"
+                >
+                  {APPLICATION_TYPE_BADGE[app.application_type].emoji} {APPLICATION_TYPE_BADGE[app.application_type].label}
+                </span>
+              )}
               <span className="text-xs text-tertiary">
                 {formatRelativeTime(app.created_at)}
               </span>
