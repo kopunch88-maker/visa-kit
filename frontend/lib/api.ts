@@ -89,6 +89,22 @@ export type ApplicantResponse = ApplicantData & {
   initials_native: string;
 };
 
+// Pack 50.0-C1 — тип заявки (Самозанятый / Найм)
+export type ApplicationType = "SELF_EMPLOYED" | "EMPLOYMENT";
+
+export const APPLICATION_TYPE_LABELS: Record<ApplicationType, string> = {
+  SELF_EMPLOYED: "САМОЗАНЯТЫЙ",
+  EMPLOYMENT: "НАЙМ",
+};
+
+// Бейдж для шапок и карточек. Самозанятый не показывается (дефолт),
+// для НАЙМа — яркий жёлтый бейдж с эмодзи.
+export const APPLICATION_TYPE_BADGE: Record<ApplicationType, { emoji: string; label: string; show: boolean }> = {
+  SELF_EMPLOYED: { emoji: "🆔", label: "САМОЗАНЯТЫЙ", show: false },
+  EMPLOYMENT: { emoji: "💼", label: "НАЙМ", show: true },
+};
+
+
 export type ApplicationResponse = {
   id: number;
   reference: string;
@@ -124,6 +140,8 @@ export type ApplicationResponse = {
   fingerprint_date?: string;
   applicant_name_native?: string;
   applicant_name_latin?: string;
+  // Pack 50.0-C1 — тип заявки
+  application_type?: ApplicationType;
 };
 
 export type ClientDocumentType =
@@ -1011,11 +1029,34 @@ export async function createApplication(payload: {
   notes?: string;
   applicant_email?: string;
   submission_date?: string;
+  // Pack 50.0-C1 — тип заявки (опционально, дефолт на бэке = SELF_EMPLOYED)
+  application_type?: ApplicationType;
 }): Promise<ApplicationResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applications`, {
     method: "POST", headers: jsonHeaders(), body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Не удалось создать: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+
+/**
+ * Pack 50.0-C1 — сменить тип заявки.
+ * ВАЖНО: КАСКАД на бэке — удаляет все generated_document (R2 + БД),
+ * сбрасывает company_id, position_id, contract_*, bank_* и др.,
+ * сбрасывает статус в AWAITING_DATA. Двойной window.confirm() уже сделан
+ * на стороне UI (см. ApplicationDetail.tsx, Pack 50.0-C4).
+ */
+export async function changeApplicationType(
+  appId: number,
+  newType: ApplicationType,
+): Promise<ApplicationResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/applications/${appId}/change-type`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ application_type: newType }),
+  });
+  if (!res.ok) throw new Error(`Не удалось сменить тип: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
