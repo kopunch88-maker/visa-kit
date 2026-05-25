@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 // Pack 37.0-D — навигация на страницу аудита
 import { useRouter } from "next/navigation";
-import { ExternalLink, Loader2, Copy, Check, Link2, ShieldCheck, FileCheck2 } from "lucide-react";
+import { ExternalLink, Loader2, Copy, Check, Link2, ShieldCheck, FileCheck2, RefreshCw } from "lucide-react";
 import {
   getApplication,
   getApplicantById,
@@ -22,6 +22,10 @@ import {
   RepresentativeResponse,
   SpainAddressResponse,
   updateStatus,
+  // Pack 50.0-C4
+  changeApplicationType,
+  APPLICATION_TYPE_BADGE,
+  ApplicationType,
 } from "@/lib/api";
 import { CandidateCard } from "./cards/CandidateCard";
 import { CompanyCard } from "./cards/CompanyCard";
@@ -305,6 +309,19 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
             )}
             <div className="flex items-center gap-2 flex-wrap text-sm">
               <span className="text-tertiary font-mono">#{application.reference}</span>
+              {/* Pack 50.0-C4 — badge типа заявки (НАЙМ; для самозанятого скрыт) */}
+              {application.application_type && APPLICATION_TYPE_BADGE[application.application_type]?.show && (
+                <>
+                  <span className="text-tertiary">·</span>
+                  <span
+                    className="inline-block px-2 py-0.5 rounded text-xs font-semibold"
+                    style={{ background: "#fef3c7", color: "#92400e" }}
+                    title="Тип заявки: найм по трудовому договору"
+                  >
+                    {APPLICATION_TYPE_BADGE[application.application_type].emoji} {APPLICATION_TYPE_BADGE[application.application_type].label}
+                  </span>
+                </>
+              )}
               <span className="text-tertiary">·</span>
               <span
                 className="inline-block px-2 py-0.5 rounded text-xs font-medium"
@@ -329,6 +346,54 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
               currentStatus={application.status}
               onChange={handleStatusChange}
             />
+
+            {/* Pack 50.0-C4 — кнопка «Сменить тип заявки» (Самозанятый ↔ Найм) */}
+            <button
+              onClick={async () => {
+                const current = application.application_type || "SELF_EMPLOYED";
+                const target: ApplicationType = current === "EMPLOYMENT" ? "SELF_EMPLOYED" : "EMPLOYMENT";
+                const currentLabel = APPLICATION_TYPE_BADGE[current].label;
+                const targetLabel = APPLICATION_TYPE_BADGE[target].label;
+
+                // 1-е подтверждение — сценарий
+                const ok1 = window.confirm(
+                  `Сменить тип заявки: ${currentLabel} → ${targetLabel}?\n\n` +
+                  `БУДЕТ УДАЛЕНО:\n` +
+                  `• Все сгенерированные документы (DOCX/PDF) из R2 и БД\n\n` +
+                  `БУДЕТ СБРОШЕНО (в NULL):\n` +
+                  `• Компания, должность, реквизиты договора\n` +
+                  `• Зарплата, письмо работодателя, исх. №\n` +
+                  `• Все настройки банковской выписки\n` +
+                  `• Tech opinion override, NRC квитанции\n\n` +
+                  `Сканы клиента (паспорт, диплом, апостили) НЕ удаляются.\n` +
+                  `Статус будет сброшен в «Ожидание данных».`
+                );
+                if (!ok1) return;
+
+                // 2-е подтверждение — финальное
+                const ok2 = window.confirm(
+                  `Точно сменить тип на ${targetLabel}?\n\nЭто действие НЕОБРАТИМО.`
+                );
+                if (!ok2) return;
+
+                try {
+                  await changeApplicationType(application.id, target);
+                  await loadAll();
+                  onUpdated();
+                } catch (e) {
+                  alert(`Не удалось сменить тип: ${(e as Error).message}`);
+                }
+              }}
+              className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary transition-colors flex items-center justify-center gap-1.5"
+              style={{
+                borderColor: "var(--color-border-tertiary)",
+                borderWidth: 0.5,
+              }}
+              title="Сменить тип заявки между Самозанятый и Найм. Это удалит сгенерированные документы и сбросит реквизиты."
+            >
+              <RefreshCw className="w-4 h-4" />
+              Сменить тип заявки
+            </button>
 
             {/* Pack 39.0-E1 — финальная проверка физических документов */}
             <button
