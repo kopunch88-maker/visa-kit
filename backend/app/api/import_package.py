@@ -38,6 +38,7 @@ from sqlmodel import Session, select
 
 from app.db.session import get_session, engine
 from app.models import Application, ApplicationStatus, Company, Applicant
+from app.models import ApplicationType  # Pack 50.0-C5
 from app.models.applicant_document import (
     ApplicantDocument,
     ApplicantDocumentType,
@@ -808,7 +809,11 @@ async def upload_archive(
 # Helpers — Application + ApplicantDocument
 # ============================================================================
 
-def _create_new_application(session: Session, internal_notes: str) -> Application:
+def _create_new_application(
+    session: Session,
+    internal_notes: str,
+    application_type: Optional["ApplicationType"] = None,  # Pack 50.0-C5
+) -> Application:
     from sqlalchemy import func
     token = secrets.token_urlsafe(24)
     max_id = session.exec(
@@ -818,12 +823,17 @@ def _create_new_application(session: Session, internal_notes: str) -> Applicatio
     year = datetime.utcnow().year
     reference = f"{year}-{new_id_estimate:04d}"
 
-    application = Application(
+    # Pack 50.0-C5: если application_type передан — применяем,
+    # иначе default из модели Application (SELF_EMPLOYED).
+    _app_kwargs = dict(
         reference=reference,
         status=ApplicationStatus.AWAITING_DATA,
         client_access_token=token,
         internal_notes=internal_notes or "Импорт пакета",
     )
+    if application_type is not None:
+        _app_kwargs["application_type"] = application_type
+    application = Application(**_app_kwargs)
     session.add(application)
     session.flush()
     session.refresh(application)
@@ -1505,6 +1515,8 @@ async def finalize_import(
 
     application_id = body.get("application_id")
     internal_notes = (body.get("internal_notes") or "").strip()
+    # Pack 50.0-C5 — тип заявки из payload (только для target=new, опционально)
+    application_type = body.get("application_type")
     file_assignments = body.get("files") or []
 
     if not file_assignments:
@@ -1585,7 +1597,12 @@ async def finalize_import(
         if not application:
             raise HTTPException(404, "Application not found")
     else:
-        application = _create_new_application(session, internal_notes)
+        # Pack 50.0-C5 — передаём application_type если был в payload
+        application = _create_new_application(
+            session,
+            internal_notes,
+            application_type=application_type,
+        )
 
     if found_company:
         application.company_id = found_company.id
@@ -1671,6 +1688,8 @@ async def finalize_with_company(
     company_data = body.get("company") or {}
     application_id = body.get("application_id")
     internal_notes = (body.get("internal_notes") or "").strip()
+    # Pack 50.0-C5 — тип заявки из payload (только для target=new, опционально)
+    application_type = body.get("application_type")
     file_assignments = body.get("files") or []
 
     if not file_assignments:
@@ -1734,7 +1753,12 @@ async def finalize_with_company(
         if not application:
             raise HTTPException(404, "Application not found")
     else:
-        application = _create_new_application(session, internal_notes)
+        # Pack 50.0-C5 — передаём application_type если был в payload
+        application = _create_new_application(
+            session,
+            internal_notes,
+            application_type=application_type,
+        )
 
     application.company_id = company.id
     session.add(application)
@@ -1818,6 +1842,8 @@ async def finalize_skip_company(
 
     application_id = body.get("application_id")
     internal_notes = (body.get("internal_notes") or "").strip()
+    # Pack 50.0-C5 — тип заявки из payload (только для target=new, опционально)
+    application_type = body.get("application_type")
     file_assignments = body.get("files") or []
 
     if not file_assignments:
@@ -1829,7 +1855,12 @@ async def finalize_skip_company(
         if not application:
             raise HTTPException(404, "Application not found")
     else:
-        application = _create_new_application(session, internal_notes)
+        # Pack 50.0-C5 — передаём application_type если был в payload
+        application = _create_new_application(
+            session,
+            internal_notes,
+            application_type=application_type,
+        )
 
     files_info = {f["file_id"]: f for f in sess["files"]}
     storage = get_storage()
