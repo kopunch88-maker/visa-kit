@@ -28,6 +28,18 @@ if TYPE_CHECKING:
     from .generated_document import GeneratedDocument
 
 
+class ApplicationType(str, Enum):
+    """Pack 50.0-A — тип заявки на визу.
+
+    SELF_EMPLOYED — самозанятый по НПД (исторически основная ветка проекта,
+                    рендерит акты/счета/НПД-справку/Tech Opinion).
+    EMPLOYMENT    — найм по трудовому договору (Pack 50.x — расчётные листки,
+                    2-НДФЛ, ЭТК, свидетельство об отъезде из СФР).
+    """
+    SELF_EMPLOYED = "SELF_EMPLOYED"
+    EMPLOYMENT = "EMPLOYMENT"
+
+
 class ApplicationStatus(str, Enum):
     DRAFT = "draft"
     AWAITING_DATA = "awaiting_data"
@@ -64,6 +76,12 @@ class Application(TimestampMixin, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     reference: str = Field(unique=True, index=True, max_length=16)
+    # Pack 50.0-A: тип заявки (самозанятый по НПД / найм по трудовому договору)
+    application_type: ApplicationType = Field(
+        default=ApplicationType.SELF_EMPLOYED,
+        index=True,
+        max_length=16,
+    )
     status: ApplicationStatus = Field(default=ApplicationStatus.DRAFT, index=True)
     status_notes: Optional[str] = Field(default=None, max_length=512)
     client_access_token: str = Field(unique=True, index=True, max_length=64)
@@ -182,6 +200,7 @@ class ApplicationRead(SQLModel):
     """Read-схема (используется только для документации, реально возвращаем dict)."""
     id: int
     reference: str
+    application_type: Optional[ApplicationType] = None  # Pack 50.0-A
     status: ApplicationStatus
     status_notes: Optional[str] = None
     applicant_id: Optional[int] = None

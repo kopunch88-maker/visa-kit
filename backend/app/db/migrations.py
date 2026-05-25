@@ -1188,3 +1188,48 @@ def apply_pack39_0_A2_migration() -> None:
         """))
 
     print("[migration] Pack 39.0-A2: final_submission_document schema updated")
+
+
+# ============================================================================
+# Pack 50.0-A — application.application_type (Самозанятый / Найм)
+# ============================================================================
+def apply_pack50_0_A_migration() -> None:
+    """Pack 50.0-A:
+       - ALTER TABLE application ADD COLUMN application_type VARCHAR(16)
+         NOT NULL DEFAULT 'SELF_EMPLOYED'
+       - CREATE INDEX ix_application_application_type
+       - Backfill: все существующие NULL → 'SELF_EMPLOYED' (на случай если
+         колонка уже была без NOT NULL DEFAULT — двойная защита).
+
+       Идемпотентна — IF NOT EXISTS на всех шагах.
+
+       Значения enum (см. app.models.application.ApplicationType):
+         - 'SELF_EMPLOYED' — самозанятый (бывшая DN-логика, дефолт для legacy)
+         - 'EMPLOYMENT'    — найм (трудовой договор + работодатель)
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # 1. ADD COLUMN
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS application_type VARCHAR(16) "
+            "NOT NULL DEFAULT 'SELF_EMPLOYED'"
+        ))
+
+        # 2. Backfill — защитный шаг, если колонка уже существовала без NOT NULL
+        result = conn.execute(text(
+            "UPDATE application SET application_type = 'SELF_EMPLOYED' "
+            "WHERE application_type IS NULL"
+        ))
+        if result.rowcount:
+            print(f"[migration] Pack 50.0-A: backfilled {result.rowcount} rows to SELF_EMPLOYED")
+
+        # 3. INDEX
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_application_application_type "
+            "ON application (application_type)"
+        ))
+
+    print("[migration] Pack 50.0-A: application.application_type ready")

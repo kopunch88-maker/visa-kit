@@ -32,6 +32,7 @@ from app.db.migrations import (
     apply_pack37_0_migration,
     apply_pack39_0_migration,  # Pack 39.0 Final Submission Audit
     apply_pack39_0_A2_migration,  # Pack 39.0-A2 rename s3_key → storage_key  # Pack 37.0 — AI Document Audit
+    apply_pack50_0_A_migration,  # Pack 50.0-A application.application_type
 )
 
 
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
     apply_pack37_0_migration()
     apply_pack39_0_migration()  # Pack 39.0 Final Submission Audit tables
     apply_pack39_0_A2_migration()  # Pack 39.0-A2 storage_key rename  # Pack 37.0 AI Document Audit indexes
+    apply_pack50_0_A_migration()  # Pack 50.0-A application.application_type
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")
