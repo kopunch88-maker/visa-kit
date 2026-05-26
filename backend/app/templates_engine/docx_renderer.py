@@ -482,11 +482,23 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
         raise FileNotFoundError(f"Template not found: {template_path}")
 
     context = build_context(application, session)
-    # Pack 41.0-H — для банковской выписки override паспортных полей на
-    # выбранный менеджером passport_id_for_ru_docs (если задан). Это тот
-    # же механизм что в render_contract (Pack 41.0-G), теперь расширенный
-    # на выписку — если клиент выбран один паспорт «для русских документов»,
-    # то и в выписке должен фигурировать он же, а не primary.
+    # Pack 41.0-H + 41.0-I — override паспорта в банковской выписке.
+    #
+    # Бизнес-правило: банковская выписка для русского клиента всегда
+    # должна показывать внутренний паспорт РФ (тип RU_INTERNAL).
+    # Для иностранцев — primary (как было до Pack 41.0-H). Помимо
+    # выписки этот override нигде не применяется (договор использует
+    # свой override в render_contract, Pack 41.0-G — там разрешён
+    # любой тип паспорта, потому что договор может быть историческим).
+    #
+    # Условие срабатывания (все три должны быть True):
+    #   1. applicant.nationality == "RUS"
+    #   2. У клиента в dropdown «Паспорт для русских документов»
+    #      выбран какой-то паспорт (passport_id_for_ru_docs задан) —
+    #      get_passport_dict_for_ru_docs вернёт его данные
+    #   3. У выбранного паспорта passport_type == "RU_INTERNAL"
+    # Иначе fallback на primary (через скаляры applicant.passport_*,
+    # которые уже легли в context из build_context).
     #
     # Override применяется ДО _apply_sber_postprocess / _apply_tbank_postprocess
     # (которые работают только с bank_data, не с applicant), и ДО клонирования
@@ -497,7 +509,11 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     from datetime import date as _date
     _applicant = application.applicant
     _ru_passport = get_passport_dict_for_ru_docs(_applicant)
-    if _ru_passport.get("number"):
+    if (
+        (_applicant.nationality or "").upper() == "RUS"
+        and _ru_passport.get("passport_type") == "RU_INTERNAL"
+        and _ru_passport.get("number")
+    ):
         from app.templates_engine.context import (
             _parse_passport,
             _resolve_passport_issuer_for_template_from_dict,
