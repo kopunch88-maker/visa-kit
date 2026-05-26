@@ -821,6 +821,20 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
               lastCheckAt={applicant.npd_last_check_at ?? null}
               hasInn={!!inn.trim()}
             />
+            {/* Pack 41.0-O: блок «Название ИФНС для НПД-справки» поднят сюда
+                (был после СНИЛС в Pack 41.0-N). Логически ближе к ИНН/НПД. */}
+            <Field
+              label="Название ИФНС для НПД-справки"
+              value={npd_ifns_name}
+              onChange={setNpdIfnsName}
+              placeholder="Инспекция Федеральной налоговой службы № 29 по г. Москве"
+              textarea
+            />
+            <p className="text-xs text-slate-500 -mt-2 mb-2">
+              Скопируйте точное наименование из сервиса ФНС (кнопки 📋 и 🔗 под
+              полем «Адрес проживания»). Если оставить пусто — система подберёт
+              ИФНС автоматически по адресу или ИНН.
+            </p>
             {inn_registration_date && (
               <Field
                 label="Дата регистрации как самозанятого"
@@ -855,25 +869,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 </button>
               }
             />
-            {/* Pack 41.0-N: ручное наименование ИФНС для НПД-справки.
-                Менеджер копирует из service.nalog.ru/addrno.do (кнопки выше
-                под полем «Адрес проживания»). Если пусто → бэкенд использует
-                auto-resolve через region_code из home_address или ИНН
-                (Pack 41.0-L). Заполнение этого поля гарантирует точное
-                актуальное название ИФНС в НПД-справке. */}
-            <Field
-              label="Название ИФНС для НПД-справки"
-              value={npd_ifns_name}
-              onChange={setNpdIfnsName}
-              placeholder="Инспекция Федеральной налоговой службы № 29 по г. Москве"
-              textarea
-            />
-            <p className="text-xs text-slate-500 -mt-2 mb-2">
-              Скопируйте точное наименование из сервиса ФНС (кнопки 📋 и 🔗 под
-              полем «Адрес проживания»). Если оставить пусто — система подберёт
-              ИФНС автоматически по адресу или ИНН.
-            </p>
-            {/* Pack 28.5: бэйдж реальная/ориентировочная + кнопка уточнения */}
+{/* Pack 28.5: бэйдж реальная/ориентировочная + кнопка уточнения */}
             {applicant.inn && applicant.inn_source && (
               <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
                 {applicant.inn_source === "npd_pool_real" ? (
