@@ -78,17 +78,23 @@ def build_full_package(
     Returns:
         (zip_bytes, status_dict)
     """
+    # Pack 50.1-F3 — для EMPLOYMENT-заявок самозанятые DOCX не рендерятся.
+    # cv + bank_statement остаются в pipeline для обоих типов.
     files_to_render = [
-        ("01_Договор.docx", "contract", render_contract, (application, session)),
-        ("02_Акт_1.docx", "act_1", render_act, (application, session, 1)),
-        ("03_Акт_2.docx", "act_2", render_act, (application, session, 2)),
-        ("04_Акт_3.docx", "act_3", render_act, (application, session, 3)),
-        ("05_Счет_1.docx", "invoice_1", render_invoice, (application, session, 1)),
-        ("06_Счет_2.docx", "invoice_2", render_invoice, (application, session, 2)),
-        ("07_Счет_3.docx", "invoice_3", render_invoice, (application, session, 3)),
-        ("08_Письмо_от_компании.docx", "employer_letter", render_employer_letter, (application, session)),
         ("09_Резюме.docx", "cv", render_cv, (application, session)),
     ]
+    if application.application_type != ApplicationType.EMPLOYMENT:
+        files_to_render = [
+            ("01_Договор.docx", "contract", render_contract, (application, session)),
+            ("02_Акт_1.docx", "act_1", render_act, (application, session, 1)),
+            ("03_Акт_2.docx", "act_2", render_act, (application, session, 2)),
+            ("04_Акт_3.docx", "act_3", render_act, (application, session, 3)),
+            ("05_Счет_1.docx", "invoice_1", render_invoice, (application, session, 1)),
+            ("06_Счет_2.docx", "invoice_2", render_invoice, (application, session, 2)),
+            ("07_Счет_3.docx", "invoice_3", render_invoice, (application, session, 3)),
+            ("08_Письмо_от_компании.docx", "employer_letter", render_employer_letter, (application, session)),
+            ("09_Резюме.docx", "cv", render_cv, (application, session)),
+        ]
 
     if include_bank_statement:
         files_to_render.append(
@@ -102,17 +108,19 @@ def build_full_package(
     # _try_render проглатывает FileNotFoundError и любые ошибки рендера —
     # если у заявки нет данных для апостиля или шаблон отсутствует,
     # карточка просто пропускается, заявка не падает.
-    files_to_render.extend([
-        ("15_Справка_НПД.docx", "npd_certificate",
-         render_npd_certificate, (application, session)),
-        ("15b_Справка_НПД_ЛКН.docx", "npd_certificate_lkn",
-         render_npd_certificate_lkn, (application, session)),
-        ("16_Апостиль.docx", "apostille",
-         render_apostille, (application, session)),
-        # Pack 40.0-G — Техническое заключение
-        ("17_Техническое_заключение.docx", "tech_opinion",
-         render_tech_opinion, (application, session)),
-    ])
+    # Pack 50.1-F3 — НПД/апостиль/техническое заключение — только для самозанятых.
+    if application.application_type != ApplicationType.EMPLOYMENT:
+        files_to_render.extend([
+            ("15_Справка_НПД.docx", "npd_certificate",
+             render_npd_certificate, (application, session)),
+            ("15b_Справка_НПД_ЛКН.docx", "npd_certificate_lkn",
+             render_npd_certificate_lkn, (application, session)),
+            ("16_Апостиль.docx", "apostille",
+             render_apostille, (application, session)),
+            # Pack 40.0-G — Техническое заключение
+            ("17_Техническое_заключение.docx", "tech_opinion",
+             render_tech_opinion, (application, session)),
+        ])
 
     # Pack 50.7-C — Приказ Т-9 о командировке (ТОЛЬКО для EMPLOYMENT-заявок)
     if application.application_type == ApplicationType.EMPLOYMENT:

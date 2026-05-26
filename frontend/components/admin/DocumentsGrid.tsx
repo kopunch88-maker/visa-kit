@@ -20,17 +20,19 @@ type DocItem = {
   kind: "docx" | "pdf";
   // Pack 50.7-C — карточка видна только для EMPLOYMENT-заявок
   naimOnly?: boolean;
+  // Pack 50.1-F3 — карточка видна только для SELF_EMPLOYED-заявок
+  selfEmployedOnly?: boolean;
 };
 
 const DOCUMENTS: DocItem[] = [
-  { id: "contract",            filename: "01_Договор.docx",                        kind: "docx" },
-  { id: "act_1",               filename: "02_Акт_1.docx",                          kind: "docx" },
-  { id: "act_2",               filename: "03_Акт_2.docx",                          kind: "docx" },
-  { id: "act_3",               filename: "04_Акт_3.docx",                          kind: "docx" },
-  { id: "invoice_1",           filename: "05_Счёт_1.docx",                    kind: "docx" },
-  { id: "invoice_2",           filename: "06_Счёт_2.docx",                    kind: "docx" },
-  { id: "invoice_3",           filename: "07_Счёт_3.docx",                    kind: "docx" },
-  { id: "employer_letter",     filename: "08_Письмо.docx",          kind: "docx" },
+  { id: "contract",            filename: "01_Договор.docx",                        kind: "docx", selfEmployedOnly: true },
+  { id: "act_1",               filename: "02_Акт_1.docx",                          kind: "docx", selfEmployedOnly: true },
+  { id: "act_2",               filename: "03_Акт_2.docx",                          kind: "docx", selfEmployedOnly: true },
+  { id: "act_3",               filename: "04_Акт_3.docx",                          kind: "docx", selfEmployedOnly: true },
+  { id: "invoice_1",           filename: "05_Счёт_1.docx",                    kind: "docx", selfEmployedOnly: true },
+  { id: "invoice_2",           filename: "06_Счёт_2.docx",                    kind: "docx", selfEmployedOnly: true },
+  { id: "invoice_3",           filename: "07_Счёт_3.docx",                    kind: "docx", selfEmployedOnly: true },
+  { id: "employer_letter",     filename: "08_Письмо.docx",          kind: "docx", selfEmployedOnly: true },
   { id: "cv",                  filename: "09_Резюме.docx",          kind: "docx" },
   { id: "bank_statement",      filename: "10_Выписка.docx",    kind: "docx" },
   { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
@@ -40,11 +42,11 @@ const DOCUMENTS: DocItem[] = [
   // Pack 36.1 — TIE формы (только если у заявки заполнены NIE и fingerprint_date)
   { id: "mi_tie",              filename: "15_MI-TIE.pdf",                                         kind: "pdf"  },
   { id: "ex17",                filename: "16_EX-17.pdf",                                          kind: "pdf"  },
-  { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx" },
-  { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx" },
-  { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },
+  { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx", selfEmployedOnly: true },
+  { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx", selfEmployedOnly: true },
+  { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx", selfEmployedOnly: true },
   // Pack 40.0-G — Техническое заключение
-  { id: "tech_opinion",        filename: "17_Техническое_заключение.docx", kind: "docx" },
+  { id: "tech_opinion",        filename: "17_Техническое_заключение.docx", kind: "docx", selfEmployedOnly: true },
   // Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
   { id: "business_trip_order", filename: "17_Приказ_на_командировку.docx", kind: "docx", naimOnly: true },
   // Pack 50.1-C — Трудовой договор (только для EMPLOYMENT)
@@ -52,10 +54,13 @@ const DOCUMENTS: DocItem[] = [
 ];
 
 export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {
-  // Pack 50.7-C — фильтр карточек по типу заявки. Самозанятый НЕ видит naim-карточки.
-  const visibleDocs = DOCUMENTS.filter((d) =>
-    !d.naimOnly || applicationType === "EMPLOYMENT"
-  );
+  // Pack 50.7-C + 50.1-F3 — фильтр карточек по типу заявки.
+  // naimOnly: видна только при EMPLOYMENT. selfEmployedOnly: скрыта при EMPLOYMENT.
+  const visibleDocs = DOCUMENTS.filter((d) => {
+    if (d.naimOnly && applicationType !== "EMPLOYMENT") return false;
+    if (d.selfEmployedOnly && applicationType === "EMPLOYMENT") return false;
+    return true;
+  });
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipDownloaded, setZipDownloaded] = useState(false);
   const [downloadingDocxZip, setDownloadingDocxZip] = useState(false);
