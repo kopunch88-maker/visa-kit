@@ -112,6 +112,16 @@ class Company(TimestampMixin, table=True):
                     "Если ни то ни другое — render_contract вернёт 409 NEEDS_CONTRACT_TEMPLATE.",
     )
 
+    # Pack 50.1-H — шрифт для договора самозанятого (01_Договор.docx).
+    # Если NULL — используется шрифт из шаблона. Иначе post-processor
+    # заменяет все <w:rFonts> на указанный шрифт.
+    contract_font_family: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Шрифт для рендера 01_Договор.docx. "
+                    "Поддерживается: Times New Roman, Arial, Calibri, Microsoft Sans Serif.",
+    )
+
     # Banking — primary account used for receiving payments under contracts
     bank_name: str = Field(max_length=128)
     bank_account: str = Field(max_length=32)
@@ -156,6 +166,9 @@ class CompanyCreate(SQLModel):
     director_position_ru: str = "Генерального директора"
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
+    contract_font_family: Optional[str] = None  # Pack 50.1-H
+    contract_font_family: Optional[str] = None  # Pack 50.1-H
+    contract_font_family: Optional[str] = None  # Pack 50.1-H
     bank_name: str
     bank_account: str
     bank_bic: str

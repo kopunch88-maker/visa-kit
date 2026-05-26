@@ -1390,3 +1390,29 @@ def apply_pack50_1_F2_migration() -> None:
         ))
 
     print("[migration] Pack 50.1-F2: applicant.snils ready")
+
+
+# ============================================================================
+# Pack 50.1-H — Шрифт для договора самозанятого (01_Договор.docx)
+# ============================================================================
+def apply_pack50_1_H_migration() -> None:
+    """Pack 50.1-H — добавляет company.contract_font_family.
+
+    company:
+      - contract_font_family VARCHAR(64) NULL — имя шрифта для рендера
+        01_Договор.docx. Если NULL — используется шрифт из самого шаблона
+        (обычно Microsoft Sans Serif).
+        Возможные значения: "Times New Roman", "Arial", "Calibri",
+        "Microsoft Sans Serif".
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS contract_font_family VARCHAR(64)"
+        ))
+
+    print("[migration] Pack 50.1-H: company.contract_font_family ready")

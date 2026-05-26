@@ -104,6 +104,65 @@ class NeedsEmploymentContractTemplateError(HTTPException):
             },
         )
 
+# ============================================================================
+# Pack 50.1-H — Post-processor для замены шрифта в DOCX
+# ============================================================================
+#
+# Используется в render_contract: если у компании задан contract_font_family,
+# после рендера через docxtpl мы пробегаем по XML и заменяем все <w:rFonts>
+# атрибуты ascii/hAnsi/cs/eastAsia на указанный шрифт.
+
+_FONT_WHITELIST_PACK50_1_H = {
+    "Times New Roman",
+    "Arial",
+    "Calibri",
+    "Microsoft Sans Serif",
+}
+
+
+def _replace_fonts_in_docx(docx_bytes: bytes, font_name: str) -> bytes:
+    """Pack 50.1-H — заменяет все шрифты в word/document.xml на font_name.
+
+    Шаблон может содержать сотни тегов <w:rFonts w:ascii="..." w:hAnsi="..."
+    w:cs="..." w:eastAsia="..."/>. Мы пробегаем по всему document.xml и
+    заменяем значения этих 4 атрибутов на единый font_name.
+
+    Если font_name не в whitelist — возвращает исходные байты без изменений
+    (безопасный fallback на случай мусора в БД).
+    """
+    import io
+    import re
+    import zipfile
+
+    if not font_name or font_name not in _FONT_WHITELIST_PACK50_1_H:
+        return docx_bytes
+
+    # Открываем zip, читаем document.xml
+    with io.BytesIO(docx_bytes) as buf:
+        with zipfile.ZipFile(buf, "r") as zin:
+            doc_xml = zin.read("word/document.xml").decode("utf-8")
+            other_files = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name != "word/document.xml"
+            }
+
+    # Регулярка ищет атрибуты w:ascii/w:hAnsi/w:cs/w:eastAsia внутри тега
+    # <w:rFonts ...> и заменяет их значения.
+    # Используем единый паттерн: w:(ascii|hAnsi|cs|eastAsia)="..."
+    pattern = re.compile(r'(w:(?:ascii|hAnsi|cs|eastAsia))="[^"]*"')
+    doc_xml_new = pattern.sub(rf'\1="{font_name}"', doc_xml)
+
+    # Собираем zip обратно
+    out_buf = io.BytesIO()
+    with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        zout.writestr("word/document.xml", doc_xml_new.encode("utf-8"))
+        for name, data in other_files.items():
+            zout.writestr(name, data)
+
+    return out_buf.getvalue()
+
+
 W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
 
@@ -362,6 +421,11 @@ def render_contract(application: Application, session: Session) -> bytes:
         )
     relative_path = resolve_contract_template_path(company)
     rendered = _render_from_repo_path(relative_path, context)
+    # Pack 50.1-H — если у компании задан contract_font_family,
+    # подменяем все шрифты в DOCX через post-processor.
+    font_family = getattr(company, "contract_font_family", None)
+    if font_family:
+        rendered = _replace_fonts_in_docx(rendered, font_family)
     # Pack 33.0
     return _apply_page_break_before_requisites(rendered)
 

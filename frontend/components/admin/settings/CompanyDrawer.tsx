@@ -63,6 +63,7 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     bank_bic: "",
     bank_correspondent_account: "",
     contract_template_slug: null,  // Pack 29.4
+    contract_font_family: null,    // Pack 50.1-H — шрифт договора
     notes: "",
   });
 
@@ -276,6 +277,31 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                       {contractTemplates.find((t) => t.slug === form.contract_template_slug)?.description || ""}
                     </p>
                   )}
+                </div>
+              </Section>
+
+              {/* Pack 50.1-H — Шрифт договора */}
+              <Section title="Шрифт договора">
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    Шрифт, которым будет напечатан 01_Договор.docx
+                  </label>
+                  <select
+                    value={(form as any).contract_font_family || ""}
+                    onChange={(e) => setField("contract_font_family" as any, e.target.value || null)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  >
+                    <option value="">— По умолчанию (из шаблона) —</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Calibri">Calibri</option>
+                    <option value="Microsoft Sans Serif">Microsoft Sans Serif</option>
+                  </select>
+                  <p className="text-xs text-tertiary mt-1">
+                    Если оставить «По умолчанию» — будет использован шрифт из шаблона.
+                    Применяется только к 01_Договор.docx (другие документы не затрагиваются).
+                  </p>
                 </div>
               </Section>
 

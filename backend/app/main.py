@@ -37,6 +37,7 @@ from app.db.migrations import (
     apply_pack50_7_C_prep_migration,  # Pack 50.7-C-prep applicant.full_name_accusative
     apply_pack50_1_A_migration,  # Pack 50.1-A company.ogrn + email (Трудовой договор)
     apply_pack50_1_F2_migration,  # Pack 50.1-F2 applicant.snils
+    apply_pack50_1_H_migration,  # Pack 50.1-H company.contract_font_family
 )
 
 
@@ -72,6 +73,7 @@ async def lifespan(app: FastAPI):
     apply_pack50_7_C_prep_migration()  # Pack 50.7-C-prep applicant.full_name_accusative
     apply_pack50_1_A_migration()  # Pack 50.1-A company.ogrn + email
     apply_pack50_1_F2_migration()  # Pack 50.1-F2 applicant.snils
+    apply_pack50_1_H_migration()  # Pack 50.1-H company.contract_font_family
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")
