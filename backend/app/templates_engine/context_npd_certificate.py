@@ -410,12 +410,26 @@ def build_npd_certificate_context(
     nat = (applicant.nationality or "").upper()
     passport_code = "21" if nat == "RUS" else "10"
 
+    # Pack 41.0-K — для русских клиентов с выбранным внутренним паспортом
+    # подставляем его номер в НПД-справку. Иначе primary (как было до 41.0-K).
+    # Менеджер сам решает какой паспорт показывать на справке — система не
+    # пытается угадать на основе даты постановки на учёт самозанятым.
+    _npd_passport_number = applicant.passport_number or ""
+    if nat == "RUS":
+        from app.services.applicant_passports import get_passport_dict_for_ru_docs as _get_ru_pass
+        _ru_dict = _get_ru_pass(applicant)
+        if (
+            _ru_dict.get("passport_type") == "RU_INTERNAL"
+            and _ru_dict.get("number")
+        ):
+            _npd_passport_number = _ru_dict["number"]
+
     # ---- 5. Сборка контекста ----
     return {
         "applicant": {
             "inn": applicant.inn,
             "full_name_caps": _full_name_caps(applicant),
-            "passport_number": applicant.passport_number or "",  # Pack 41.0-G — primary
+            "passport_number": _npd_passport_number,
         },
         "certificate": {
             "number": str(cert_number),

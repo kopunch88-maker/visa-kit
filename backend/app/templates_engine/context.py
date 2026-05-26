@@ -2312,10 +2312,44 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
     # No-op для не-ТБанк клиентов. Резолв через applicant.bank.bik (044525974).
     bank_data = _apply_tbank_postprocess(bank_data, applicant, session)
 
-    # Парсим паспорт по гражданству
-    # Pack 41.0-G — context по умолчанию на primary (через скаляр-зеркало).
-    # Только render_contract в docx_renderer.py переопределяет на passport_id_for_ru_docs.
-    passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
+    # Парсим паспорт по гражданству.
+    # Pack 41.0-K — для русских клиентов с выбранным внутренним паспортом
+    # (nationality=RUS + passport_id_for_ru_docs указан + его тип RU_INTERNAL)
+    # override на выбранный паспорт. Применяется ко ВСЕМ документам которые
+    # идут через build_context: договор, акты, счета, ER-letter, CV,
+    # tech_opinion, business_trip, employment_contract, bank statement.
+    #
+    # Для иностранцев и для русских без выбора внутреннего — стандартное
+    # поведение Pack 41.0-G (primary через скаляр-зеркало applicant.passport_*).
+    #
+    # render_contract в docx_renderer.py (Pack 41.0-G) переопределяет
+    # ещё раз для договора, разрешая ЛЮБОЙ тип выбранного паспорта.
+    from app.services.applicant_passports import (
+        get_passport_dict_for_ru_docs as _get_ru_passport,
+    )
+    from datetime import date as _date_pack41k
+    _pass_number_pack41k = applicant.passport_number
+    _pass_issue_date_pack41k = applicant.passport_issue_date
+    _pass_issuer_pack41k = _resolve_passport_issuer_for_template(applicant)
+    if (applicant.nationality or "").upper() == "RUS":
+        _ru_dict_pack41k = _get_ru_passport(applicant)
+        if (
+            _ru_dict_pack41k.get("passport_type") == "RU_INTERNAL"
+            and _ru_dict_pack41k.get("number")
+        ):
+            _pass_number_pack41k = _ru_dict_pack41k["number"]
+            _raw_issue_pack41k = _ru_dict_pack41k.get("issue_date")
+            if isinstance(_raw_issue_pack41k, str) and _raw_issue_pack41k:
+                try:
+                    _pass_issue_date_pack41k = _date_pack41k.fromisoformat(_raw_issue_pack41k)
+                except ValueError:
+                    pass
+            elif _raw_issue_pack41k is not None:
+                _pass_issue_date_pack41k = _raw_issue_pack41k
+            _pass_issuer_pack41k = _resolve_passport_issuer_for_template_from_dict(
+                _ru_dict_pack41k, applicant.nationality
+            )
+    passport_data = _parse_passport(_pass_number_pack41k, applicant.nationality)
 
     # === Pack 40.0-G: outgoing autogen (раньше был в API endpoint) ===
     if not application.outgoing_number or not application.outgoing_date:
@@ -2359,13 +2393,14 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "birth_place_latin": applicant.birth_place_latin,
             "nationality": applicant.nationality,
             # Паспорт — структурированные поля
-            "passport_number": applicant.passport_number,  # Pack 41.0-G — primary
+            # Pack 41.0-K — _pass_*_pack41k = override для RUS+INT, иначе primary
+            "passport_number": _pass_number_pack41k,
             "passport_series": passport_data["series"],
             "passport_number_only": passport_data["number_only"],
             "passport_formatted": passport_data["formatted"],
-            "passport_issue_date": applicant.passport_issue_date,  # Pack 41.0-G — primary
-            "passport_issue_date_str": fmt_date_ru(applicant.passport_issue_date),  # Pack 41.0-G — primary
-            "passport_issuer": _resolve_passport_issuer_for_template(applicant),  # Pack 41.0-G — primary
+            "passport_issue_date": _pass_issue_date_pack41k,
+            "passport_issue_date_str": fmt_date_ru(_pass_issue_date_pack41k),
+            "passport_issuer": _pass_issuer_pack41k,
             "inn": applicant.inn or "",
             # Pack 50.1-F2 — СНИЛС (Трудовой договор, реквизиты работника)
             "snils": applicant.snils or "",
