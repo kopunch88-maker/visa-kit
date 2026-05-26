@@ -39,6 +39,7 @@ from app.templates_engine import (
     render_apostille,
     render_tech_opinion,  # Pack 40.0-G
     render_business_trip_order,  # Pack 50.7-C
+    render_employment_contract,  # Pack 50.1-C
 )
 # Pack 50.7-C — для проверки application_type в pipeline
 from app.models import ApplicationType
@@ -118,6 +119,11 @@ def build_full_package(
         files_to_render.append(
             ("17_Приказ_на_командировку.docx", "business_trip_order",
              render_business_trip_order, (application, session))
+        )
+        # Pack 50.1-C — Трудовой договор (ТОЛЬКО для EMPLOYMENT-заявок)
+        files_to_render.append(
+            ("01_Трудовой_договор.docx", "employment_contract",
+             render_employment_contract, (application, session))
         )
 
     # Корректируем под payments_period_months

@@ -2407,6 +2407,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "tax_id_secondary": company.tax_id_secondary or "",
             # === Pack 50.7-C: ОКПО для Приказа Т-9 ===
             "okpo": company.okpo or "",
+            # === Pack 50.1-A/C: ОГРН + email для Трудового договора ===
+            "ogrn": company.ogrn or "",
+            "email": company.email or "",
             "legal_address": abbreviate_address(company.legal_address),
             "legal_address_line1": _company_legal_line1(company),
             "legal_address_line2": _company_legal_line2(company),

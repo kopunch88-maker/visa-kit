@@ -47,6 +47,8 @@ const DOCUMENTS: DocItem[] = [
   { id: "tech_opinion",        filename: "17_Техническое_заключение.docx", kind: "docx" },
   // Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
   { id: "business_trip_order", filename: "17_Приказ_на_командировку.docx", kind: "docx", naimOnly: true },
+  // Pack 50.1-C — Трудовой договор (только для EMPLOYMENT)
+  { id: "employment_contract", filename: "01_Трудовой_договор.docx",        kind: "docx", naimOnly: true },
 ];
 
 export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {

@@ -41,6 +41,7 @@ from app.templates_engine import (
     render_apostille,  # Pack 18.9
     render_tech_opinion,  # Pack 40.0-G
     render_business_trip_order,  # Pack 50.7-C
+    render_employment_contract,  # Pack 50.1-C
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -560,6 +561,8 @@ _DOWNLOAD_FILES = {
     "tech_opinion":        {"name": "17_Техническое_заключение.docx", "kind": "docx", "fn": render_tech_opinion, "args": ()},
     # Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
     "business_trip_order": {"name": "17_Приказ_на_командировку.docx", "kind": "docx", "fn": render_business_trip_order, "args": ()},
+    # Pack 50.1-C — Трудовой договор (только для EMPLOYMENT)
+    "employment_contract":  {"name": "01_Трудовой_договор.docx", "kind": "docx", "fn": render_employment_contract, "args": ()},
 }
 
 

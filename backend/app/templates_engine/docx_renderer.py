@@ -51,6 +51,9 @@ from .contracts_registry import (
     COMPANY_INN_TO_SLUG,
     get_available_template_options,
 )
+from .employment_contracts_registry import (
+    resolve_employment_contract_template_path,
+)
 from fastapi import HTTPException
 
 
@@ -72,6 +75,32 @@ class NeedsContractTemplateError(HTTPException):
                 "company_id": company.id,
                 "company_short_name": company.short_name,
                 "available_templates": get_available_template_options(),
+            },
+        )
+
+
+class NeedsEmploymentContractTemplateError(HTTPException):
+    """
+    Pack 50.1-C — поднимается из render_employment_contract когда у компании
+    нет шаблона Трудового договора (ИНН не в EMPLOYMENT_COMPANY_INN_TO_SLUG).
+
+    Это не модалка выбора (как у самозанятых), а сигнал что нужно построить
+    employment_contract_template.docx для этой компании. Менеджер видит
+    текст ошибки.
+    """
+    def __init__(self, company):
+        super().__init__(
+            status_code=409,
+            detail={
+                "code": "NEEDS_EMPLOYMENT_CONTRACT_TEMPLATE",
+                "message": (
+                    f"Для компании '{company.short_name}' (ИНН={company.tax_id_primary}) "
+                    f"не построен шаблон Трудового договора. "
+                    f"Обратись к разработчику для добавления шаблона."
+                ),
+                "company_id": company.id,
+                "company_short_name": company.short_name,
+                "company_inn": company.tax_id_primary,
             },
         )
 
@@ -377,6 +406,31 @@ def render_business_trip_order(application: Application, session: Session) -> by
     """Pack 50.7-C — Приказ Т-9 о направлении работника в командировку (найм)."""
     context = build_context(application, session)
     return _render("business_trip_order_template.docx", context)
+
+
+def render_employment_contract(application: Application, session: Session) -> bytes:
+    """Pack 50.1-C — Трудовой договор (найм).
+
+    Резолвит шаблон по ИНН компании через employment_contracts_registry.
+    Если для компании нет шаблона — поднимает 409 NEEDS_EMPLOYMENT_CONTRACT_TEMPLATE.
+    """
+    if not application.company_id:
+        raise ValueError(
+            f"Application id={application.id} has no company_id assigned"
+        )
+    company = session.get(Company, application.company_id)
+    if not company:
+        raise ValueError(
+            f"Company id={application.company_id} not found for "
+            f"application id={application.id}"
+        )
+
+    template_path = resolve_employment_contract_template_path(company)
+    if template_path is None:
+        raise NeedsEmploymentContractTemplateError(company)
+
+    context = build_context(application, session)
+    return _render_from_repo_path(template_path, context)
 
 
 
