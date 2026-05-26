@@ -10,6 +10,8 @@ import {
   updatePosition,
   // Pack 45.0 — LLM-генерация русских полей
   generatePositionRussian,
+  // Pack 50.7-B — LLM-генерация цели командировки
+  generateBusinessTripPurpose,
 } from "@/lib/api";
 // Pack 41.0 — Tech Opinion editing
 import {
@@ -60,6 +62,9 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
   const [profileDescription, setProfileDescription] = useState("");
   // Pack 41.0 — Tech Opinion state (12 полей в одном объекте)
   const [techOpinion, setTechOpinion] = useState<TechOpinionState>(EMPTY_TECH_OPINION);
+  // Pack 50.7-D2 — цель командировки для Приказа Т-9 (найм)
+  const [businessTripPurpose, setBusinessTripPurpose] = useState("");
+  const [generatingBusinessTripPurpose, setGeneratingBusinessTripPurpose] = useState(false);
 
   // Pack 20.1: извлекаем уникальные specialty из уже загруженных Position'ов
   const specialtyOptions = useMemo<SpecialtyOption[]>(() => {
@@ -113,6 +118,8 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
           contract_clause_ru: d.tech_opinion_contract_clause_ru || "",
           contract_clause_es: d.tech_opinion_contract_clause_es || "",
         });
+        // Pack 50.7-D2 — цель командировки
+        setBusinessTripPurpose(d.business_trip_purpose || "");
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -185,6 +192,34 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
     }
   }
 
+  // ====== Pack 50.7-D2: LLM-генерация цели командировки ======
+  async function handleGenerateBusinessTripPurpose() {
+    if (isNew) {
+      setError("Сначала сохрани должность — нужен ID для генерации цели командировки");
+      return;
+    }
+    if (!titleRu.trim()) {
+      setError("Заполните русское название должности перед генерацией");
+      return;
+    }
+    if (businessTripPurpose.trim().length > 0) {
+      const ok = window.confirm(
+        "Текущая цель командировки будет перезаписана генерацией из LLM. Продолжить?"
+      );
+      if (!ok) return;
+    }
+    setError(null);
+    setGeneratingBusinessTripPurpose(true);
+    try {
+      const result = await generateBusinessTripPurpose(positionId!);
+      setBusinessTripPurpose(result.business_trip_purpose);
+    } catch (e) {
+      setError("Не удалось сгенерировать цель командировки: " + ((e as Error).message || "ошибка LLM"));
+    } finally {
+      setGeneratingBusinessTripPurpose(false);
+    }
+  }
+
   async function handleSave() {
     setError(null);
     if (!titleRu || !titleEs || !salary) {
@@ -220,6 +255,8 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
         tech_opinion_grounds_es: techOpinion.grounds_es.length ? techOpinion.grounds_es : null,
         tech_opinion_contract_clause_ru: techOpinion.contract_clause_ru || null,
         tech_opinion_contract_clause_es: techOpinion.contract_clause_es || null,
+        // Pack 50.7-D2 — цель командировки для Приказа Т-9
+        business_trip_purpose: businessTripPurpose.trim() || null,
       };
       if (isNew) {
         await createPosition(payload);
@@ -463,6 +500,53 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
                 onChange={setTechOpinion}
                 positionId={positionId}
               />
+
+              {/* Pack 50.7-D2 — Цель командировки для Приказа Т-9 (найм) */}
+              <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-medium text-secondary">
+                    💼 Цель командировки <span className="text-tertiary font-normal">(для Приказа Т-9 при найме)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateBusinessTripPurpose}
+                    disabled={isNew || generatingBusinessTripPurpose || !titleRu.trim()}
+                    title={
+                      isNew
+                        ? "Сначала сохрани должность"
+                        : !titleRu.trim()
+                        ? "Заполни русское название"
+                        : "Сгенерировать через LLM по сохранённым полям"
+                    }
+                    className="px-2 py-1 text-xs rounded-md border flex items-center gap-1 hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  >
+                    {generatingBusinessTripPurpose ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Генерация...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3" />
+                        Сгенерировать
+                      </>
+                    )}
+                  </button>
+                </div>
+                <textarea
+                  value={businessTripPurpose}
+                  onChange={(e) => setBusinessTripPurpose(e.target.value)}
+                  rows={3}
+                  placeholder="напр. «мониторинга изменений в законодательстве и нормативах в ЕС, особенностей внешнеторговой деятельности с контрагентами»"
+                  className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary resize-y"
+                  style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                />
+                <p className="text-[10px] text-tertiary mt-1">
+                  Текст в родительном падеже (после «с целью...»). Подставляется в Т-9 при найме.
+                  Можно переопределить для конкретной заявки в поле «Цель командировки (override)».
+                </p>
+              </div>
 
               {error && (
                 <div className="bg-danger text-danger text-sm p-3 rounded-md flex items-start gap-2">

@@ -3504,6 +3504,41 @@ export async function translatePositionToSpanish(positionId: number): Promise<{
 
 
 // ============================================================
+// Pack 50.7-B — LLM-генерация цели командировки для Приказа Т-9
+// ============================================================
+
+/**
+ * Pack 50.7-B: генерирует текст цели командировки для Приказа Т-9 по
+ * сохранённым полям Position (title_ru, profile_description,
+ * tech_opinion_description_ru, international_analog_ru).
+ *
+ * Возвращает {"business_trip_purpose": "<текст>"}. В БД НЕ пишет.
+ * Менеджер видит текст в textarea, может править, сохраняет через updatePosition.
+ *
+ * Endpoint: POST /api/admin/positions/{id}/generate-business-trip-purpose
+ */
+export async function generateBusinessTripPurpose(positionId: number): Promise<{
+  business_trip_purpose: string;
+}> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/admin/positions/${positionId}/generate-business-trip-purpose`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+      },
+    }
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+
+// ============================================================
 // Pack 45.0 — LLM-генерация русских полей Position
 // ============================================================
 
