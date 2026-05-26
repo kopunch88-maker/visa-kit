@@ -258,6 +258,16 @@ class ApplicationPatch(BaseModel):
     fingerprint_date: Optional[date] = None
     # Pack 50.0-B: тип заявки (самозанятый/найм)
     application_type: Optional[ApplicationType] = None
+    # Pack 50.7-A: Приказ Т-9 о командировке (найм)
+    business_trip_order_number: Optional[str] = None
+    business_trip_order_date: Optional[date] = None
+    business_trip_start_date: Optional[date] = None
+    business_trip_end_date: Optional[date] = None
+    business_trip_purpose_override: Optional[str] = None
+    business_trip_duration_words: Optional[str] = None
+    business_trip_duration_unit: Optional[str] = None
+    business_trip_place_short: Optional[bool] = None
+    employee_tab_number: Optional[str] = None
 
 
 @router.patch("/{app_id}")

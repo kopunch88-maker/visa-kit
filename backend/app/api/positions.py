@@ -31,6 +31,11 @@ from .dependencies import require_manager
 from app.services.position_translator import translate_position_to_spanish
 # Pack 45.0: сервис генерации русских полей Position по названию и специальности
 from app.services.position_generator import generate_position_fields, PositionGenerateInput
+# Pack 50.7-B: сервис генерации цели командировки для Приказа Т-9
+from app.services.business_trip_purpose_generator import (
+    generate_business_trip_purpose,
+    BusinessTripPurposeInput,
+)
 from app.models import Specialty
 
 router = APIRouter(prefix="/admin/positions", tags=["positions"])
@@ -205,3 +210,44 @@ async def translate_position_spanish(
         raise HTTPException(500, f"LLM service error: {e}")
 
     return result
+
+
+
+@router.post("/{position_id}/generate-business-trip-purpose")
+async def generate_business_trip_purpose_endpoint(
+    position_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 50.7-B: сгенерировать цель командировки для Приказа Т-9 через LLM.
+
+    Контекст для LLM берётся из уже сохранённых полей Position
+    (title_ru, profile_description, tech_opinion_description_ru,
+    international_analog_ru).
+
+    БД НЕ изменяет — менеджер видит результат в форме, может отредактировать,
+    потом сохраняет через обычный PATCH /admin/positions/{id}.
+
+    Response:
+        {"business_trip_purpose": "<текст>"}
+    """
+    position = session.get(Position, position_id)
+    if not position:
+        raise HTTPException(404, "Position not found")
+
+    try:
+        inp = BusinessTripPurposeInput(
+            title_ru=position.title_ru,
+            profile_description=position.profile_description or None,
+            tech_opinion_description_ru=position.tech_opinion_description_ru,
+            international_analog_ru=position.international_analog_ru,
+        )
+        result = await generate_business_trip_purpose(inp)
+    except ValueError as e:
+        # невалидный JSON от LLM или валидация
+        raise HTTPException(422, str(e))
+    except RuntimeError as e:
+        # LLM-клиент не настроен
+        raise HTTPException(500, f"LLM service error: {e}")
+
+    return {"business_trip_purpose": result}
