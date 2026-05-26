@@ -329,7 +329,7 @@ export function PassportsSection({
       {passports.length > 0 && (
         <div className="border-t border-slate-200 pt-4 space-y-2">
           <label className="block text-sm font-medium text-slate-700">
-            🇷🇺 Паспорт для договора
+            🇷🇺 Паспорт для русских документов
           </label>
           <div className="flex gap-2 items-center">
             <select
@@ -361,10 +361,10 @@ export function PassportsSection({
             )}
           </div>
           <p className="text-xs text-slate-500">
-            Влияет ТОЛЬКО на 01_Договор.docx. Договор подписывается с конкретным
-            паспортом исторически — можно выбрать старый. Все остальные документы
-            (акты, счета, выписка, НПД, апостиль, испанские формы) всегда используют
-            primary-паспорт (самый свежий).
+            Влияет на 01_Договор.docx и 10_Выписка.docx. Договор и выписка
+            подписываются/выпускаются с конкретным паспортом — можно выбрать старый.
+            Остальные документы (акты, счета, НПД, апостиль, испанские формы)
+            всегда используют primary-паспорт (самый свежий).
           </p>
         </div>
       )}

@@ -482,6 +482,45 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
         raise FileNotFoundError(f"Template not found: {template_path}")
 
     context = build_context(application, session)
+    # Pack 41.0-H — для банковской выписки override паспортных полей на
+    # выбранный менеджером passport_id_for_ru_docs (если задан). Это тот
+    # же механизм что в render_contract (Pack 41.0-G), теперь расширенный
+    # на выписку — если клиент выбран один паспорт «для русских документов»,
+    # то и в выписке должен фигурировать он же, а не primary.
+    #
+    # Override применяется ДО _apply_sber_postprocess / _apply_tbank_postprocess
+    # (которые работают только с bank_data, не с applicant), и ДО клонирования
+    # строк tx-таблицы. Безопасно: nationality applicant'а не меняем —
+    # адаптивный паспортный блок ТБанка (Pack 48.2) продолжает резолвиться
+    # по applicant.nationality.
+    from app.services.applicant_passports import get_passport_dict_for_ru_docs
+    from datetime import date as _date
+    _applicant = application.applicant
+    _ru_passport = get_passport_dict_for_ru_docs(_applicant)
+    if _ru_passport.get("number"):
+        from app.templates_engine.context import (
+            _parse_passport,
+            _resolve_passport_issuer_for_template_from_dict,
+            fmt_date_ru,
+        )
+        _raw_issue_date = _ru_passport.get("issue_date")
+        if isinstance(_raw_issue_date, str) and _raw_issue_date:
+            try:
+                _issue_date = _date.fromisoformat(_raw_issue_date)
+            except ValueError:
+                _issue_date = None
+        else:
+            _issue_date = _raw_issue_date
+        _pdata = _parse_passport(_ru_passport["number"], _applicant.nationality)
+        context["applicant"]["passport_number"] = _ru_passport["number"]
+        context["applicant"]["passport_series"] = _pdata["series"]
+        context["applicant"]["passport_number_only"] = _pdata["number_only"]
+        context["applicant"]["passport_formatted"] = _pdata["formatted"]
+        context["applicant"]["passport_issue_date"] = _issue_date
+        context["applicant"]["passport_issue_date_str"] = fmt_date_ru(_issue_date)
+        context["applicant"]["passport_issuer"] = _resolve_passport_issuer_for_template_from_dict(
+            _ru_passport, _applicant.nationality
+        )
     bank_data = context.get("bank", {})
     transactions = bank_data.get("transactions", [])
 
