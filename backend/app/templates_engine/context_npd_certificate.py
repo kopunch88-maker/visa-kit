@@ -76,11 +76,55 @@ def _full_name_caps(applicant: Applicant) -> str:
     return " ".join(p for p in parts if p).upper()
 
 
+# Pack 41.0-L: регион-keyword таблица для извлечения region_code из home_address.
+# Отсортирована по длине keyword: длинные первыми, чтобы "Московская область"
+# не схватилась как "Москва". Покрывает основные регионы клиентской базы.
+# Добавлять новые регионы при появлении клиентов из других субъектов РФ.
+_REGION_FROM_ADDRESS = [
+    # Длинные/специфичные ключевые слова сначала
+    ("московская область", "50"),
+    ("московская обл", "50"),
+    ("ленинградская область", "47"),
+    ("ленинградская обл", "47"),
+    ("ростовская область", "61"),
+    ("ростов-на-дону", "61"),
+    ("ростов на дону", "61"),
+    ("краснодарский край", "23"),
+    ("санкт-петербург", "78"),
+    # Короткие после
+    ("новороссийск", "23"),
+    ("краснодар", "23"),
+    ("сочи", "23"),
+    ("анапа", "23"),
+    ("спб", "78"),
+    ("москва", "77"),
+]
+
+
 def _resolve_region_code(applicant: Applicant) -> str:
     """
-    Pack 18.3 Q1: «по ИНН и адресу». Берём из inn_kladr_code (там и есть регион ИНН).
-    Если inn_kladr_code пустой — fallback на inn[:2].
+    Pack 18.3 Q1: «по ИНН и адресу».
+
+    Pack 41.0-L: приоритет адреса. Сначала пытаемся извлечь регион из
+    applicant.home_address (Tier 0). Это критично для случаев, когда ИНН
+    был выдан в одном регионе (например, Калининград 39), а клиент
+    проживает и встал на учёт самозанятым в другом (Москва 77).
+
+    Если из адреса не получилось — старая логика: inn_kladr_code[:2],
+    затем fallback на inn[:2].
     """
+    # Tier 0 (Pack 41.0-L): извлечение региона из home_address.
+    addr = (applicant.home_address or "").lower()
+    if addr:
+        for keyword, region in _REGION_FROM_ADDRESS:
+            if keyword in addr:
+                log.info(
+                    "_resolve_region_code Pack 41.0-L: matched region %s by keyword %r in home_address",
+                    region, keyword,
+                )
+                return region
+
+    # Tier 1 (старая логика): из ИНН-региона KLADR
     kladr = (applicant.inn_kladr_code or "").strip()
     if len(kladr) >= 2:
         return kladr[:2]
