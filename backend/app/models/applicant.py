@@ -50,6 +50,13 @@ class Applicant(TimestampMixin, table=True):
     last_name_latin: str = Field(max_length=64, description="ALIYEV (uppercase as in passport)")
     first_name_latin: str = Field(max_length=64, description="JAFAR")
 
+    # Pack 50.7-C-prep — винительный падеж ФИО для Приказа Т-9 ("Направить в командировку <кого?>")
+    full_name_accusative: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="ФИО в винительном падеже: 'Орлова Ивана Андреевича'. Хранится готовым.",
+    )
+
     # === Demographics — все Optional для пошагового сохранения ===
     birth_date: Optional[date] = Field(default=None)
     birth_place_latin: Optional[str] = Field(default=None, max_length=128)
@@ -240,6 +247,8 @@ class ApplicantCreate(SQLModel):
     middle_name_native: Optional[str] = None
     last_name_latin: str
     first_name_latin: str
+    # Pack 50.7-C-prep — винительный падеж ФИО для Т-9
+    full_name_accusative: Optional[str] = None
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10
@@ -286,6 +295,8 @@ class ApplicantUpdate(SQLModel):
     middle_name_native: Optional[str] = None
     last_name_latin: Optional[str] = None
     first_name_latin: Optional[str] = None
+    # Pack 50.7-C-prep — винительный падеж ФИО для Т-9
+    full_name_accusative: Optional[str] = None
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10

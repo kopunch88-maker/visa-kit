@@ -110,6 +110,7 @@ def get_applicant(
 _PATCHABLE_FIELDS = {
     "last_name_native", "first_name_native", "middle_name_native",
     "last_name_latin", "first_name_latin",
+    "full_name_accusative",  # Pack 50.7-C-prep — винительный падеж для Т-9
     "birth_date", "birth_place_latin",
     "birth_country",  # Pack 18.10
     "nationality", "sex", "marital_status",

@@ -1318,3 +1318,24 @@ def apply_pack50_7_A_migration() -> None:
 
     print("[migration] Pack 50.7-A: business trip fields ready (company.okpo, "
           "position.business_trip_purpose, application.business_trip_*)")
+
+
+# ============================================================================
+# Pack 50.7-C-prep — applicant.full_name_accusative для Приказа Т-9
+# ============================================================================
+def apply_pack50_7_C_prep_migration() -> None:
+    """Pack 50.7-C-prep — добавляет applicant.full_name_accusative (винительный
+    падеж ФИО для подстановки в Приказ Т-9 в фразу "Направить в командировку...").
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant "
+            "ADD COLUMN IF NOT EXISTS full_name_accusative VARCHAR(128)"
+        ))
+
+    print("[migration] Pack 50.7-C-prep: applicant.full_name_accusative ready")
