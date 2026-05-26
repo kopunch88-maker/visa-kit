@@ -691,14 +691,25 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <FieldSelect label="Семейное положение" value={marital_status} onChange={setMaritalStatus} options={MARITAL_OPTIONS} />
           </Section>
 
-          {/* Pack 41.0-D — мультипаспортная секция */}
-          <PassportsSection
-            passports={passports}
-            setPassports={setPassports}
-            passportIdForRuDocs={passportIdForRuDocs}
-            setPassportIdForRuDocs={setPassportIdForRuDocs}
-            nationality={nationality}
-          />
+          {/* Pack 41.0-D — мультипаспортная секция.
+              Pack 41.0-Q — обёртка div со стилем <Section>, чтобы блок
+              не висел в воздухе. Без title, потому что PassportsSection
+              уже содержит свой собственный заголовок «Паспорта». */}
+          <div
+            className="rounded-md p-4"
+            style={{
+              background: "var(--color-bg-secondary)",
+              border: "0.5px solid var(--color-border-secondary)",
+            }}
+          >
+            <PassportsSection
+              passports={passports}
+              setPassports={setPassports}
+              passportIdForRuDocs={passportIdForRuDocs}
+              setPassportIdForRuDocs={setPassportIdForRuDocs}
+              nationality={nationality}
+            />
+          </div>
 
           <Section title="Место и дата рождения">
             <Field label="Дата рождения" value={birth_date} onChange={setBirthDate}
