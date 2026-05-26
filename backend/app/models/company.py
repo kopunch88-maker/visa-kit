@@ -55,6 +55,17 @@ class Company(TimestampMixin, table=True):
         max_length=8,
         description="ОКПО — 8 цифр для шапки Т-9 (RU companies)",
     )
+    # Pack 50.1-A — Трудовой договор: ОГРН + email для ЭДО
+    ogrn: Optional[str] = Field(
+        default=None,
+        max_length=15,
+        description="ОГРН (13 цифр для ЮЛ, 15 для ИП) — для шапки Трудового договора",
+    )
+    email: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Email компании для ЭДО (Трудовой договор п.1.7)",
+    )
 
     # Addresses — free-form strings, no parsing
     legal_address: str = Field(max_length=512)
@@ -135,6 +146,8 @@ class CompanyCreate(SQLModel):
     tax_id_primary: str
     tax_id_secondary: Optional[str] = None
     okpo: Optional[str] = None  # Pack 50.7-A
+    ogrn: Optional[str] = None  # Pack 50.1-A
+    email: Optional[str] = None  # Pack 50.1-A — ЭДО для Трудового договора
     legal_address: str
     postal_address: Optional[str] = None
     director_full_name_ru: str
@@ -160,6 +173,8 @@ class CompanyUpdate(SQLModel):
     tax_id_primary: Optional[str] = None
     tax_id_secondary: Optional[str] = None
     okpo: Optional[str] = None  # Pack 50.7-A
+    ogrn: Optional[str] = None  # Pack 50.1-A
+    email: Optional[str] = None  # Pack 50.1-A — ЭДО для Трудового договора
     legal_address: Optional[str] = None
     postal_address: Optional[str] = None
     director_full_name_ru: Optional[str] = None
@@ -187,6 +202,8 @@ class CompanyRead(SQLModel):
     tax_id_primary: str
     tax_id_secondary: Optional[str]
     okpo: Optional[str] = None  # Pack 50.7-A
+    ogrn: Optional[str] = None  # Pack 50.1-A
+    email: Optional[str] = None  # Pack 50.1-A
     legal_address: str
     postal_address: Optional[str]
     director_full_name_ru: str

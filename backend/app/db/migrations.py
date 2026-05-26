@@ -1339,3 +1339,30 @@ def apply_pack50_7_C_prep_migration() -> None:
         ))
 
     print("[migration] Pack 50.7-C-prep: applicant.full_name_accusative ready")
+
+
+# ============================================================================
+# Pack 50.1-A — Трудовой договор (найм): поля компании ogrn + email
+# ============================================================================
+def apply_pack50_1_A_migration() -> None:
+    """Pack 50.1-A — добавляет поля для Трудового договора.
+
+    company:
+      - ogrn VARCHAR(15) NULL — ОГРН (13 цифр для ЮЛ или 15 для ИП).
+      - email VARCHAR(128) NULL — email компании для электронного
+        документооборота (используется в Трудовом договоре, п.1.7).
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS ogrn VARCHAR(15)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS email VARCHAR(128)"
+        ))
+
+    print("[migration] Pack 50.1-A: company.ogrn + company.email ready")
