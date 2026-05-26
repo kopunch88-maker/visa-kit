@@ -123,6 +123,14 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     applicant.inn_kladr_code || ""
   );
 
+  // Pack 41.0-N: ручное наименование ИФНС для НПД-справки.
+  // Менеджер копирует из https://service.nalog.ru/addrno.do.
+  // Если NULL → backend использует auto-resolve (Pack 41.0-L).
+  const [npd_ifns_name, setNpdIfnsName] = useState(
+    (applicant as any).npd_ifns_name || ""
+  );
+
+
   // Pack 50.1-F2 — СНИЛС работника (для Трудового договора)
   const [snils, setSnils] = useState((applicant as any).snils || "");
   const [snilsGenerating, setSnilsGenerating] = useState(false);
@@ -502,6 +510,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         inn: inn.trim(),
         inn_registration_date: inn_registration_date || null,
         inn_kladr_code: inn_kladr_code || null,
+        // Pack 41.0-N: ручное наименование ИФНС для НПД-справки
+        npd_ifns_name: npd_ifns_name.trim() || null,
         // Pack 50.1-F2 — СНИЛС
         snils: snils.trim() || null,
         // Pack 16
@@ -753,6 +763,40 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 </button>
               }
             />
+            {/* Pack 41.0-N: помощники для заполнения поля «Название ИФНС».
+                Workflow: 📋 Скопировать адрес → 🔗 Открыть сервис ФНС →
+                вставить адрес → скопировать наименование ИФНС → вставить
+                в поле «Название ИФНС для НПД-справки» ниже. */}
+            <div className="flex flex-wrap items-center gap-2 -mt-2 mb-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!home_address || !home_address.trim()) {
+                    alert("Сначала заполните адрес проживания");
+                    return;
+                  }
+                  try {
+                    await navigator.clipboard.writeText(home_address.trim());
+                    alert("Адрес скопирован в буфер обмена");
+                  } catch (e) {
+                    alert("Не удалось скопировать. Скопируйте адрес вручную.");
+                  }
+                }}
+                className="text-xs px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-50 transition-colors flex items-center gap-1 whitespace-nowrap"
+                title="Скопировать адрес в буфер обмена для вставки в сервис ФНС"
+              >
+                📋 Скопировать адрес
+              </button>
+              <a
+                href="https://service.nalog.ru/addrno.do"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-50 transition-colors flex items-center gap-1 whitespace-nowrap text-slate-700 no-underline"
+                title="Открыть официальный сервис ФНС для определения ИФНС по адресу"
+              >
+                🔗 Определить ИФНС в сервисе ФНС →
+              </a>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Email" value={email} onChange={setEmail} placeholder="user@example.com" />
               <Field label="Телефон" value={phone} onChange={setPhone} placeholder="+7 999 ..." />
@@ -811,6 +855,24 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 </button>
               }
             />
+            {/* Pack 41.0-N: ручное наименование ИФНС для НПД-справки.
+                Менеджер копирует из service.nalog.ru/addrno.do (кнопки выше
+                под полем «Адрес проживания»). Если пусто → бэкенд использует
+                auto-resolve через region_code из home_address или ИНН
+                (Pack 41.0-L). Заполнение этого поля гарантирует точное
+                актуальное название ИФНС в НПД-справке. */}
+            <Field
+              label="Название ИФНС для НПД-справки"
+              value={npd_ifns_name}
+              onChange={setNpdIfnsName}
+              placeholder="Инспекция Федеральной налоговой службы № 29 по г. Москве"
+              textarea
+            />
+            <p className="text-xs text-slate-500 -mt-2 mb-2">
+              Скопируйте точное наименование из сервиса ФНС (кнопки 📋 и 🔗 под
+              полем «Адрес проживания»). Если оставить пусто — система подберёт
+              ИФНС автоматически по адресу или ИНН.
+            </p>
             {/* Pack 28.5: бэйдж реальная/ориентировочная + кнопка уточнения */}
             {applicant.inn && applicant.inn_source && (
               <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
