@@ -1894,13 +1894,15 @@ function Field({
     color: "var(--color-text-primary)",
   } as const;
 
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <label className="block text-xs text-tertiary">{label}</label>
-        {actionButton}
-      </div>
-      {textarea ? (
+  // Pack 50.1-F2-UX — для textarea actionButton остаётся сверху (как было).
+  // Для input — переезжает ВНУТРЬ инпута справа (absolute positioning).
+  if (textarea) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs text-tertiary">{label}</label>
+          {actionButton}
+        </div>
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -1910,17 +1912,29 @@ function Field({
           className="w-full px-2 py-1.5 rounded-md text-sm border"
           style={style}
         />
-      ) : (
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-tertiary mb-1">{label}</label>
+      <div className="relative">
         <input
           type={type || "text"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onBlur}
           placeholder={placeholder}
-          className="w-full px-2 py-1.5 rounded-md text-sm border"
+          className={`w-full px-2 py-1.5 rounded-md text-sm border ${actionButton ? "pr-32" : ""}`}
           style={style}
         />
-      )}
+        {actionButton && (
+          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center">
+            {actionButton}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
