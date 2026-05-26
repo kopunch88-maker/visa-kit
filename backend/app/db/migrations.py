@@ -1233,3 +1233,88 @@ def apply_pack50_0_A_migration() -> None:
         ))
 
     print("[migration] Pack 50.0-A: application.application_type ready")
+
+
+# ============================================================================
+# Pack 50.7-A — Приказ Т-9 о командировке (найм)
+# ============================================================================
+def apply_pack50_7_A_migration() -> None:
+    """Pack 50.7-A — поля для генерации Приказа Т-9 о командировке.
+
+    company:
+      - okpo VARCHAR(8) NULL — код ОКПО (8 цифр), для шапки Т-9.
+
+    position:
+      - business_trip_purpose TEXT NULL — цель командировки (текст для §"с целью"
+        в Т-9). Генерируется LLM при создании должности, может правиться вручную.
+
+    application:
+      - business_trip_order_number VARCHAR(16) — номер приказа Т-9 ("37/к").
+      - business_trip_order_date DATE — дата приказа (дефолт = contract_sign_date).
+      - business_trip_start_date DATE — начало командировки.
+      - business_trip_end_date DATE — конец командировки.
+      - business_trip_purpose_override TEXT — override цели для конкретной заявки
+        (если NULL — берётся position.business_trip_purpose).
+      - business_trip_duration_words VARCHAR(32) — срок словами ("Сорок шесть").
+      - business_trip_duration_unit VARCHAR(16) — единица: "days"/"months"/"years".
+      - business_trip_place_short BOOLEAN DEFAULT FALSE — короткий формат адреса
+        (True = "Испания, г. Барселона"; False = полный с индексом).
+      - employee_tab_number VARCHAR(16) — табельный номер сотрудника.
+
+    Идемпотентна — все ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # === company ===
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS okpo VARCHAR(8)"
+        ))
+
+        # === position ===
+        conn.execute(text(
+            "ALTER TABLE position ADD COLUMN IF NOT EXISTS business_trip_purpose TEXT"
+        ))
+
+        # === application — Приказ Т-9 ===
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_order_number VARCHAR(16)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_order_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_start_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_end_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_purpose_override TEXT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_duration_words VARCHAR(32)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_duration_unit VARCHAR(16)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS business_trip_place_short BOOLEAN "
+            "NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application "
+            "ADD COLUMN IF NOT EXISTS employee_tab_number VARCHAR(16)"
+        ))
+
+    print("[migration] Pack 50.7-A: business trip fields ready (company.okpo, "
+          "position.business_trip_purpose, application.business_trip_*)")

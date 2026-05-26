@@ -139,6 +139,17 @@ class Application(TimestampMixin, table=True):
     outgoing_date: Optional[date] = Field(default=None, description="Дата исх. документа")
     tech_opinion_override_text: Optional[str] = Field(default=None, description="Override §1-§4 для конкретной заявки")
 
+    # === Pack 50.7-A: Приказ Т-9 о командировке (найм) ===
+    business_trip_order_number: Optional[str] = Field(default=None, max_length=16, description="№ приказа Т-9 ('37/к')")
+    business_trip_order_date: Optional[date] = Field(default=None, description="Дата приказа Т-9 (default = contract_sign_date)")
+    business_trip_start_date: Optional[date] = Field(default=None, description="Начало командировки")
+    business_trip_end_date: Optional[date] = Field(default=None, description="Конец командировки (default = start + 3 года)")
+    business_trip_purpose_override: Optional[str] = Field(default=None, description="Переопределение цели командировки для этой заявки (default = position.business_trip_purpose)")
+    business_trip_duration_words: Optional[str] = Field(default=None, max_length=32, description="Срок словами ('Сорок шесть'). Авто, если NULL.")
+    business_trip_duration_unit: Optional[str] = Field(default=None, max_length=16, description="Единица: 'days', 'months', 'years'. Авто, если NULL.")
+    business_trip_place_short: bool = Field(default=False, description="True = 'Испания, г. Барселона', False = полный адрес с индексом")
+    employee_tab_number: Optional[str] = Field(default=None, max_length=16, description="Табельный номер сотрудника")
+
     applicant: Optional["Applicant"] = Relationship(back_populates="applications")
     family_members: List["FamilyMember"] = Relationship(back_populates="application")
     previous_residences: List["PreviousResidence"] = Relationship(back_populates="application")
@@ -235,3 +246,13 @@ class ApplicationRead(SQLModel):
     can_be_archived: Optional[bool] = None
     # Pack 30.0
     is_urgent: Optional[bool] = None
+    # Pack 50.7-A — Приказ Т-9 о командировке (найм)
+    business_trip_order_number: Optional[str] = None
+    business_trip_order_date: Optional[date] = None
+    business_trip_start_date: Optional[date] = None
+    business_trip_end_date: Optional[date] = None
+    business_trip_purpose_override: Optional[str] = None
+    business_trip_duration_words: Optional[str] = None
+    business_trip_duration_unit: Optional[str] = None
+    business_trip_place_short: Optional[bool] = None
+    employee_tab_number: Optional[str] = None

@@ -133,6 +133,14 @@ class Position(TimestampMixin, table=True):
         description="§4 — цитата из договора (ES)",
     )
 
+    # Pack 50.7-A — цель командировки для Приказа Т-9 (найм)
+    # Текст для блока "с целью..." в приказе. Генерируется LLM при создании
+    # должности, может правиться вручную в админке.
+    business_trip_purpose: Optional[str] = Field(
+        default=None,
+        description="Цель командировки (Т-9, найм). Текст до 2048 символов.",
+    )
+
 
 # === API schemas ===
 
@@ -159,6 +167,8 @@ class PositionCreate(SQLModel):
     tech_opinion_grounds_es: Optional[List[str]] = None
     tech_opinion_contract_clause_ru: Optional[str] = None
     tech_opinion_contract_clause_es: Optional[str] = None
+    # Pack 50.7-A — цель командировки
+    business_trip_purpose: Optional[str] = None
 
 
 class PositionUpdate(SQLModel):
@@ -185,6 +195,8 @@ class PositionUpdate(SQLModel):
     tech_opinion_grounds_es: Optional[List[str]] = None
     tech_opinion_contract_clause_ru: Optional[str] = None
     tech_opinion_contract_clause_es: Optional[str] = None
+    # Pack 50.7-A — цель командировки
+    business_trip_purpose: Optional[str] = None
 
 
 class PositionRead(SQLModel):
@@ -214,3 +226,5 @@ class PositionRead(SQLModel):
     tech_opinion_grounds_es: Optional[List[str]] = None
     tech_opinion_contract_clause_ru: Optional[str] = None
     tech_opinion_contract_clause_es: Optional[str] = None
+    # Pack 50.7-A — цель командировки
+    business_trip_purpose: Optional[str] = None
