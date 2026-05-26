@@ -148,6 +148,8 @@ _PATCHABLE_FIELDS = {
     # Pack 41.0 — two-passport split
     "passports",
     "passport_id_for_ru_docs",
+    # Pack 41.0-M — ручное наименование ИФНС для НПД-справки
+    "npd_ifns_name",
 }
 
 # Поля русского ФИО — к ним применяется normalize_russian_case при сохранении

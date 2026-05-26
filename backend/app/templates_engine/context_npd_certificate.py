@@ -468,6 +468,14 @@ def build_npd_certificate_context(
         ):
             _npd_passport_number = _ru_dict["number"]
 
+    # Pack 41.0-M: если менеджер указал ИФНС вручную через сервис ФНС —
+    # используем её наименование в шаблоне. Иначе берём auto-resolve (ifns).
+    # Это полностью обходит проблему устаревших seed-данных и неактуальных
+    # списков ИФНС после реформ ФНС.
+    _manual_ifns_name = (applicant.npd_ifns_name or "").strip()
+    _ifns_full_name = _manual_ifns_name if _manual_ifns_name else ifns.full_name
+    _ifns_short_name = _manual_ifns_name if _manual_ifns_name else ifns.short_name
+
     # ---- 5. Сборка контекста ----
     return {
         "applicant": {
@@ -484,8 +492,8 @@ def build_npd_certificate_context(
             "npd_start_date_short": _format_date_short(inn_registration_date),
         },
         "ifns": {
-            "full_name": ifns.full_name,
-            "short_name": ifns.short_name,
+            "full_name": _ifns_full_name,
+            "short_name": _ifns_short_name,
             "code": ifns.code,
             "address": ifns.address or "",
         },
