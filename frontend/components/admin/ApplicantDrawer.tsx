@@ -130,6 +130,10 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     (applicant as any).npd_ifns_name || ""
   );
 
+  // Pack 41.0-P: UX-флаг для inline-фидбека кнопки «Скопировать адрес»
+  // (показываем ✓ Скопировано на 2 секунды вместо блокирующего alert).
+  const [addressCopied, setAddressCopied] = useState(false);
+
 
   // Pack 50.1-F2 — СНИЛС работника (для Трудового договора)
   const [snils, setSnils] = useState((applicant as any).snils || "");
@@ -777,15 +781,22 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   }
                   try {
                     await navigator.clipboard.writeText(home_address.trim());
-                    alert("Адрес скопирован в буфер обмена");
+                    // Pack 41.0-P: inline-фидбек на 2 секунды вместо alert
+                    setAddressCopied(true);
+                    setTimeout(() => setAddressCopied(false), 2000);
                   } catch (e) {
                     alert("Не удалось скопировать. Скопируйте адрес вручную.");
                   }
                 }}
-                className="text-xs px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-50 transition-colors flex items-center gap-1 whitespace-nowrap"
+                className={
+                  "text-xs px-2.5 py-1 rounded-md border transition-colors flex items-center gap-1 whitespace-nowrap " +
+                  (addressCopied
+                    ? "border-green-500 bg-green-50 text-green-700"
+                    : "border-slate-300 hover:bg-slate-50")
+                }
                 title="Скопировать адрес в буфер обмена для вставки в сервис ФНС"
               >
-                📋 Скопировать адрес
+                {addressCopied ? "✓ Скопировано" : "📋 Скопировать адрес"}
               </button>
               <a
                 href="https://service.nalog.ru/addrno.do"
