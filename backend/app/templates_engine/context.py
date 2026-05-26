@@ -2464,6 +2464,20 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "sign_date_str": _format_date_ru(application.contract_sign_date),
             # === Pack 40.0: tech_opinion ===
             "sign_date_es": _fmt_date_es(application.contract_sign_date),
+            # === Pack 41.0-J: почасовая ставка (для архетипа vozmezdnoe_hourly:
+            # kns_grupp, buki_vedi). hours_per_month — стандарт ТК РФ
+            # (40 ч/нед × 4 нед). hourly_rate_rub — вычисляемое поле:
+            # salary_rub / 160, округлённое до 2 знаков. Если salary_rub
+            # не задан — ставка 0 (шаблон покажет 0,00 ₽ как сигнал
+            # менеджеру что оклад не заполнен). Шаблоны других архетипов
+            # эти поля просто игнорируют (Jinja не падает на лишних
+            # переменных в context). ===
+            "hours_per_month": 160,
+            "hourly_rate_rub": (
+                (application.salary_rub / Decimal(160)).quantize(Decimal("0.01"))
+                if application.salary_rub
+                else Decimal("0")
+            ),
         },
 
         "monthly_documents": monthly_docs,
