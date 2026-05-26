@@ -48,6 +48,10 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     country: "RUS",
     tax_id_primary: "",
     tax_id_secondary: "",
+    // Pack 50.1-E — поля для документов (ОКПО для Т-9, ОГРН + email для Трудового договора)
+    okpo: "",
+    ogrn: "",
+    email: "",
     legal_address: "",
     postal_address: "",
     director_full_name_ru: "",
@@ -237,6 +241,15 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                   <TextField label="КПП (только для РФ)" value={form.tax_id_secondary || ""}
                     onChange={(v) => setField("tax_id_secondary", v)} placeholder="771501001" />
                 </Grid>
+                {/* Pack 50.1-E — ОКПО + ОГРН + email для шаблонов документов */}
+                <Grid>
+                  <TextField label="ОКПО (для Т-9 при найме)" value={(form as any).okpo || ""}
+                    onChange={(v) => setField("okpo" as any, v)} placeholder="01465988 (8 цифр)" />
+                  <TextField label="ОГРН (для Трудового договора)" value={(form as any).ogrn || ""}
+                    onChange={(v) => setField("ogrn" as any, v)} placeholder="1167746307563 (13 цифр)" />
+                </Grid>
+                <TextField label="Email (ЭДО — для Трудового договора)" value={(form as any).email || ""}
+                  onChange={(v) => setField("email" as any, v)} placeholder="info@factorstroy.ru" />
               </Section>
 
               {/* Pack 29.4 — Шаблон договора */}
