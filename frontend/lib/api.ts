@@ -3665,3 +3665,24 @@ export async function openDiplomaPdf(
   // URL отзываем через минуту — даём времени браузеру прогрузить
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+
+// ============================================================================
+// Pack 50.1-F2 — генерация СНИЛС
+// ============================================================================
+//
+// Возвращает правдоподобный СНИЛС с правильной контрольной суммой по алгоритму ПФР.
+// Бэк генерирует — фронт только подставляет в поле.
+
+export async function generateSnils(): Promise<string> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applicants/generate-snils`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+    },
+  );
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.snils as string;
+}

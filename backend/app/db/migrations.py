@@ -1366,3 +1366,27 @@ def apply_pack50_1_A_migration() -> None:
         ))
 
     print("[migration] Pack 50.1-A: company.ogrn + company.email ready")
+
+
+# ============================================================================
+# Pack 50.1-F2 — СНИЛС работника для Трудового договора
+# ============================================================================
+def apply_pack50_1_F2_migration() -> None:
+    """Pack 50.1-F2 — добавляет applicant.snils.
+
+    applicant:
+      - snils VARCHAR(14) NULL — Страховой номер индивидуального лицевого счёта.
+        Формат: XXX-XXX-XXX XX (14 символов с дефисами и пробелом).
+        Используется в Трудовом договоре в реквизитах работника.
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS snils VARCHAR(14)"
+        ))
+
+    print("[migration] Pack 50.1-F2: applicant.snils ready")

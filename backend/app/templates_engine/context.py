@@ -2367,6 +2367,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "passport_issue_date_str": fmt_date_ru(applicant.passport_issue_date),  # Pack 41.0-G — primary
             "passport_issuer": _resolve_passport_issuer_for_template(applicant),  # Pack 41.0-G — primary
             "inn": applicant.inn or "",
+            # Pack 50.1-F2 — СНИЛС (Трудовой договор, реквизиты работника)
+            "snils": applicant.snils or "",
             "home_address": abbreviate_address(applicant.home_address or ""),
             "home_address_line1": _bank_statement_address_line1(applicant),
             "home_address_line2": _bank_statement_address_line2(applicant),

@@ -141,6 +141,15 @@ class Applicant(TimestampMixin, table=True):
                     "Используется для отслеживания распределения по регионам.",
     )
 
+    # Pack 50.1-F2 — СНИЛС для Трудового договора (найм).
+    # Формат: XXX-XXX-XXX XX (14 символов: 11 цифр + 2 дефиса + 1 пробел).
+    # Опциональное — менеджер вводит вручную или генерирует через UI кнопку.
+    snils: Optional[str] = Field(
+        default=None, max_length=14,
+        description="СНИЛС работника (XXX-XXX-XXX XX). "
+                    "Используется в Трудовом договоре, реквизиты работника.",
+    )
+
     # Pack 18.9: подписант апостиля. Все 3 поля — переопределение дефолта
     # «Байрамов Н.А.» / стандартная должность. Если пустые — используется
     # дефолт. Менеджер может задать другого подписанта в UI ApplicantDrawer.
@@ -268,6 +277,8 @@ class ApplicantCreate(SQLModel):
     inn_registration_date: Optional[date] = None
     inn_source: Optional[str] = None
     inn_kladr_code: Optional[str] = None
+    # Pack 50.1-F2 — СНИЛС
+    snils: Optional[str] = None
     # Pack 16: banking
     bank_id: Optional[int] = None
     bank_account: Optional[str] = None
@@ -318,6 +329,8 @@ class ApplicantUpdate(SQLModel):
     inn_registration_date: Optional[date] = None
     inn_source: Optional[str] = None
     inn_kladr_code: Optional[str] = None
+    # Pack 50.1-F2 — СНИЛС
+    snils: Optional[str] = None
     # Pack 18.9: подписант апостиля (опциональное переопределение дефолта)
     apostille_signer_short: Optional[str] = None
     apostille_signer_signature: Optional[str] = None

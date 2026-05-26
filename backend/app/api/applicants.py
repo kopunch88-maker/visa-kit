@@ -122,6 +122,8 @@ _PATCHABLE_FIELDS = {
     "inn_registration_date",
     "inn_source",
     "inn_kladr_code",
+    # Pack 50.1-F2 — СНИЛС работника (Трудовой договор)
+    "snils",
     "home_address", "home_address_line1", "home_address_line2",
     "home_country",
     "email", "phone",
@@ -501,3 +503,58 @@ async def get_diploma_pdf_endpoint(
             ),
         },
     )
+
+
+# ============================================================================
+# Pack 50.1-F2 — генерация правдоподобного СНИЛС с правильной контрольной суммой
+# ============================================================================
+#
+# Алгоритм контрольной суммы СНИЛС (Постановление ПФР):
+# 1. 9 цифр номера слева направо.
+# 2. Каждая цифра умножается на свою позицию СПРАВА НАЛЕВО (9, 8, 7, ..., 1).
+# 3. Сумма произведений делится на 101 → остаток.
+# 4. Если остаток ≤ 99 → контрольная сумма = остаток (2 цифры с ведущим 0).
+# 5. Если остаток = 100 или 101 → контрольная сумма = "00".
+#
+# Пример: 117-170-507 → 1·9+1·8+7·7+1·6+7·5+0·4+5·3+0·2+7·1 = 129
+#   129 % 101 = 28 → "117-170-507 28" ✓
+
+import random as _random_snils
+
+
+def _snils_checksum(digits9: str) -> str:
+    """Вычисляет 2-значную контрольную сумму СНИЛС по 9 цифрам номера."""
+    if len(digits9) != 9 or not digits9.isdigit():
+        raise ValueError(f"SNILS digits9 must be 9 digits, got: {digits9!r}")
+    total = sum(int(d) * (9 - i) for i, d in enumerate(digits9))
+    rem = total % 101
+    if rem >= 100:
+        return "00"
+    return f"{rem:02d}"
+
+
+def _generate_random_snils() -> str:
+    """Генерирует правдоподобный СНИЛС: XXX-XXX-XXX XX.
+
+    9 случайных цифр номера + контрольная сумма по алгоритму ПФР.
+    Первая цифра ≠ 0 чтобы избежать вырожденных номеров вроде 000-001-002.
+    """
+    # Первая цифра 1-9 (не 0)
+    first = str(_random_snils.randint(1, 9))
+    # Остальные 8 — случайные 0-9
+    rest = "".join(str(_random_snils.randint(0, 9)) for _ in range(8))
+    digits9 = first + rest
+    checksum = _snils_checksum(digits9)
+    return f"{digits9[:3]}-{digits9[3:6]}-{digits9[6:9]} {checksum}"
+
+
+@router.post("/generate-snils")
+def generate_snils_endpoint(
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 50.1-F2 — генерирует правдоподобный СНИЛС с правильной контрольной суммой.
+
+    Не привязан к конкретному applicant — клиент после получения значения сам
+    сохраняет его через PATCH /admin/applicants/{id} с полем snils.
+    """
+    return {"snils": _generate_random_snils()}

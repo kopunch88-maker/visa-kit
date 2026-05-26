@@ -17,6 +17,8 @@ import {
   BankResponse,
   listBanks,
   generateAccount,
+  // Pack 50.1-F2 — генерация правдоподобного СНИЛС с контрольной суммой
+  generateSnils,
   regenerateAddress, // Pack 18.8: перегенерация адреса
   regenerateEducation, // Pack 19.0: автогенерация образования
   // Pack 46.0 — диплом для хурадо
@@ -120,6 +122,23 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [inn_kladr_code, setInnKladrCode] = useState(
     applicant.inn_kladr_code || ""
   );
+
+  // Pack 50.1-F2 — СНИЛС работника (для Трудового договора)
+  const [snils, setSnils] = useState((applicant as any).snils || "");
+  const [snilsGenerating, setSnilsGenerating] = useState(false);
+
+  async function handleGenerateSnils() {
+    setSnilsGenerating(true);
+    setError(null);
+    try {
+      const generated = await generateSnils();
+      setSnils(generated);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSnilsGenerating(false);
+    }
+  }
 
   // Pack 16 — банковские поля
   const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
@@ -483,6 +502,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         inn: inn.trim(),
         inn_registration_date: inn_registration_date || null,
         inn_kladr_code: inn_kladr_code || null,
+        // Pack 50.1-F2 — СНИЛС
+        snils: snils.trim() || null,
         // Pack 16
         bank_account: bank_account.trim() || null,
         ...bankFields,
@@ -764,6 +785,32 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 type="date"
               />
             )}
+            {/* Pack 50.1-F2 — СНИЛС (для Трудового договора, найм) */}
+            <Field
+              label="СНИЛС"
+              value={snils}
+              onChange={setSnils}
+              placeholder="XXX-XXX-XXX XX"
+              actionButton={
+                <button
+                  type="button"
+                  onClick={handleGenerateSnils}
+                  disabled={snilsGenerating}
+                  className="text-xs px-2.5 py-1 rounded-md text-white transition-colors flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
+                  style={{ background: "var(--color-accent)" }}
+                  title="Сгенерировать правдоподобный СНИЛС с правильной контрольной суммой"
+                >
+                  {snilsGenerating ? (
+                    <>⏳ Генерация...</>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3 h-3" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              }
+            />
             {/* Pack 28.5: бэйдж реальная/ориентировочная + кнопка уточнения */}
             {applicant.inn && applicant.inn_source && (
               <div className="flex items-center gap-2 mt-2 text-xs flex-wrap">
