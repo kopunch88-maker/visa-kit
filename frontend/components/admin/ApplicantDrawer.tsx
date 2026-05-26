@@ -83,6 +83,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [last_name_native, setLastNameNative] = useState(applicant.last_name_native || "");
   const [first_name_native, setFirstNameNative] = useState(applicant.first_name_native || "");
   const [middle_name_native, setMiddleNameNative] = useState(applicant.middle_name_native || "");
+  // Pack 50.7-D — ФИО в винительном падеже для Приказа Т-9 (найм)
+  const [full_name_accusative, setFullNameAccusative] = useState((applicant as any).full_name_accusative || "");
   const [last_name_latin, setLastNameLatin] = useState(applicant.last_name_latin || "");
   const [first_name_latin, setFirstNameLatin] = useState(applicant.first_name_latin || "");
   const [sex, setSex] = useState(applicant.sex || "");
@@ -460,6 +462,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         middle_name_native: middle_name_native.trim(),
         last_name_latin: last_name_latin.trim(),
         first_name_latin: first_name_latin.trim(),
+        // Pack 50.7-D — винительный падеж для Т-9
+        full_name_accusative: full_name_accusative.trim() || null,
         sex,
         marital_status,
         nationality,
@@ -629,6 +633,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <Field label="Отчество (если есть)" value={middle_name_native} onChange={setMiddleNameNative}
               onBlur={() => setMiddleNameNative(toTitleCase(middle_name_native))}
               placeholder="Петрович — для русских клиентов" />
+            {/* Pack 50.7-D — винительный падеж ФИО для Приказа Т-9 (найм). Заполняется вручную. */}
+            <Field
+              label="ФИО в винительном падеже (для Т-9)"
+              value={full_name_accusative}
+              onChange={setFullNameAccusative}
+              placeholder="Например: Орлова Ивана Андреевича"
+            />
           </Section>
 
           <Section title="ФИО латиницей (как в паспорте)">

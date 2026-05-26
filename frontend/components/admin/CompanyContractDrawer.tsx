@@ -71,6 +71,20 @@ export function CompanyContractDrawer({
   application, applicant, companies, positions, onClose, onSaved,
 }: Props) {
   const [companyId, setCompanyId] = useState<number | "">(application.company_id || "");
+  // Pack 50.7-D — ОКПО для шапки Приказа Т-9
+  const [companyOkpo, setCompanyOkpo] = useState("");
+
+  // Pack 50.7-D — поля для Приказа Т-9 о командировке (отображаются только при EMPLOYMENT)
+  const isNaim = (application as any).application_type === "EMPLOYMENT";
+  const [btOrderNumber, setBtOrderNumber] = useState((application as any).business_trip_order_number || "");
+  const [btOrderDate, setBtOrderDate] = useState((application as any).business_trip_order_date || "");
+  const [btStartDate, setBtStartDate] = useState((application as any).business_trip_start_date || "");
+  const [btEndDate, setBtEndDate] = useState((application as any).business_trip_end_date || "");
+  const [btPurposeOverride, setBtPurposeOverride] = useState((application as any).business_trip_purpose_override || "");
+  const [btDurationWords, setBtDurationWords] = useState((application as any).business_trip_duration_words || "");
+  const [btDurationUnit, setBtDurationUnit] = useState((application as any).business_trip_duration_unit || "");
+  const [btPlaceShort, setBtPlaceShort] = useState<boolean>((application as any).business_trip_place_short || false);
+  const [empTabNumber, setEmpTabNumber] = useState((application as any).employee_tab_number || "");
   const [positionId, setPositionId] = useState<number | "">(application.position_id || "");
   const [contractNumber, setContractNumber] = useState(application.contract_number || "");
   const [contractDate, setContractDate] = useState(application.contract_sign_date || "");
@@ -119,10 +133,13 @@ export function CompanyContractDrawer({
     if (selectedCompany) {
       setCompanyFullNameEs(selectedCompany.full_name_es || "");
       setDirectorFullNameLatin(selectedCompany.director_full_name_latin || "");
+      // Pack 50.7-D — синхронизация ОКПО с выбранной компанией
+      setCompanyOkpo((selectedCompany as any).okpo || "");
       setCompanyFieldsDirty(false);
     } else {
       setCompanyFullNameEs("");
       setDirectorFullNameLatin("");
+      setCompanyOkpo("");
     }
   }, [companyId, selectedCompany?.id]);
 
@@ -210,6 +227,10 @@ export function CompanyContractDrawer({
         if (directorFullNameLatin !== (selectedCompany.director_full_name_latin || "")) {
           updates.director_full_name_latin = directorFullNameLatin || null;
         }
+        // Pack 50.7-D — ОКПО для Т-9
+        if (companyOkpo !== ((selectedCompany as any).okpo || "")) {
+          updates.okpo = companyOkpo.trim() || null;
+        }
         if (Object.keys(updates).length > 0) {
           await updateCompany(companyId as number, updates);
         }
@@ -227,6 +248,16 @@ export function CompanyContractDrawer({
         // Pack 26.0 — поля письма
         employer_letter_number: letterNumber || undefined,
         employer_letter_date: letterDate || undefined,
+        // Pack 50.7-D — поля Приказа Т-9 (отправляются всегда; для SELF_EMPLOYED останутся NULL т.к. не редактировались)
+        business_trip_order_number: btOrderNumber.trim() || undefined,
+        business_trip_order_date: btOrderDate || undefined,
+        business_trip_start_date: btStartDate || undefined,
+        business_trip_end_date: btEndDate || undefined,
+        business_trip_purpose_override: btPurposeOverride.trim() || undefined,
+        business_trip_duration_words: btDurationWords.trim() || undefined,
+        business_trip_duration_unit: btDurationUnit || undefined,
+        business_trip_place_short: btPlaceShort,
+        employee_tab_number: empTabNumber.trim() || undefined,
       } as any);
       onSaved();
     } catch (e) { setSaveError((e as Error).message); }
@@ -385,12 +416,154 @@ export function CompanyContractDrawer({
                   loading={translitLoading === "director"}
                   placeholder='напр. "Tarakin Yury Aleksandrovich"'
                 />
+                {/* Pack 50.7-D — ОКПО (8 цифр) для шапки Приказа Т-9 */}
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    ОКПО <span className="text-tertiary font-normal">(для Т-9 при найме)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={companyOkpo}
+                    onChange={(e) => { setCompanyOkpo(e.target.value); setCompanyFieldsDirty(true); }}
+                    placeholder="например 01465988 (8 цифр)"
+                    maxLength={8}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
               </div>
               {companyFieldsDirty && (
                 <p className="text-[11px] text-info mt-2">
                   Изменения применятся ко всей компании при сохранении
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Pack 50.7-D — Секция Командировка (Т-9). Только для EMPLOYMENT. */}
+          {isNaim && (
+            <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-tertiary mb-1">
+                💼 Командировка (Приказ Т-9)
+              </h4>
+              <p className="text-[11px] text-tertiary mb-3">
+                Поля для шаблона «17_Приказ_на_командировку.docx». Большинство auto если оставить пустыми:
+                номер генерится по компании, даты — из договора + 30 дней / +3 года, срок — из дат прописью.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">№ приказа Т-9</label>
+                  <input
+                    type="text"
+                    value={btOrderNumber}
+                    onChange={(e) => setBtOrderNumber(e.target.value)}
+                    placeholder="auto, напр. 37/к"
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Дата приказа</label>
+                  <input
+                    type="date"
+                    value={btOrderDate}
+                    onChange={(e) => setBtOrderDate(e.target.value)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                  <p className="text-[10px] text-tertiary mt-0.5">пусто = дата договора</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Начало командировки</label>
+                  <input
+                    type="date"
+                    value={btStartDate}
+                    onChange={(e) => setBtStartDate(e.target.value)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                  <p className="text-[10px] text-tertiary mt-0.5">пусто = подача + 30 дней</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Конец командировки</label>
+                  <input
+                    type="date"
+                    value={btEndDate}
+                    onChange={(e) => setBtEndDate(e.target.value)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                  <p className="text-[10px] text-tertiary mt-0.5">пусто = начало + 3 года</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Срок словами (override)</label>
+                  <input
+                    type="text"
+                    value={btDurationWords}
+                    onChange={(e) => setBtDurationWords(e.target.value)}
+                    placeholder="auto, напр. Сорок шесть"
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Единица срока (override)</label>
+                  <select
+                    value={btDurationUnit}
+                    onChange={(e) => setBtDurationUnit(e.target.value)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  >
+                    <option value="">auto (по датам)</option>
+                    <option value="days">дни</option>
+                    <option value="months">месяцы</option>
+                    <option value="years">годы</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-secondary mb-1">
+                  Цель командировки (override)
+                </label>
+                <textarea
+                  value={btPurposeOverride}
+                  onChange={(e) => setBtPurposeOverride(e.target.value)}
+                  placeholder="auto, берётся из Position.business_trip_purpose"
+                  rows={3}
+                  className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                  style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                />
+                <p className="text-[10px] text-tertiary mt-0.5">
+                  Пусто = берётся из настроек должности. Заполни если для этой заявки нужна особая формулировка.
+                </p>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Табельный номер</label>
+                  <input
+                    type="text"
+                    value={empTabNumber}
+                    onChange={(e) => setEmpTabNumber(e.target.value)}
+                    placeholder="напр. 159"
+                    maxLength={16}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={btPlaceShort}
+                      onChange={(e) => setBtPlaceShort(e.target.checked)}
+                      className="rounded"
+                    />
+                    Короткий формат адреса (только страна и город)
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 
