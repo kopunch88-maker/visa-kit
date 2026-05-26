@@ -13,6 +13,8 @@ import {
   // Pack 29.4
   ContractTemplateOption,
   listContractTemplates,
+  listEmploymentContractTemplates,
+  EmploymentContractTemplateOption,
 } from "@/lib/api";
 
 interface Props {
@@ -63,12 +65,17 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     bank_bic: "",
     bank_correspondent_account: "",
     contract_template_slug: null,  // Pack 29.4
+    employment_contract_template_slug: null,  // Pack 50.1-G
+    employment_contract_font_family: null,    // Pack 50.1-G
     contract_font_family: null,    // Pack 50.1-H — шрифт договора
     notes: "",
   });
 
   // Pack 29.4 — список доступных шаблонов договоров
   const [contractTemplates, setContractTemplates] = useState<ContractTemplateOption[]>([]);
+  // Pack 50.1-G — состояние таба + список шаблонов Трудового договора.
+  const [templateTab, setTemplateTab] = useState<"self_employed" | "naim">("self_employed");
+  const [employmentTemplates, setEmploymentTemplates] = useState<EmploymentContractTemplateOption[]>([]);
 
   // Pack 26.0 — если переданы initialFields (импорт из DOCX) — применяем их к форме.
   // Делаем при первом рендере и при смене initialFields. Для existing-режима поверх
@@ -110,6 +117,13 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
   useEffect(() => {
     listContractTemplates().then(setContractTemplates).catch((e) => {
       console.warn("Failed to load contract templates:", e);
+    });
+  }, []);
+
+  // Pack 50.1-G — загрузка списка шаблонов Трудового договора
+  useEffect(() => {
+    listEmploymentContractTemplates().then(setEmploymentTemplates).catch((e) => {
+      console.warn("Failed to load employment contract templates:", e);
     });
   }, []);
 
@@ -253,56 +267,127 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                   onChange={(v) => setField("email" as any, v)} placeholder="info@factorstroy.ru" />
               </Section>
 
-              {/* Pack 29.4 — Шаблон договора */}
-              <Section title="Шаблон договора">
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    Шаблон, по которому будет рендериться 01_Договор.docx
-                  </label>
-                  <select
-                    value={form.contract_template_slug || ""}
-                    onChange={(e) => setField("contract_template_slug", e.target.value || null)}
-                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
-                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+              {/* Pack 50.1-G — Единая секция «Шаблоны договоров» с табами [Самозанятый][Найм] */}
+              <Section title="Шаблоны договоров">
+                {/* Табы */}
+                <div className="flex gap-1 mb-3 p-0.5 rounded-md" style={{ background: "var(--color-bg-secondary)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setTemplateTab("self_employed")}
+                    className={`flex-1 px-3 py-1.5 text-xs rounded transition-colors ${
+                      templateTab === "self_employed" ? "bg-primary font-medium text-primary shadow-sm" : "text-tertiary hover:text-secondary"
+                    }`}
                   >
-                    <option value="">— Не выбран (модалка при генерации) —</option>
-                    {contractTemplates.map((t) => (
-                      <option key={t.slug} value={t.slug}>
-                        {t.label} [{t.archetype}]
-                      </option>
-                    ))}
-                  </select>
-                  {form.contract_template_slug && (
-                    <p className="text-xs text-tertiary mt-1">
-                      {contractTemplates.find((t) => t.slug === form.contract_template_slug)?.description || ""}
-                    </p>
-                  )}
+                    Самозанятый
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemplateTab("naim")}
+                    className={`flex-1 px-3 py-1.5 text-xs rounded transition-colors ${
+                      templateTab === "naim" ? "bg-primary font-medium text-primary shadow-sm" : "text-tertiary hover:text-secondary"
+                    }`}
+                  >
+                    Найм
+                  </button>
                 </div>
-              </Section>
 
-              {/* Pack 50.1-H — Шрифт договора */}
-              <Section title="Шрифт договора">
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    Шрифт, которым будет напечатан 01_Договор.docx
-                  </label>
-                  <select
-                    value={(form as any).contract_font_family || ""}
-                    onChange={(e) => setField("contract_font_family" as any, e.target.value || null)}
-                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
-                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
-                  >
-                    <option value="">— По умолчанию (из шаблона) —</option>
-                    <option value="Times New Roman">Times New Roman</option>
-                    <option value="Arial">Arial</option>
-                    <option value="Calibri">Calibri</option>
-                    <option value="Microsoft Sans Serif">Microsoft Sans Serif</option>
-                  </select>
-                  <p className="text-xs text-tertiary mt-1">
-                    Если оставить «По умолчанию» — будет использован шрифт из шаблона.
-                    Применяется только к 01_Договор.docx (другие документы не затрагиваются).
-                  </p>
-                </div>
+                {/* Контент таба «Самозанятый» */}
+                {templateTab === "self_employed" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        Шаблон, по которому будет рендериться 01_Договор.docx
+                      </label>
+                      <select
+                        value={form.contract_template_slug || ""}
+                        onChange={(e) => setField("contract_template_slug", e.target.value || null)}
+                        className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                      >
+                        <option value="">— Не выбран (модалка при генерации) —</option>
+                        {contractTemplates.map((t) => (
+                          <option key={t.slug} value={t.slug}>
+                            {t.label} [{t.archetype}]
+                          </option>
+                        ))}
+                      </select>
+                      {form.contract_template_slug && (
+                        <p className="text-xs text-tertiary mt-1">
+                          {contractTemplates.find((t) => t.slug === form.contract_template_slug)?.description || ""}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        Шрифт договора
+                      </label>
+                      <select
+                        value={(form as any).contract_font_family || ""}
+                        onChange={(e) => setField("contract_font_family" as any, e.target.value || null)}
+                        className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                      >
+                        <option value="">— По умолчанию (из шаблона) —</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Arial">Arial</option>
+                        <option value="Calibri">Calibri</option>
+                        <option value="Microsoft Sans Serif">Microsoft Sans Serif</option>
+                      </select>
+                      <p className="text-xs text-tertiary mt-1">
+                        Применяется только к 01_Договор.docx.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Контент таба «Найм» */}
+                {templateTab === "naim" && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        Шаблон, по которому будет рендериться 01_Трудовой_договор.docx
+                      </label>
+                      <select
+                        value={(form as any).employment_contract_template_slug || ""}
+                        onChange={(e) => setField("employment_contract_template_slug" as any, e.target.value || null)}
+                        className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                      >
+                        <option value="">— Не выбран (модалка при генерации) —</option>
+                        {employmentTemplates.map((t) => (
+                          <option key={t.slug} value={t.slug}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                      {(form as any).employment_contract_template_slug && (
+                        <p className="text-xs text-tertiary mt-1">
+                          {employmentTemplates.find((t) => t.slug === (form as any).employment_contract_template_slug)?.description || ""}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-secondary mb-1">
+                        Шрифт Трудового договора
+                      </label>
+                      <select
+                        value={(form as any).employment_contract_font_family || ""}
+                        onChange={(e) => setField("employment_contract_font_family" as any, e.target.value || null)}
+                        className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                        style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                      >
+                        <option value="">— По умолчанию (из шаблона) —</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Arial">Arial</option>
+                        <option value="Calibri">Calibri</option>
+                        <option value="Microsoft Sans Serif">Microsoft Sans Serif</option>
+                      </select>
+                      <p className="text-xs text-tertiary mt-1">
+                        Применяется только к 01_Трудовой_договор.docx.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </Section>
 
               <Section title="Адреса">

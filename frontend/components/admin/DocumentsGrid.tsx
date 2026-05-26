@@ -70,16 +70,20 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Pack 29.4 тАФ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ ╨┐╤А╨╕ 409 NEEDS_CONTRACT_TEMPLATE
+  // Pack 29.4 + 50.1-G — состояние модалки выбора шаблона при 409.
+  // kind: "contract" — самозанятый, "employment" — трудовой договор.
   const [pickerState, setPickerState] = useState<{
     isOpen: boolean;
     companyId: number;
     companyShortName: string;
     onSaved: () => void;
+    kind: "contract" | "employment";
   } | null>(null);
 
-  // Pack 29.4 тАФ ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
-  // ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В true ╨╡╤Б╨╗╨╕ ╨╛╤В╨║╤А╤Л╨╗╨╕ ╨╝╨╛╨┤╨░╨╗╨║╤Г (╨╜╤Г╨╢╨╜╨╛ ╨┐╤А╨╡╤А╨▓╨░╤В╤М ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╤Г), false ╨╡╤Б╨╗╨╕ 409 ╨╜╨╡ ╨┐╤А╨╕╤И╨╗╨░
+  // Pack 29.4 + 50.1-G — обработка 409 для обоих кодов:
+  //   NEEDS_CONTRACT_TEMPLATE (самозанятый)
+  //   NEEDS_EMPLOYMENT_CONTRACT_TEMPLATE (трудовой)
+  // Возвращает true если открыли модалку (нужно прервать обработку), false иначе.
   async function handle409IfNeedsTemplate(res: Response, retryFn: () => void): Promise<boolean> {
     if (res.status !== 409) return false;
     let detail: any;
@@ -89,12 +93,17 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     } catch {
       return false;
     }
-    if (!detail || detail.code !== "NEEDS_CONTRACT_TEMPLATE") return false;
+    if (!detail) return false;
+    let kind: "contract" | "employment" | null = null;
+    if (detail.code === "NEEDS_CONTRACT_TEMPLATE") kind = "contract";
+    else if (detail.code === "NEEDS_EMPLOYMENT_CONTRACT_TEMPLATE") kind = "employment";
+    if (!kind) return false;
     setPickerState({
       isOpen: true,
       companyId: detail.company_id,
       companyShortName: detail.company_short_name || `id=${detail.company_id}`,
       onSaved: retryFn,
+      kind,
     });
     return true;
   }
@@ -318,6 +327,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
         <ContractTemplatePickerModal
           companyId={pickerState.companyId}
           companyShortName={pickerState.companyShortName}
+          kind={pickerState.kind}
           onClose={() => setPickerState(null)}
           onSaved={() => {
             const retry = pickerState.onSaved;

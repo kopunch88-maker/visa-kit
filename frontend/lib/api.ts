@@ -1369,6 +1369,27 @@ export async function listContractTemplates(): Promise<ContractTemplateOption[]>
 }
 
 // ============================================================================
+// Pack 50.1-G — Шаблоны Трудового договора
+// ============================================================================
+
+export type EmploymentContractTemplateOption = {
+  slug: string;
+  label: string;
+  archetype: string;       // всегда "employment" для шаблонов найма
+  description: string;
+};
+
+export async function listEmploymentContractTemplates(): Promise<EmploymentContractTemplateOption[]> {
+  const res = await fetch(`${API_BASE_URL}/api/admin/companies/employment-contract-templates`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Employment contract templates: ${res.status}`);
+  const data = await res.json();
+  return data.templates;
+}
+
+
+// ============================================================================
 // Catalogs — Positions
 // ============================================================================
 

@@ -1416,3 +1416,36 @@ def apply_pack50_1_H_migration() -> None:
         ))
 
     print("[migration] Pack 50.1-H: company.contract_font_family ready")
+
+
+# ============================================================================
+# Pack 50.1-G — Шаблон + шрифт Трудового договора (per-company)
+# ============================================================================
+def apply_pack50_1_G_migration() -> None:
+    """Pack 50.1-G — добавляет per-company настройки Трудового договора.
+
+    company:
+      - employment_contract_template_slug VARCHAR(64) NULL — slug шаблона
+        в EMPLOYMENT_CONTRACT_TEMPLATES_REGISTRY. Если NULL — fallback
+        на EMPLOYMENT_COMPANY_INN_TO_SLUG[tax_id_primary]. Если ни то ни
+        другое — render_employment_contract вернёт 409.
+      - employment_contract_font_family VARCHAR(64) NULL — шрифт для
+        Трудового договора. Если NULL — шрифт из самого шаблона.
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS "
+            "employment_contract_template_slug VARCHAR(64)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS "
+            "employment_contract_font_family VARCHAR(64)"
+        ))
+
+    print("[migration] Pack 50.1-G: company.employment_contract_template_slug + "
+          "company.employment_contract_font_family ready")

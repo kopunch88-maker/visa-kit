@@ -14,6 +14,8 @@ import { X, Loader2, AlertCircle } from "lucide-react";
 import {
   ContractTemplateOption,
   listContractTemplates,
+  EmploymentContractTemplateOption,
+  listEmploymentContractTemplates,
   updateCompany,
 } from "@/lib/api";
 
@@ -22,6 +24,9 @@ interface Props {
   companyShortName: string;
   onClose: () => void;
   onSaved: () => void;
+  // Pack 50.1-G — какой шаблон выбираем: договор самозанятого либо трудовой.
+  // Default: "contract" (обратная совместимость с Pack 29.4).
+  kind?: "contract" | "employment";
 }
 
 const ARCHETYPE_LABELS: Record<string, { label: string; bg: string; color: string }> = {
@@ -40,6 +45,12 @@ const ARCHETYPE_LABELS: Record<string, { label: string; bg: string; color: strin
     bg: "var(--color-bg-warning)",
     color: "var(--color-text-warning)",
   },
+  // Pack 50.1-G — Трудовой договор (найм).
+  employment: {
+    label: "Трудовой",
+    bg: "var(--color-bg-info)",
+    color: "var(--color-text-info)",
+  },
 };
 
 export function ContractTemplatePickerModal({
@@ -47,8 +58,9 @@ export function ContractTemplatePickerModal({
   companyShortName,
   onClose,
   onSaved,
+  kind = "contract",
 }: Props) {
-  const [templates, setTemplates] = useState<ContractTemplateOption[]>([]);
+  const [templates, setTemplates] = useState<Array<ContractTemplateOption | EmploymentContractTemplateOption>>([]);
   const [selectedSlug, setSelectedSlug] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -63,16 +75,23 @@ export function ContractTemplatePickerModal({
   }, [onClose]);
 
   useEffect(() => {
-    listContractTemplates()
+    // Pack 50.1-G — для kind="employment" используем другой endpoint.
+    const loader = kind === "employment"
+      ? listEmploymentContractTemplates()
+      : listContractTemplates();
+    loader
       .then((list) => {
         setTemplates(list);
-        // По умолчанию выберем "default" если есть
-        const defaultOption = list.find((t) => t.slug === "default");
-        if (defaultOption) setSelectedSlug("default");
+        // Для contract — по умолчанию "default" если есть.
+        // Для employment — список без "default", оставляем без preselect.
+        if (kind === "contract") {
+          const defaultOption = list.find((t) => t.slug === "default");
+          if (defaultOption) setSelectedSlug("default");
+        }
       })
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [kind]);
 
   async function handleSave() {
     if (!selectedSlug) {
@@ -82,7 +101,11 @@ export function ContractTemplatePickerModal({
     setSaving(true);
     setError(null);
     try {
-      await updateCompany(companyId, { contract_template_slug: selectedSlug });
+      // Pack 50.1-G — для employment сохраняем в другое поле company.
+      const payload = kind === "employment"
+        ? { employment_contract_template_slug: selectedSlug } as any
+        : { contract_template_slug: selectedSlug };
+      await updateCompany(companyId, payload);
       onSaved();
     } catch (e) {
       setError((e as Error).message);
@@ -108,7 +131,7 @@ export function ContractTemplatePickerModal({
         >
           <div>
             <h2 className="text-lg font-semibold text-primary">
-              Выбор шаблона договора
+              {kind === "employment" ? "Выбор шаблона Трудового договора" : "Выбор шаблона договора"}
             </h2>
             <p className="text-sm text-tertiary mt-0.5">
               Для компании <span className="font-medium text-secondary">{companyShortName}</span>

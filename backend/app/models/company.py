@@ -122,6 +122,21 @@ class Company(TimestampMixin, table=True):
                     "Поддерживается: Times New Roman, Arial, Calibri, Microsoft Sans Serif.",
     )
 
+    # Pack 50.1-G — Трудовой договор: шаблон + шрифт (per-company).
+    employment_contract_template_slug: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Slug шаблона Трудового договора (см. employment_contracts_registry). "
+                    "Если NULL — fallback на EMPLOYMENT_COMPANY_INN_TO_SLUG[tax_id_primary]. "
+                    "Если ни то ни другое — render_employment_contract вернёт 409.",
+    )
+    employment_contract_font_family: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Шрифт для рендера 01_Трудовой_договор.docx. "
+                    "Поддерживается: Times New Roman, Arial, Calibri, Microsoft Sans Serif.",
+    )
+
     # Banking — primary account used for receiving payments under contracts
     bank_name: str = Field(max_length=128)
     bank_account: str = Field(max_length=32)
@@ -167,6 +182,8 @@ class CompanyCreate(SQLModel):
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
     contract_font_family: Optional[str] = None  # Pack 50.1-H
+    employment_contract_template_slug: Optional[str] = None  # Pack 50.1-G
+    employment_contract_font_family: Optional[str] = None  # Pack 50.1-G
     bank_name: str
     bank_account: str
     bank_bic: str
@@ -195,6 +212,8 @@ class CompanyUpdate(SQLModel):
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
     contract_font_family: Optional[str] = None  # Pack 50.1-H
+    employment_contract_template_slug: Optional[str] = None  # Pack 50.1-G
+    employment_contract_font_family: Optional[str] = None  # Pack 50.1-G
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_bic: Optional[str] = None
@@ -225,6 +244,8 @@ class CompanyRead(SQLModel):
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
     contract_font_family: Optional[str] = None  # Pack 50.1-H
+    employment_contract_template_slug: Optional[str] = None  # Pack 50.1-G
+    employment_contract_font_family: Optional[str] = None  # Pack 50.1-G
     bank_name: str
     bank_account: str
     bank_bic: str

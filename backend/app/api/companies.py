@@ -29,6 +29,11 @@ from app.templates_engine.contracts_registry import (
     get_available_template_options,
     is_template_slug_valid,
 )
+# Pack 50.1-G — реестр шаблонов Трудового договора
+from app.templates_engine.employment_contracts_registry import (
+    get_available_employment_template_options,
+    is_employment_template_slug_valid,
+)
 # Pack 26.0 — импорт реквизитов из DOCX
 from app.services.company_extractor import (
     extract_company_from_docx,
@@ -96,6 +101,15 @@ def list_contract_templates(_user=Depends(require_manager)) -> dict:
     return {"templates": get_available_template_options()}
 
 
+@router.get("/employment-contract-templates", tags=["companies"])
+def list_employment_contract_templates(_user=Depends(require_manager)) -> dict:
+    """
+    Pack 50.1-G — список slug-ов шаблонов Трудового договора для UI dropdown
+    (вкладка «Найм» в секции «Шаблоны договоров»).
+    """
+    return {"templates": get_available_employment_template_options()}
+
+
 @router.get("/{company_id}", response_model=CompanyRead)
 def get_company(
     company_id: int,
@@ -153,6 +167,13 @@ def update_company(
         raise HTTPException(
             400,
             f"Unknown contract_template_slug: {new_slug}",
+        )
+    # Pack 50.1-G: валидация шаблона Трудового договора если меняется
+    new_emp_slug = update_data.get("employment_contract_template_slug")
+    if new_emp_slug is not None and new_emp_slug != "" and not is_employment_template_slug_valid(new_emp_slug):
+        raise HTTPException(
+            400,
+            f"Unknown employment_contract_template_slug: {new_emp_slug}",
         )
     for key, value in update_data.items():
         setattr(company, key, value)

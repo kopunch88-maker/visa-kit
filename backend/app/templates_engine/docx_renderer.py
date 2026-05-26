@@ -81,26 +81,32 @@ class NeedsContractTemplateError(HTTPException):
 
 class NeedsEmploymentContractTemplateError(HTTPException):
     """
-    Pack 50.1-C — поднимается из render_employment_contract когда у компании
-    нет шаблона Трудового договора (ИНН не в EMPLOYMENT_COMPANY_INN_TO_SLUG).
+    Pack 50.1-C/G — поднимается из render_employment_contract когда у компании
+    не выбран шаблон Трудового договора (ни employment_contract_template_slug,
+    ни fallback по ИНН в EMPLOYMENT_COMPANY_INN_TO_SLUG).
 
-    Это не модалка выбора (как у самозанятых), а сигнал что нужно построить
-    employment_contract_template.docx для этой компании. Менеджер видит
-    текст ошибки.
+    Pack 50.1-G: payload теперь содержит available_templates — список шаблонов
+    из EMPLOYMENT_CONTRACT_TEMPLATES_REGISTRY. Фронт открывает модалку
+    ContractTemplatePickerModal с kind="employment", менеджер выбирает шаблон,
+    мы сохраняем его в company.employment_contract_template_slug.
     """
     def __init__(self, company):
+        from app.templates_engine.employment_contracts_registry import (
+            get_available_employment_template_options,
+        )
         super().__init__(
             status_code=409,
             detail={
                 "code": "NEEDS_EMPLOYMENT_CONTRACT_TEMPLATE",
                 "message": (
                     f"Для компании '{company.short_name}' (ИНН={company.tax_id_primary}) "
-                    f"не построен шаблон Трудового договора. "
-                    f"Обратись к разработчику для добавления шаблона."
+                    f"не выбран шаблон Трудового договора. Выберите шаблон в карточке "
+                    f"компании или через модалку."
                 ),
                 "company_id": company.id,
                 "company_short_name": company.short_name,
                 "company_inn": company.tax_id_primary,
+                "available_templates": get_available_employment_template_options(),
             },
         )
 
@@ -494,7 +500,14 @@ def render_employment_contract(application: Application, session: Session) -> by
         raise NeedsEmploymentContractTemplateError(company)
 
     context = build_context(application, session)
-    return _render_from_repo_path(template_path, context)
+    rendered = _render_from_repo_path(template_path, context)
+    # Pack 50.1-G — если у компании задан employment_contract_font_family,
+    # подменяем все шрифты в DOCX через тот же post-processor что у
+    # обычного договора (Pack 50.1-H).
+    font_family = getattr(company, "employment_contract_font_family", None)
+    if font_family:
+        rendered = _replace_fonts_in_docx(rendered, font_family)
+    return rendered
 
 
 
