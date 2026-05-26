@@ -40,6 +40,7 @@ from app.templates_engine import (
     render_npd_certificate_lkn,  # Pack 18.3.3
     render_apostille,  # Pack 18.9
     render_tech_opinion,  # Pack 40.0-G
+    render_business_trip_order,  # Pack 50.7-C
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -557,6 +558,8 @@ _DOWNLOAD_FILES = {
     "apostille":           {"name": "16_Апостиль.docx",         "kind": "docx", "fn": render_apostille,         "args": ()},
     # Pack 40.0-G — Техническое заключение
     "tech_opinion":        {"name": "17_Техническое_заключение.docx", "kind": "docx", "fn": render_tech_opinion, "args": ()},
+    # Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
+    "business_trip_order": {"name": "17_Приказ_на_командировку.docx", "kind": "docx", "fn": render_business_trip_order, "args": ()},
 }
 
 

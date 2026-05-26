@@ -8,14 +8,18 @@ import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
 
 interface Props {
   applicationId: number;
-  // Pack 29.4 тАФ ╨┤╨╗╤П ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨▓╤Л╨▒╨╛╤А╨░ ╤И╨░╨▒╨╗╨╛╨╜╨░ Перегенерировать▓╨╛╤А╨░
+  // Pack 29.4 — для модалки выбора шаблона при перегенерации
   companyId?: number | null;
+  // Pack 50.7-C — для фильтрации naim-карточек
+  applicationType?: string | null;
 }
 
 type DocItem = {
-  id: string;        // ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ URL endpoint
-  filename: string;  // ╤З╤В╨╛ ╨┐╨╛╨║╨░╨╖╤Л╨▓╨░╨╡╨╝ ╨▓ ╨║╨░╤А╤В╨╛╤З╨║╨╡
+  id: string;
+  filename: string;
   kind: "docx" | "pdf";
+  // Pack 50.7-C — карточка видна только для EMPLOYMENT-заявок
+  naimOnly?: boolean;
 };
 
 const DOCUMENTS: DocItem[] = [
@@ -41,9 +45,15 @@ const DOCUMENTS: DocItem[] = [
   { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx" },
   // Pack 40.0-G — Техническое заключение
   { id: "tech_opinion",        filename: "17_Техническое_заключение.docx", kind: "docx" },
+  // Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
+  { id: "business_trip_order", filename: "17_Приказ_на_командировку.docx", kind: "docx", naimOnly: true },
 ];
 
-export function DocumentsGrid({ applicationId, companyId }: Props) {
+export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {
+  // Pack 50.7-C — фильтр карточек по типу заявки. Самозанятый НЕ видит naim-карточки.
+  const visibleDocs = DOCUMENTS.filter((d) =>
+    !d.naimOnly || applicationType === "EMPLOYMENT"
+  );
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipDownloaded, setZipDownloaded] = useState(false);
   const [downloadingDocxZip, setDownloadingDocxZip] = useState(false);
@@ -223,7 +233,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       <div className="border rounded-xl p-4" style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-          Русские формы Word ({DOCUMENTS.filter(d => d.kind === "docx").length})
+          Русские формы Word ({visibleDocs.filter(d => d.kind === "docx").length})
         </h3>
         <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
           className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
@@ -243,7 +253,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {DOCUMENTS.filter(d => d.kind === "docx").map((doc) => {
+        {visibleDocs.filter(d => d.kind === "docx").map((doc) => {
           const isDownloading = downloadingId === doc.id;
           return (
             <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
@@ -264,7 +274,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
       <div className="mt-4 border rounded-xl p-4" style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
-            Испанские PDF формы ({DOCUMENTS.filter(d => d.kind === "pdf").length})
+            Испанские PDF формы ({visibleDocs.filter(d => d.kind === "pdf").length})
           </h3>
           <button onClick={handleDownloadPdfZip} disabled={downloadingPdfZip}
             className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
@@ -277,7 +287,7 @@ export function DocumentsGrid({ applicationId, companyId }: Props) {
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {DOCUMENTS.filter(d => d.kind === "pdf").map((doc) => {
+          {visibleDocs.filter(d => d.kind === "pdf").map((doc) => {
             const isDownloading = downloadingId === doc.id;
             return (
               <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}

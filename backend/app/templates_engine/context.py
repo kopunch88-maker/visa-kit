@@ -1981,6 +1981,313 @@ def _full_name_latin_combined(applicant) -> str:
 
 
 
+# =============================================================================
+# Pack 50.7-C — Приказ Т-9 о командировке: helpers
+# =============================================================================
+
+# Русские месяцы в родительном падеже (для дат вида «25 января 2026»)
+_RU_MONTHS_GENITIVE = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+
+def _ru_int_to_words(n: int) -> str:
+    """Целое число прописью на русском (нужно для срока 'три года', 'Сорок шесть месяцев')."""
+    if n == 0:
+        return "ноль"
+    if n < 0:
+        return "минус " + _ru_int_to_words(-n)
+
+    units = ["", "один", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять"]
+    teens = ["десять", "одиннадцать", "двенадцать", "тринадцать", "четырнадцать",
+             "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать"]
+    tens = ["", "", "двадцать", "тридцать", "сорок", "пятьдесят",
+            "шестьдесят", "семьдесят", "восемьдесят", "девяносто"]
+    hundreds = ["", "сто", "двести", "триста", "четыреста", "пятьсот",
+                "шестьсот", "семьсот", "восемьсот", "девятьсот"]
+
+    def _three_digits(n: int) -> str:
+        parts = []
+        h, rem = divmod(n, 100)
+        if h:
+            parts.append(hundreds[h])
+        if 10 <= rem < 20:
+            parts.append(teens[rem - 10])
+        else:
+            t, u = divmod(rem, 10)
+            if t:
+                parts.append(tens[t])
+            if u:
+                parts.append(units[u])
+        return " ".join(parts)
+
+    parts = []
+    if n >= 1000:
+        thousands, n = divmod(n, 1000)
+        if thousands == 1:
+            parts.append("одна тысяча")
+        elif thousands == 2:
+            parts.append("две тысячи")
+        elif 3 <= thousands <= 4:
+            parts.append(_three_digits(thousands) + " тысячи")
+        else:
+            parts.append(_three_digits(thousands) + " тысяч")
+    if n:
+        parts.append(_three_digits(n))
+    return " ".join(parts).strip()
+
+
+def _ru_capitalize_first(text: str) -> str:
+    """'три года' → 'Три года' (только первую букву капитализируем, остальное не трогаем)."""
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
+
+
+def _bt_duration_unit_full(unit: str, count: int) -> str:
+    """Полная фраза единицы со склонением: 'календарных дней/месяцев/года/лет/годов'.
+
+    Правила:
+    - 1 → 'календарных <day/month/года>' (унифицированная форма Т-9 — всегда мн. число)
+    - 2-4 → 'календарных <дня/месяца/года>'
+    - 5+ → 'календарных <дней/месяцев/лет>'
+
+    ОДНАКО в эталонах Т-9 (АО ПроТехнологии, ООО ФАКТОР СТРОЙ) ВСЕГДА
+    используется множественное «календарных»:
+      'три календарных года' (хотя по русскому было бы 'три календарных года')
+      'Сорок шесть календарных месяцев'
+      '1127 календарных дней'
+    Поэтому возвращаем фиксированно мн. форму.
+    """
+    if unit == "days":
+        return "календарных дней"
+    if unit == "months":
+        return "календарных месяцев"
+    if unit == "years":
+        # В эталонах: 'три календарных года' (даже если строго грамматически было бы иначе)
+        if count in (1,):
+            return "календарный год"
+        if 2 <= count % 10 <= 4 and not (12 <= count % 100 <= 14):
+            return "календарных года"
+        return "календарных лет"
+    return f"календарных {unit}"
+
+
+def _bt_auto_duration(start_date, end_date) -> tuple[str, str]:
+    """Авто-вычисление срока словами + единицы из дат начала/конца.
+
+    Возвращает (duration_words, duration_unit), где unit ∈ {'days','months','years'}.
+
+    Логика выбора:
+    - Если разница ровно ≥730 дней и кратна полному году (±3 дня) → 'годы'
+    - Иначе если ≥60 дней → 'месяцы'
+    - Иначе → 'дни'
+    """
+    if not start_date or not end_date:
+        return ("", "days")
+    days = (end_date - start_date).days + 1  # включительно
+    if days <= 0:
+        return ("", "days")
+
+    # Проверим — кратно ли полному году (с допуском)
+    years_exact = days / 365.25
+    if years_exact >= 1.0:
+        years_round = round(years_exact)
+        # допуск ±5 дней
+        if abs(days - years_round * 365.25) <= 5:
+            return (_ru_int_to_words(years_round), "years")
+
+    # Проверим месяцы (≈30.44 дня)
+    months_exact = days / 30.44
+    if months_exact >= 2.0:
+        months_round = round(months_exact)
+        if abs(days - months_round * 30.44) <= 5:
+            return (_ru_int_to_words(months_round), "months")
+
+    # По умолчанию — дни
+    return (_ru_int_to_words(days), "days")
+
+
+def _bt_auto_order_number(application, session) -> str:
+    """Авто-номерация номера приказа Т-9 по компании + текущему году.
+
+    Логика — как outgoing_number в Pack 40.0-G (см. ниже в build_context):
+    ищем MAX(N) среди application.business_trip_order_number у других заявок
+    той же компании в текущем году, возвращаем (N+1)/к.
+
+    Если для компании ещё ни одной заявки нет — '1/к'.
+    """
+    import re as _re
+    from sqlmodel import select as _select
+
+    if not application.company_id:
+        return "1/к"
+
+    stmt = _select(Application.business_trip_order_number).where(
+        Application.company_id == application.company_id,
+        Application.business_trip_order_number.is_not(None),
+    )
+    max_n = 0
+    for raw in session.exec(stmt).all():
+        if raw is None:
+            continue
+        m = _re.search(r"(\d+)", str(raw))
+        if m:
+            try:
+                n = int(m.group(1))
+                if n > max_n:
+                    max_n = n
+            except ValueError:
+                pass
+    return f"{max_n + 1}/к"
+
+
+def _bt_format_place(spain_address, short_mode: bool) -> str:
+    """Формат адреса командировки.
+
+    short_mode=True → 'Испания, г. Барселона'
+    short_mode=False → '08014, Королевство Испания, г. Барселона, ул. Каррер де Сантс, 95, 2-4'
+
+    Если spain_address отсутствует — возвращаем хоть что-то ('Королевство Испания').
+    """
+    if spain_address is None:
+        return "Королевство Испания"
+
+    city = (spain_address.city or "").strip()
+    if short_mode:
+        if city:
+            return f"Испания, г. {city}"
+        return "Испания"
+
+    # Полный формат
+    parts = []
+    if spain_address.zip:
+        parts.append(spain_address.zip)
+    parts.append("Королевство Испания")
+    if city:
+        parts.append(f"г. {city}")
+    street = (spain_address.street or "").strip()
+    number = (spain_address.number or "").strip()
+    floor = (spain_address.floor or "").strip()
+    if street:
+        addr_tail = street
+        if number:
+            addr_tail += f", {number}"
+        if floor:
+            addr_tail += f"-{floor}"
+        parts.append(addr_tail)
+    return ", ".join(parts)
+
+
+def _bt_resolve_purpose(application, position) -> str:
+    """Резолв цели командировки.
+
+    Приоритет: application.business_trip_purpose_override → position.business_trip_purpose → '' .
+    """
+    if application.business_trip_purpose_override:
+        return application.business_trip_purpose_override.strip()
+    if position and position.business_trip_purpose:
+        return position.business_trip_purpose.strip()
+    return ""
+
+
+def build_business_trip_context(application, applicant, company, position, spain_address, session) -> dict:
+    """Pack 50.7-C — собирает блок 'business_trip' для шаблона Т-9.
+
+    Возвращает dict с 17 ключами, ВСЕ строки (для безопасной подстановки в DOCX).
+
+    Если каких-то дат нет — авто-вычисляем дефолты:
+    - order_date = contract_sign_date (или сегодня если нет)
+    - start_date = submission_date или contract_sign_date + 30 дней (если нет — сегодня)
+    - end_date = start_date + 3 года
+
+    Авто-номерация order_number если NULL (по компании, как outgoing_number).
+    Авто-вычисление duration_words + duration_unit если NULL (из дат).
+    """
+    from datetime import date as _date, timedelta
+
+    # ---- Daты ----
+    order_date = application.business_trip_order_date or application.contract_sign_date or _date.today()
+    start_date = application.business_trip_start_date or application.submission_date
+    if start_date is None and application.contract_sign_date:
+        start_date = application.contract_sign_date + timedelta(days=30)
+    if start_date is None:
+        start_date = _date.today() + timedelta(days=30)
+
+    end_date = application.business_trip_end_date
+    if end_date is None:
+        # +3 года от start
+        try:
+            end_date = start_date.replace(year=start_date.year + 3)
+        except ValueError:
+            # 29 февраля високосного → 28 февраля
+            end_date = start_date.replace(year=start_date.year + 3, day=28)
+
+    acknowledged_date = order_date  # дата ознакомления = дата приказа
+
+    # ---- Срок словами + единица ----
+    if application.business_trip_duration_words and application.business_trip_duration_unit:
+        # menedger override
+        duration_words = _ru_capitalize_first(application.business_trip_duration_words)
+        duration_unit = application.business_trip_duration_unit
+        # для unit_full нужен count, попробуем извлечь из слов или дат
+        if duration_unit == "days":
+            count = (end_date - start_date).days + 1
+        elif duration_unit == "months":
+            count = max(1, round(((end_date - start_date).days + 1) / 30.44))
+        else:
+            count = max(1, round(((end_date - start_date).days + 1) / 365.25))
+    else:
+        auto_words, auto_unit = _bt_auto_duration(start_date, end_date)
+        duration_words = _ru_capitalize_first(auto_words) if auto_words else ""
+        duration_unit = auto_unit
+        if duration_unit == "days":
+            count = (end_date - start_date).days + 1
+        elif duration_unit == "months":
+            count = max(1, round(((end_date - start_date).days + 1) / 30.44))
+        else:
+            count = max(1, round(((end_date - start_date).days + 1) / 365.25))
+
+    # ---- Номер приказа ----
+    order_number = application.business_trip_order_number
+    if not order_number:
+        # Авто-номерация по компании
+        order_number = _bt_auto_order_number(application, session)
+        # Пишем в БД (как outgoing_number в Pack 40.0)
+        application.business_trip_order_number = order_number
+        session.add(application)
+        session.commit()
+        session.refresh(application)
+
+    # ---- Цель ----
+    purpose = _bt_resolve_purpose(application, position)
+
+    # ---- Место ----
+    place = _bt_format_place(spain_address, application.business_trip_place_short or False)
+
+    # ---- Финальный словарь ----
+    return {
+        "order_number": order_number,
+        "order_date_str": order_date.strftime("%d.%m.%Y"),
+        "employee_tab_number": application.employee_tab_number or "",
+        "purpose": purpose,
+        "place": place,
+        "duration_words": duration_words,
+        "duration_unit_full": _bt_duration_unit_full(duration_unit, count),
+        # Даты разложенные на компоненты для ячеек Т-9
+        "start_day": f"{start_date.day:02d}",
+        "start_month_name_genitive": _RU_MONTHS_GENITIVE[start_date.month - 1],
+        "start_year_short": f"{start_date.year % 100:02d}",
+        "end_day": f"{end_date.day:02d}",
+        "end_month_name_genitive": _RU_MONTHS_GENITIVE[end_date.month - 1],
+        "end_year_short": f"{end_date.year % 100:02d}",
+        "acknowledged_day": f"{acknowledged_date.day:02d}",
+        "acknowledged_month_name_genitive": _RU_MONTHS_GENITIVE[acknowledged_date.month - 1],
+        "acknowledged_year_short": f"{acknowledged_date.year % 100:02d}",
+    }
+
+
 def build_context(application: Application, session: Session) -> dict[str, Any]:
     applicant = session.get(Applicant, application.applicant_id) if application.applicant_id else None
     company = session.get(Company, application.company_id) if application.company_id else None
@@ -2085,6 +2392,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "education": applicant.education or [],
             "work_history": _build_cv_work_history(applicant, application, company, position),
             "languages": applicant.languages or [],
+            # === Pack 50.7-C: винительный падеж ФИО для Приказа Т-9 ===
+            "full_name_accusative": applicant.full_name_accusative or _full_name_native(applicant),
             # === Pack 40.0: tech_opinion ===
             "full_name_latin": _full_name_latin_combined(applicant),
             **_build_applicant_honorifics(applicant),
@@ -2096,6 +2405,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "full_name_es": company.full_name_es,
             "tax_id_primary": company.tax_id_primary,
             "tax_id_secondary": company.tax_id_secondary or "",
+            # === Pack 50.7-C: ОКПО для Приказа Т-9 ===
+            "okpo": company.okpo or "",
             "legal_address": abbreviate_address(company.legal_address),
             "legal_address_line1": _company_legal_line1(company),
             "legal_address_line2": _company_legal_line2(company),
@@ -2122,6 +2433,8 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "title_ru": position.title_ru,
             "title_ru_genitive": position.title_ru_genitive or position.title_ru,
             "title_es": position.title_es,
+            # === Pack 50.7-C: цель командировки (для override резолва в шаблоне) ===
+            "business_trip_purpose": position.business_trip_purpose or "",
             "duties": position.duties,
             # === Pack 40.0: tech_opinion ===
             "international_analog_ru": position.international_analog_ru or "",
@@ -2206,6 +2519,11 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "fmt_money": fmt_money,
         "fmt_money_kop": fmt_money_kop,
         "fmt_amount_signed": fmt_amount_signed,
+
+        # === Pack 50.7-C: Приказ Т-9 о командировке (найм) ===
+        "business_trip": build_business_trip_context(
+            application, applicant, company, position, spain_address, session,
+        ),
     }
 
 

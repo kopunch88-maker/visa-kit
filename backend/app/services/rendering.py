@@ -38,7 +38,10 @@ from app.templates_engine import (
     render_npd_certificate_lkn,
     render_apostille,
     render_tech_opinion,  # Pack 40.0-G
+    render_business_trip_order,  # Pack 50.7-C
 )
+# Pack 50.7-C — для проверки application_type в pipeline
+from app.models import ApplicationType
 from app.pdf_forms_engine import build_pdf_forms
 
 logger = logging.getLogger(__name__)
@@ -109,6 +112,13 @@ def build_full_package(
         ("17_Техническое_заключение.docx", "tech_opinion",
          render_tech_opinion, (application, session)),
     ])
+
+    # Pack 50.7-C — Приказ Т-9 о командировке (ТОЛЬКО для EMPLOYMENT-заявок)
+    if application.application_type == ApplicationType.EMPLOYMENT:
+        files_to_render.append(
+            ("17_Приказ_на_командировку.docx", "business_trip_order",
+             render_business_trip_order, (application, session))
+        )
 
     # Корректируем под payments_period_months
     months_count = application.payments_period_months or 3

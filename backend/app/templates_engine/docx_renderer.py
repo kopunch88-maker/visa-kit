@@ -373,6 +373,12 @@ def render_tech_opinion(application: Application, session: Session) -> bytes:
     return _render("tech_opinion_template.docx", context)
 
 
+def render_business_trip_order(application: Application, session: Session) -> bytes:
+    """Pack 50.7-C — Приказ Т-9 о направлении работника в командировку (найм)."""
+    context = build_context(application, session)
+    return _render("business_trip_order_template.docx", context)
+
+
 
 def _resolve_bank_statement_template_path(
     application: Application,

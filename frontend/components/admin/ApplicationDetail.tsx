@@ -519,7 +519,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
         company={company}
       />
       <AdminClientDocuments applicationId={application.id} />
-      {isAssigned && <DocumentsGrid applicationId={application.id} companyId={application.company_id} />}
+      {isAssigned && <DocumentsGrid applicationId={application.id} companyId={application.company_id} applicationType={application.application_type} />}
       {isAssigned && <TranslationPanel applicationId={application.id} />}
 
       {!isAssigned && applicant && (
