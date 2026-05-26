@@ -167,8 +167,6 @@ class CompanyCreate(SQLModel):
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
     contract_font_family: Optional[str] = None  # Pack 50.1-H
-    contract_font_family: Optional[str] = None  # Pack 50.1-H
-    contract_font_family: Optional[str] = None  # Pack 50.1-H
     bank_name: str
     bank_account: str
     bank_bic: str
@@ -196,6 +194,7 @@ class CompanyUpdate(SQLModel):
     director_position_ru: Optional[str] = None
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
+    contract_font_family: Optional[str] = None  # Pack 50.1-H
     bank_name: Optional[str] = None
     bank_account: Optional[str] = None
     bank_bic: Optional[str] = None
@@ -225,6 +224,7 @@ class CompanyRead(SQLModel):
     director_position_ru: str
     director_full_name_latin: Optional[str] = None  # Pack 15.1
     contract_template_slug: Optional[str] = None  # Pack 29.0
+    contract_font_family: Optional[str] = None  # Pack 50.1-H
     bank_name: str
     bank_account: str
     bank_bic: str
