@@ -108,13 +108,28 @@ def _json_safe(obj):
     return obj
 
 
+# Pack 50.8-fix2 — лимит summary в TimelineEvent.summary = VARCHAR(256).
+# Без этого PATCH с большим update_data ломается через _log_event:
+#   psycopg2.errors.StringDataRightTruncation: value too long for type character varying(256)
+_SUMMARY_MAX = 250  # запас на "..." и любые приколы кодировки
+
+
+def _truncate_summary(summary: str) -> str:
+    """Усекает summary до лимита VARCHAR(256) с маркером '...'."""
+    if not summary:
+        return summary
+    if len(summary) <= _SUMMARY_MAX:
+        return summary
+    return summary[:_SUMMARY_MAX - 3].rstrip(", ") + "..."
+
+
 def _log_event(
     session: Session, application_id: int, actor_type: str, actor_id: Optional[int],
     event_type: str, summary: str, payload: Optional[dict] = None,
 ) -> None:
     event = TimelineEvent(
         application_id=application_id, actor_type=actor_type, actor_id=actor_id,
-        event_type=event_type, summary=summary, payload=_json_safe(payload or {}),
+        event_type=event_type, summary=_truncate_summary(summary), payload=_json_safe(payload or {}),
     )
     session.add(event)
     session.flush()
