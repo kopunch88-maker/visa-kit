@@ -13,6 +13,7 @@ from .docx_renderer import (
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
+    render_payslip,  # Pack 50.10-B
 )
 # Pack 18.3: справка о постановке на учёт самозанятого (КНД 1122035)
 from .context_npd_certificate import build_npd_certificate_context
@@ -36,6 +37,7 @@ __all__ = [
     "render_employment_contract",  # Pack 50.1-C
     "render_ndfl_2",  # Pack 50.8-B
     "render_stdr",  # Pack 50.9-B
+    "render_payslip",  # Pack 50.10-B
     # Pack 18.3
     "build_npd_certificate_context",
     "render_npd_certificate",

@@ -523,6 +523,40 @@ def render_stdr(application: Application, session: Session) -> bytes:
 
 
 
+def render_payslip(application: Application, session: Session, month_idx: int) -> bytes:
+    """Pack 50.10-B — Расчётный листок за один из 3 предыдущих месяцев.
+
+    Args:
+        application: Application
+        session: Session
+        month_idx: 0, 1 или 2 (0 = самый ранний месяц, 2 = последний)
+
+    anchor = application.stdr_issue_date or date.today()
+    Месяцы рассчитываются как 3 предыдущих относительно anchor.
+
+    Контекст 'payslip' собирается через build_payslip_context.
+    """
+    from .context import build_payslip_context
+
+    if not application.applicant_id or not application.company_id or not application.position_id:
+        raise ValueError(
+            f"Application id={application.id} not fully assigned (need applicant/company/position)"
+        )
+    applicant = session.get(Applicant, application.applicant_id)
+    company = session.get(Company, application.company_id)
+    position = session.get(Position, application.position_id)
+    if not applicant or not company or not position:
+        raise ValueError(f"Application id={application.id}: applicant/company/position not found")
+
+    context = build_context(application, session)
+    payslip_ctx = build_payslip_context(
+        application, applicant, company, position, month_idx, session
+    )
+    context["payslip"] = payslip_ctx["payslip"]
+    return _render("payslip_template.docx", context)
+
+
+
 def render_employment_contract(application: Application, session: Session) -> bytes:
     """Pack 50.1-C — Трудовой договор (найм).
 

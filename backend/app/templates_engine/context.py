@@ -3250,3 +3250,216 @@ def build_stdr_context(
         "table2_rows": table2_rows,
     }
 
+
+# ============================================================================
+# Pack 50.10-B — Расчётный листок (Payslip)
+# ============================================================================
+#
+# Эталон: 3 листка за 3 предыдущих месяца относительно anchor_date.
+# anchor_date = application.stdr_issue_date or date.today().
+# Например: anchor = март 2026 → листки за дек.2025, янв.2026, фев.2026.
+#
+# Используется месячный оклад из:
+#   application.salary_rub  (override)
+#   ||
+#   position.salary_rub_default
+#
+# НДФЛ 13%. К выплате = оклад - НДФЛ.
+# Рабочие дни берутся из производственного календаря РФ (40-часовая неделя).
+# Working hours = working_days * 8.
+# ============================================================================
+
+# Производственный календарь РФ (40-часовая рабочая неделя).
+# Источник: официальные нормы Минтруда РФ.
+# Значения: количество рабочих дней в месяце.
+_PAYSLIP_WORKING_DAYS_RU: dict[tuple[int, int], int] = {
+    # 2024
+    (2024, 1): 17, (2024, 2): 20, (2024, 3): 20, (2024, 4): 21,
+    (2024, 5): 20, (2024, 6): 19, (2024, 7): 23, (2024, 8): 22,
+    (2024, 9): 21, (2024, 10): 23, (2024, 11): 21, (2024, 12): 21,
+    # 2025
+    (2025, 1): 17, (2025, 2): 20, (2025, 3): 21, (2025, 4): 22,
+    (2025, 5): 18, (2025, 6): 19, (2025, 7): 23, (2025, 8): 21,
+    (2025, 9): 22, (2025, 10): 23, (2025, 11): 19, (2025, 12): 22,
+    # 2026
+    (2026, 1): 17, (2026, 2): 19, (2026, 3): 21, (2026, 4): 22,
+    (2026, 5): 18, (2026, 6): 20, (2026, 7): 23, (2026, 8): 21,
+    (2026, 9): 22, (2026, 10): 22, (2026, 11): 19, (2026, 12): 23,
+    # 2027
+    (2027, 1): 18, (2027, 2): 19, (2027, 3): 22, (2027, 4): 22,
+    (2027, 5): 19, (2027, 6): 21, (2027, 7): 22, (2027, 8): 22,
+    (2027, 9): 22, (2027, 10): 21, (2027, 11): 20, (2027, 12): 23,
+    # 2028 (запасной)
+    (2028, 1): 17, (2028, 2): 21, (2028, 3): 22, (2028, 4): 21,
+    (2028, 5): 20, (2028, 6): 21, (2028, 7): 21, (2028, 8): 23,
+    (2028, 9): 22, (2028, 10): 22, (2028, 11): 20, (2028, 12): 22,
+}
+
+
+_PAYSLIP_MONTH_NAMES_RU = [
+    "", "ЯНВАРЬ", "ФЕВРАЛЬ", "МАРТ", "АПРЕЛЬ", "МАЙ", "ИЮНЬ",
+    "ИЮЛЬ", "АВГУСТ", "СЕНТЯБРЬ", "ОКТЯБРЬ", "НОЯБРЬ", "ДЕКАБРЬ",
+]
+_PAYSLIP_MONTH_SHORT_RU = [
+    "", "янв", "фев", "мар", "апр", "май", "июн",
+    "июл", "авг", "сен", "окт", "ноя", "дек",
+]
+
+
+def _payslip_working_days(year: int, month: int) -> int:
+    """Pack 50.10-B: рабочих дней в месяце по производственному календарю РФ.
+
+    Fallback (если года нет в таблице): считаем будние дни (Mon-Fri).
+    """
+    if (year, month) in _PAYSLIP_WORKING_DAYS_RU:
+        return _PAYSLIP_WORKING_DAYS_RU[(year, month)]
+    # Fallback — реальные будни
+    import calendar
+    days = 0
+    last_day = calendar.monthrange(year, month)[1]
+    for day in range(1, last_day + 1):
+        from datetime import date as _date
+        if _date(year, month, day).weekday() < 5:
+            days += 1
+    return days
+
+
+def _payslip_month_name_upper_ru(year: int, month: int) -> str:
+    """Pack 50.10-B: 'ДЕКАБРЬ 2025' для заголовка."""
+    return f"{_PAYSLIP_MONTH_NAMES_RU[month]} {year}"
+
+
+def _payslip_month_short_ru(year: int, month: int) -> str:
+    """Pack 50.10-B: 'дек 2025' для колонки 'Период' начисления."""
+    return f"{_PAYSLIP_MONTH_SHORT_RU[month]} {year}"
+
+
+def _payslip_month_short_dotted_ru(year: int, month: int) -> str:
+    """Pack 50.10-B: 'дек. 2025' для колонки 'Период' удержания НДФЛ."""
+    return f"{_PAYSLIP_MONTH_SHORT_RU[month]}. {year}"
+
+
+def _payslip_fmt_money(amount) -> str:
+    """Pack 50.10-B: '310 000,00' — разряды через неразрывный пробел, копейки запятой.
+
+    amount может быть int, float, Decimal.
+    """
+    if amount is None:
+        return "0,00"
+    try:
+        f = float(amount)
+    except (TypeError, ValueError):
+        return "0,00"
+    # Округлим до 2 знаков
+    rubles = int(f)
+    kopecks = int(round((f - rubles) * 100))
+    # Разряды
+    rubles_str = f"{rubles:,}".replace(",", "\u00a0")  # неразрывный пробел
+    return f"{rubles_str},{kopecks:02d}"
+
+
+def _payslip_get_anchor_date(application):
+    """Pack 50.10-B: дата формирования = stdr_issue_date или today."""
+    from datetime import date as _date
+    return application.stdr_issue_date or _date.today()
+
+
+def _payslip_get_3_months(anchor_date) -> list:
+    """Pack 50.10-B: возвращает 3 первых числа предыдущих месяцев.
+
+    Например для anchor=2026-03-15 → [(2025,12), (2026,1), (2026,2)].
+    Индекс 0 — самый ранний месяц.
+    """
+    from datetime import date as _date
+    y, m = anchor_date.year, anchor_date.month
+    result = []
+    # Сначала идём на 3 месяца назад
+    for offset in range(3, 0, -1):
+        cur_m = m - offset
+        cur_y = y
+        while cur_m <= 0:
+            cur_m += 12
+            cur_y -= 1
+        result.append((cur_y, cur_m))
+    return result
+
+
+def build_payslip_context(application, applicant, company, position, month_idx: int, session=None) -> dict:
+    """Pack 50.10-B: контекст для одного расчётного листка.
+
+    Args:
+        application: Application
+        applicant: Applicant
+        company: Company
+        position: Position
+        month_idx: 0, 1 или 2 (0 — самый ранний из 3 месяцев)
+        session: не используется (для единого signature)
+
+    Returns:
+        dict с ключом "payslip" и полями для шаблона.
+    """
+    from decimal import Decimal as _Decimal
+
+    # 1. Anchor + 3 месяца
+    anchor = _payslip_get_anchor_date(application)
+    months_3 = _payslip_get_3_months(anchor)
+    if month_idx < 0 or month_idx > 2:
+        raise ValueError(f"month_idx must be 0..2, got {month_idx}")
+    year, month = months_3[month_idx]
+
+    # 2. Оклад
+    salary = application.salary_rub if application.salary_rub else position.salary_rub_default
+    if salary is None:
+        salary = _Decimal("0")
+    salary_f = float(salary)
+
+    # 3. НДФЛ 13% и выплата
+    ndfl = round(salary_f * 0.13, 2)
+    payout = round(salary_f - ndfl, 2)
+
+    # 4. Рабочие дни/часы
+    working_days = _payslip_working_days(year, month)
+    working_hours = working_days * 8
+
+    # 5. Нарастающий итог — salary × месяц_в_году
+    # Дек 2025 → за 2025 год: salary × 12.
+    # Янв 2026 → за 2026 год: salary × 1.
+    # Фев 2026 → за 2026 год: salary × 2.
+    yearly_total = salary_f * month
+
+    # 6. ФИО applicant в uppercase
+    full_name_parts = []
+    for part in [applicant.last_name_native, applicant.first_name_native, applicant.middle_name_native]:
+        if part:
+            full_name_parts.append(part.upper())
+    applicant_full_name = " ".join(full_name_parts)
+
+    # 7. Компания в uppercase
+    company_full_name = (company.full_name_ru or "").upper()
+
+    return {
+        "payslip": {
+            # Заголовок
+            "month_title_upper": _payslip_month_name_upper_ru(year, month),
+            "month_short": _payslip_month_short_ru(year, month),
+            "month_short_dotted": _payslip_month_short_dotted_ru(year, month),
+            "year": str(year),
+            # ФИО + компания + должность
+            "applicant_full_name": applicant_full_name,
+            "company_full_name_upper": company_full_name,
+            "position_title": position.title_ru or "",
+            "department": getattr(position, "department_ru", "") or "",
+            "accountant_short": company.accountant_short_ru or "",
+            # Суммы
+            "salary_oklad_raw": f"{int(salary_f)}",      # для "Оклад (тариф): 310000"
+            "salary_amount_fmt": _payslip_fmt_money(salary_f),
+            "ndfl_fmt": _payslip_fmt_money(ndfl),
+            "payout_fmt": _payslip_fmt_money(payout),
+            "yearly_total_fmt": _payslip_fmt_money(yearly_total),
+            # Дни/часы
+            "working_days": str(working_days),
+            "working_hours": str(working_hours),
+            "days_paid_fmt": f"{working_days},00 дн.",
+        }
+    }
+
