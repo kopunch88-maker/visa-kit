@@ -3194,6 +3194,40 @@ def build_stdr_context(
     # 6. Дата формирования
     issue_date = application.stdr_issue_date or _datetime.now().date()
 
+    # 6.5. Pack 50.9-fix4: Даты "Подано заявление о..." (продолжении/предоставлении)
+    # Эти даты генерятся детерминированно от contract_sign_date:
+    #   statement_continue_date — заявление о продолжении трудовой книжки:
+    #     contract_sign_date - 4 года 7 месяцев (правдоподобно — за несколько лет до)
+    #   statement_provide_date — заявление о предоставлении сведений:
+    #     contract_sign_date - 11 месяцев (правдоподобно — менее года назад)
+    # Можно переопределить через application.stdr_records_override:
+    #   { "wh_index": -1, "statement_continue_date": "08.05.2020",
+    #     "statement_provide_date": "22.03.2021" }
+    statement_continue_date_str = ""
+    statement_provide_date_str = ""
+    if application.contract_sign_date:
+        try:
+            from dateutil.relativedelta import relativedelta as _rd
+            sc = application.contract_sign_date - _rd(years=4, months=7)
+            sp = application.contract_sign_date - _rd(months=11)
+            statement_continue_date_str = _stdr_fmt_dd_mm_yyyy(sc)
+            statement_provide_date_str = _stdr_fmt_dd_mm_yyyy(sp)
+        except Exception:
+            # fallback без dateutil: вычитаем дни приблизительно
+            from datetime import timedelta as _td
+            sc = application.contract_sign_date - _td(days=4 * 365 + 7 * 30)
+            sp = application.contract_sign_date - _td(days=11 * 30)
+            statement_continue_date_str = _stdr_fmt_dd_mm_yyyy(sc)
+            statement_provide_date_str = _stdr_fmt_dd_mm_yyyy(sp)
+
+    # Override через stdr_records_override с wh_index=-1
+    for ov in (application.stdr_records_override or []):
+        if isinstance(ov, dict) and ov.get("wh_index") == -1:
+            if ov.get("statement_continue_date"):
+                statement_continue_date_str = ov["statement_continue_date"]
+            if ov.get("statement_provide_date"):
+                statement_provide_date_str = ov["statement_provide_date"]
+
     # 7. ФИО + СНИЛС + дата рождения
     last_name = (applicant.last_name_native or "").upper()
     first_name = (applicant.first_name_native or "").upper()
@@ -3210,6 +3244,8 @@ def build_stdr_context(
             "birth_date_long": birth_date_long,
         },
         "issue_date_long": _stdr_fmt_date_long_ru(issue_date),
+        "statement_continue_date": statement_continue_date_str,
+        "statement_provide_date": statement_provide_date_str,
         "table1_rows": table1_rows,
         "table2_rows": table2_rows,
     }
