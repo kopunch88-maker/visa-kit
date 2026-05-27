@@ -2444,6 +2444,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "tax_id_secondary": company.tax_id_secondary or "",
             # === Pack 50.7-C: ОКПО для Приказа Т-9 ===
             "okpo": company.okpo or "",
+            # === Pack 50.8-B/fix3: ОКТМО + телефон для §1 справки 2-НДФЛ ===
+            "oktmo": company.oktmo or "",
+            "phone": company.phone or "",
             # === Pack 50.1-A/C: ОГРН + email для Трудового договора ===
             "ogrn": company.ogrn or "",
             "email": company.email or "",
@@ -2733,7 +2736,8 @@ def _ndfl_2_fmt_money(amount) -> str:
         int_part = int_part[:-3]
     if int_part:
         groups.insert(0, int_part)
-    formatted = " ".join(groups) + "," + dec_part
+    # NBSP (\u00a0) вместо обычного пробела чтобы Word не переносил суммы на 2 строки в узких ячейках
+    formatted = "\u00a0".join(groups) + "," + dec_part
     if negative:
         formatted = "-" + formatted
     return formatted
