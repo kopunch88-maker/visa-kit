@@ -40,6 +40,7 @@ from app.db.migrations import (
     apply_pack50_1_H_migration,  # Pack 50.1-H company.contract_font_family
     apply_pack50_1_G_migration,  # Pack 50.1-G employment_contract_template_slug + font_family
     apply_pack50_8_migration,  # Pack 50.8-A 2-NDFL fields (ndfl_2_* + company.oktmo/phone)
+    apply_pack50_9_migration,  # Pack 50.9-A СТД-Р fields (stdr_* + company.sfr_registration_number + position.okz_code)
 )
 
 
@@ -78,6 +79,7 @@ async def lifespan(app: FastAPI):
     apply_pack50_1_H_migration()  # Pack 50.1-H company.contract_font_family
     apply_pack50_1_G_migration()  # Pack 50.1-G employment_contract_template_slug + font_family
     apply_pack50_8_migration()  # Pack 50.8-A 2-NDFL fields (ndfl_2_* + company.oktmo/phone)
+    apply_pack50_9_migration()  # Pack 50.9-A СТД-Р fields
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")

@@ -77,6 +77,12 @@ class Company(TimestampMixin, table=True):
         max_length=32,
         description="Телефон компании — §1 справки 2-НДФЛ",
     )
+    # Pack 50.9-A — Справка СТД-Р: регистрационный номер работодателя в СФР
+    sfr_registration_number: Optional[str] = Field(
+        default=None,
+        max_length=20,
+        description="Регистрационный номер в СФР (XXX-XXX-XXXXXX) — для СТД-Р",
+    )
 
     # Addresses — free-form strings, no parsing
     legal_address: str = Field(max_length=512)
@@ -186,6 +192,7 @@ class CompanyCreate(SQLModel):
     email: Optional[str] = None  # Pack 50.1-A — ЭДО для Трудового договора
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
+    sfr_registration_number: Optional[str] = None  # Pack 50.9-A
     legal_address: str
     postal_address: Optional[str] = None
     director_full_name_ru: str
@@ -218,6 +225,7 @@ class CompanyUpdate(SQLModel):
     email: Optional[str] = None  # Pack 50.1-A — ЭДО для Трудового договора
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
+    sfr_registration_number: Optional[str] = None  # Pack 50.9-A
     legal_address: Optional[str] = None
     postal_address: Optional[str] = None
     director_full_name_ru: Optional[str] = None
@@ -252,6 +260,7 @@ class CompanyRead(SQLModel):
     email: Optional[str] = None  # Pack 50.1-A
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
+    sfr_registration_number: Optional[str] = None  # Pack 50.9-A
     legal_address: str
     postal_address: Optional[str]
     director_full_name_ru: str

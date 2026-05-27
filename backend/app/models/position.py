@@ -140,6 +140,13 @@ class Position(TimestampMixin, table=True):
         default=None,
         description="Цель командировки (Т-9, найм). Текст до 2048 символов.",
     )
+    # Pack 50.9-A — Справка СТД-Р: код функции по ОКЗ (Общероссийский
+    # классификатор занятий, например '2631.5' для Бизнес-аналитика).
+    okz_code: Optional[str] = Field(
+        default=None,
+        max_length=10,
+        description="Код по ОКЗ (пример: '2631.5') — для §3 справки СТД-Р",
+    )
 
 
 # === API schemas ===
@@ -169,6 +176,8 @@ class PositionCreate(SQLModel):
     tech_opinion_contract_clause_es: Optional[str] = None
     # Pack 50.7-A — цель командировки
     business_trip_purpose: Optional[str] = None
+    # Pack 50.9-A — код ОКЗ для СТД-Р
+    okz_code: Optional[str] = None
 
 
 class PositionUpdate(SQLModel):
@@ -197,6 +206,8 @@ class PositionUpdate(SQLModel):
     tech_opinion_contract_clause_es: Optional[str] = None
     # Pack 50.7-A — цель командировки
     business_trip_purpose: Optional[str] = None
+    # Pack 50.9-A — код ОКЗ для СТД-Р
+    okz_code: Optional[str] = None
 
 
 class PositionRead(SQLModel):
@@ -228,3 +239,5 @@ class PositionRead(SQLModel):
     tech_opinion_contract_clause_es: Optional[str] = None
     # Pack 50.7-A — цель командировки
     business_trip_purpose: Optional[str] = None
+    # Pack 50.9-A — код ОКЗ для СТД-Р
+    okz_code: Optional[str] = None

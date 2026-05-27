@@ -1494,3 +1494,62 @@ def apply_pack50_8_migration() -> None:
         ))
 
     print("[migration] Pack 50.8-A: ndfl_2 fields + company.oktmo/phone ready")
+
+
+# ============================================================================
+# Pack 50.9-A — Справка СТД-Р (Сведения о трудовой деятельности из СФР)
+# ============================================================================
+def apply_pack50_9_migration() -> None:
+    """Pack 50.9-A — поля для генерации справки СТД-Р.
+
+    application:
+      - stdr_issue_date DATE NULL — дата формирования справки СТД-Р.
+      - stdr_records_override JSONB NULL — массив ручных правок для записей
+        СТД-Р. Структура каждого элемента:
+          {wh_index: int,
+           sfr_number?: str,
+           acceptance_date?: 'DD.MM.YYYY',
+           dismissal_date?: 'DD.MM.YYYY',
+           document_name?: str,
+           document_date?: 'DD.MM.YYYY',
+           document_number?: str,
+           okz_code?: str,
+           dismissal_reason?: str}
+        Если override для wh_index задан — рендерер использует его поля,
+        иначе генерирует автоматически из applicant.work_history[wh_index].
+
+    company:
+      - sfr_registration_number VARCHAR(20) NULL — регистрационный номер
+        работодателя в СФР (например '1061155964'). Используется в §3
+        Таблицы 1 СТД-Р для собственной NAIM-компании.
+
+    position:
+      - okz_code VARCHAR(10) NULL — код по Общероссийскому классификатору
+        занятий (ОКЗ), например '2631.5' для Бизнес-аналитика. Используется
+        в §3 Таблицы 1 СТД-Р, колонка "Код выполняемой функции".
+
+    Идемпотентна — все ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # === company ===
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS sfr_registration_number VARCHAR(20)"
+        ))
+
+        # === position ===
+        conn.execute(text(
+            "ALTER TABLE position ADD COLUMN IF NOT EXISTS okz_code VARCHAR(10)"
+        ))
+
+        # === application ===
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS stdr_issue_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS stdr_records_override JSONB"
+        ))
+
+    print("[migration] Pack 50.9-A: stdr fields + company.sfr_registration_number + position.okz_code ready")

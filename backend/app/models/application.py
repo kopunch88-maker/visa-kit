@@ -156,6 +156,23 @@ class Application(TimestampMixin, table=True):
     ndfl_2_period_to: Optional[int] = Field(default=None, description="Месяц конца (1..12)")
     ndfl_2_issue_date: Optional[date] = Field(default=None, description="Дата формирования справки 2-НДФЛ")
 
+    # === Pack 50.9-A: Справка СТД-Р (Сведения о трудовой деятельности из СФР, найм) ===
+    stdr_issue_date: Optional[date] = Field(
+        default=None,
+        description="Дата формирования справки СТД-Р (default = current date)",
+    )
+    stdr_records_override: Optional[List[dict]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description=(
+            "Ручные правки авто-сгенерированных записей. Массив: "
+            "[{wh_index, sfr_number?, acceptance_date?, dismissal_date?, "
+            "document_name?, document_date?, document_number?, "
+            "okz_code?, dismissal_reason?}]. Если override для wh_index задан "
+            "— берутся его поля; null/missing — авто-генерация."
+        ),
+    )
+
     applicant: Optional["Applicant"] = Relationship(back_populates="applications")
     family_members: List["FamilyMember"] = Relationship(back_populates="application")
     previous_residences: List["PreviousResidence"] = Relationship(back_populates="application")
@@ -267,3 +284,6 @@ class ApplicationRead(SQLModel):
     ndfl_2_period_from: Optional[int] = None
     ndfl_2_period_to: Optional[int] = None
     ndfl_2_issue_date: Optional[date] = None
+    # Pack 50.9-A — Справка СТД-Р (найм)
+    stdr_issue_date: Optional[date] = None
+    stdr_records_override: Optional[List[dict]] = None

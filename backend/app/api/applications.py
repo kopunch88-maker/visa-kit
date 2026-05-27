@@ -291,6 +291,9 @@ class ApplicationPatch(BaseModel):
     ndfl_2_period_from: Optional[int] = None
     ndfl_2_period_to: Optional[int] = None
     ndfl_2_issue_date: Optional[date] = None
+    # Pack 50.9-A — Справка СТД-Р (найм)
+    stdr_issue_date: Optional[date] = None
+    stdr_records_override: Optional[List[dict]] = None
 
 
 @router.patch("/{app_id}")
