@@ -3023,7 +3023,7 @@ def build_stdr_context(
       - Таблица 1: STDR_TABLE1_SLOTS (15) — пустые слоты с пустыми строками
       - Таблица 2: STDR_TABLE2_SLOTS (8)
     """
-    from datetime import date as _date
+    from datetime import date as _date, datetime as _datetime
 
     STDR_TABLE1_SLOTS = 15
     STDR_TABLE2_SLOTS = 8
@@ -3160,7 +3160,7 @@ def build_stdr_context(
         if not s:
             return None
         try:
-            return datetime.strptime(s, "%d.%m.%Y").date()
+            return _datetime.strptime(s, "%d.%m.%Y").date()
         except ValueError:
             return None
     table1_events.sort(key=lambda e: _parse_event_dt(e["event_date"]) or _date(1900, 1, 1))
@@ -3192,7 +3192,7 @@ def build_stdr_context(
         table2_rows.append(dict(EMPTY_TABLE2))
 
     # 6. Дата формирования
-    issue_date = application.stdr_issue_date or datetime.now().date()
+    issue_date = application.stdr_issue_date or _datetime.now().date()
 
     # 7. ФИО + СНИЛС + дата рождения
     last_name = (applicant.last_name_native or "").upper()
