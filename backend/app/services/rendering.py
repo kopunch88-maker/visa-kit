@@ -42,6 +42,7 @@ from app.templates_engine import (
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
+    render_payslip,  # Pack 50.10-B
 )
 # Pack 50.7-C — для проверки application_type в pipeline
 from app.models import ApplicationType
@@ -145,6 +146,17 @@ def build_full_package(
             ("19_СТД-Р.docx", "stdr",
              render_stdr, (application, session))
         )
+        # Pack 50.10-B — Расчётный листок ×3 (ТОЛЬКО для EMPLOYMENT-заявок)
+        # 3 предыдущих месяца относительно application.stdr_issue_date or today().
+        # month_idx=0 — самый ранний месяц, 2 — последний.
+        for _payslip_idx in (0, 1, 2):
+            _payslip_num = _payslip_idx + 1
+            _payslip_filename = f"{19 + _payslip_num}_Расчётный_листок_{_payslip_num}.docx"
+            _payslip_status_key = f"payslip_{_payslip_num}"
+            files_to_render.append(
+                (_payslip_filename, _payslip_status_key,
+                 render_payslip, (application, session, _payslip_idx))
+            )
 
     # Корректируем под payments_period_months
     months_count = application.payments_period_months or 3

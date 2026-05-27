@@ -55,6 +55,10 @@ const DOCUMENTS: DocItem[] = [
   { id: "ndfl_2",              filename: "18_2-НДФЛ.docx",                  kind: "docx", naimOnly: true },
   // Pack 50.9-D — Справка СТД-Р (только для EMPLOYMENT)
   { id: "stdr",                filename: "19_СТД-Р.docx",                   kind: "docx", naimOnly: true },
+  // Pack 50.10-E — Расчётный листок ×3 за 3 предыдущих месяца (только для EMPLOYMENT)
+  { id: "payslip_1",           filename: "20_Расчётный_листок_1.docx",      kind: "docx", naimOnly: true },
+  { id: "payslip_2",           filename: "21_Расчётный_листок_2.docx",      kind: "docx", naimOnly: true },
+  { id: "payslip_3",           filename: "22_Расчётный_листок_3.docx",      kind: "docx", naimOnly: true },
 ];
 
 export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {

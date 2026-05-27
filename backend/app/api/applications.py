@@ -44,6 +44,7 @@ from app.templates_engine import (
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
+    render_payslip,  # Pack 50.10-B
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -592,6 +593,10 @@ _DOWNLOAD_FILES = {
     "ndfl_2":               {"name": "18_2-НДФЛ.docx", "kind": "docx", "fn": render_ndfl_2, "args": ()},
     # Pack 50.9-B — Справка СТД-Р (только для EMPLOYMENT)
     "stdr":                 {"name": "19_СТД-Р.docx", "kind": "docx", "fn": render_stdr, "args": ()},
+    # Pack 50.10-B — Расчётный листок ×3 (только для EMPLOYMENT)
+    "payslip_1":            {"name": "20_Расчётный_листок_1.docx", "kind": "docx", "fn": render_payslip, "args": (0,)},
+    "payslip_2":            {"name": "21_Расчётный_листок_2.docx", "kind": "docx", "fn": render_payslip, "args": (1,)},
+    "payslip_3":            {"name": "22_Расчётный_листок_3.docx", "kind": "docx", "fn": render_payslip, "args": (2,)},
 }
 
 
