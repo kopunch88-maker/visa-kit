@@ -43,6 +43,7 @@ from app.templates_engine import (
     render_business_trip_order,  # Pack 50.7-C
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
+    render_stdr,  # Pack 50.9-B
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -589,6 +590,8 @@ _DOWNLOAD_FILES = {
     "employment_contract":  {"name": "01_Трудовой_договор.docx", "kind": "docx", "fn": render_employment_contract, "args": ()},
     # Pack 50.8-B — Справка 2-НДФЛ (только для EMPLOYMENT)
     "ndfl_2":               {"name": "18_2-НДФЛ.docx", "kind": "docx", "fn": render_ndfl_2, "args": ()},
+    # Pack 50.9-B — Справка СТД-Р (только для EMPLOYMENT)
+    "stdr":                 {"name": "19_СТД-Р.docx", "kind": "docx", "fn": render_stdr, "args": ()},
 }
 
 
