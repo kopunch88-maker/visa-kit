@@ -489,6 +489,39 @@ def render_ndfl_2(application: Application, session: Session) -> bytes:
     return _render("ndfl_2_template.docx", context)
 
 
+def render_stdr(application: Application, session: Session) -> bytes:
+    """Pack 50.9-B — Сведения о трудовой деятельности из СФР (СТД-Р).
+
+    Форма по приказу Минтруда РФ от 20.01.2020 № 23н.
+
+    Контекст 'stdr' собирается через build_stdr_context (отдельная функция,
+    не часть build_context, т.к. требует position для okz_code).
+    Парсит applicant.work_history и заполняет 15 слотов Таблицы 1 (события
+    с 01.01.2020+) и 8 слотов Таблицы 2 (периоды до 31.12.2019).
+    """
+    from .context import build_stdr_context
+
+    if not application.applicant_id or not application.company_id or not application.position_id:
+        raise ValueError(
+            f"Application id={application.id} not fully assigned (need applicant/company/position)"
+        )
+    applicant = session.get(Applicant, application.applicant_id)
+    company = session.get(Company, application.company_id)
+    position = session.get(Position, application.position_id)
+    if not applicant or not company or not position:
+        raise ValueError(f"Application id={application.id}: applicant/company/position not found")
+
+    # Общий контекст (на случай если в шаблоне нужны applicant.*/company.* как-то ещё)
+    context = build_context(application, session)
+    # Перезаписываем/добавляем блок stdr специфичным контекстом
+    stdr_ctx = build_stdr_context(application, applicant, company, position, session)
+    context["stdr"] = stdr_ctx
+    # Также пробрасываем applicant_stdr (uppercase ФИО + birth_date_long + snils)
+    # как алиас на верхнем уровне для удобства шаблона
+    context["applicant_stdr"] = stdr_ctx["applicant"]
+    return _render("stdr_template.docx", context)
+
+
 
 def render_employment_contract(application: Application, session: Session) -> bytes:
     """Pack 50.1-C — Трудовой договор (найм).

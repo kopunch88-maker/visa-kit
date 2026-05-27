@@ -2860,3 +2860,357 @@ def build_ndfl_2_context(application, applicant, company, session, passport_numb
         "tax_withheld": str(tax_withheld_int),
         "rows": rows,
     }
+
+
+
+# ============================================================
+# Pack 50.9-B: Helper'ы для СТД-Р (Сведения о трудовой деятельности из СФР)
+# ============================================================
+
+_STDR_MONTHS_RU = {
+    "январь": 1, "января": 1,
+    "февраль": 2, "февраля": 2,
+    "март": 3, "марта": 3,
+    "апрель": 4, "апреля": 4,
+    "май": 5, "мая": 5,
+    "июнь": 6, "июня": 6,
+    "июль": 7, "июля": 7,
+    "август": 8, "августа": 8,
+    "сентябрь": 9, "сентября": 9,
+    "октябрь": 10, "октября": 10,
+    "ноябрь": 11, "ноября": 11,
+    "декабрь": 12, "декабря": 12,
+}
+
+_STDR_MONTHS_RU_GENITIVE = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
+_STDR_CURRENT_LABELS = {
+    "по настоящее время", "настоящее время", "н.в.", "по н.в.", "до настоящего времени",
+}
+
+
+def _stdr_parse_month_year_ru(s: str) -> "Optional[date]":
+    """'Июнь 2025' → date(2025, 6, 1). None если не удалось распарсить.
+
+    Принимает как полные ('июнь'/'июня'), так и сокращённые форматы.
+    Регистр игнорируется.
+    """
+    from datetime import date as _date
+    import re as _re
+    if not s:
+        return None
+    s = s.strip().lower()
+    if s in _STDR_CURRENT_LABELS:
+        return None
+    # Паттерн: МесяцНаКирилл + 4 цифры (год). Допускаем разделитель: пробел, запятая, дефис.
+    m = _re.match(r"^([а-яё]+)[\s,.\-]+(\d{4})$", s)
+    if not m:
+        return None
+    month_str = m.group(1)
+    year = int(m.group(2))
+    month = _STDR_MONTHS_RU.get(month_str)
+    if month is None:
+        return None
+    return _date(year, month, 1)
+
+
+def _stdr_last_day_of_month(d: "date") -> "date":
+    """Последний день месяца от даты."""
+    from datetime import date as _date
+    import calendar as _cal
+    last_day = _cal.monthrange(d.year, d.month)[1]
+    return _date(d.year, d.month, last_day)
+
+
+def _stdr_fmt_dd_mm_yyyy(d) -> str:
+    """date → '02.06.2025'. None → ''."""
+    if not d:
+        return ""
+    return d.strftime("%d.%m.%Y")
+
+
+def _stdr_fmt_date_long_ru(d) -> str:
+    """date → '"06" декабря 2025 г.' (с двойными кавычками-ёлочками не подходит для СТД-Р,
+    но в эталоне СФР именно прямые двойные кавычки 0x22)."""
+    if not d:
+        return ""
+    return f'"{d.day:02d}" {_STDR_MONTHS_RU_GENITIVE[d.month]} {d.year} г.'
+
+
+def _stdr_generate_sfr_number(seed: str) -> str:
+    """Детерминированный регистрационный номер СФР по hash(seed).
+
+    Формат: XXX-XXX-XXXXXX (3+3+6 цифр).
+    Один и тот же seed → один и тот же номер.
+    """
+    import hashlib as _hashlib
+    h = _hashlib.md5(seed.encode("utf-8")).hexdigest()
+    # Берём 12 hex-цифр и конвертируем в decimal (mod 10^12)
+    n = int(h[:15], 16) % (10 ** 12)
+    s = f"{n:012d}"
+    return f"{s[:3]}-{s[3:6]}-{s[6:12]}"
+
+
+def _stdr_generate_document_number(idx: int) -> str:
+    """Фиктивный № приказа. Каждый последующий с разной серией для реалистичности.
+
+    idx=0 → '12-к', idx=1 → '47 л.с.', idx=2 → '63-к', idx=3 → '84 л.с.', ...
+    Чередуем суффиксы '-к' и ' л.с.'.
+    """
+    # Псевдо-случайное но детерминированное число от 10 до 99
+    num = 12 + (idx * 31 + 7) % 88
+    suffix = "-к" if idx % 2 == 0 else " л.с."
+    return f"{num}{suffix}"
+
+
+def _stdr_generate_dismissal_reason() -> str:
+    """Стандартная формулировка увольнения по собственному."""
+    return (
+        "Пункт 3, Часть 1, Статья 77, Трудовой кодекс Российской Федерации "
+        "по собственному желанию, пункт 3 части первой статьи 77 Трудового "
+        "кодекса Российской Федерации"
+    )
+
+
+def _stdr_apply_override(auto_row: dict, override: dict) -> dict:
+    """Мерж auto-сгенерированной записи с ручным override.
+
+    Только не-None и не пустые строки в override переопределяют auto.
+    """
+    if not override:
+        return auto_row
+    result = dict(auto_row)
+    for k, v in override.items():
+        if k == "wh_index":
+            continue
+        if v is None or v == "":
+            continue
+        result[k] = v
+    return result
+
+
+def build_stdr_context(
+    application,
+    applicant,
+    company,
+    position,
+    session,
+) -> dict:
+    """Pack 50.9-B — собирает блок 'stdr' для шаблона stdr_template.docx.
+
+    Парсит applicant.work_history и разбивает на:
+      - Таблица 1 (события с 01.01.2020+): приёмы/увольнения с полным набором полей
+      - Таблица 2 (периоды до 31.12.2019): только периоды работы
+
+    Для текущей DN-записи (wh[0]) использует реальные данные:
+      - acceptance_date = application.contract_sign_date
+      - sfr_number = company.sfr_registration_number
+      - okz_code = position.okz_code
+      - document_date = application.contract_sign_date
+
+    Для прошлых работ генерирует детерминированно:
+      - sfr_number = hash(company name)
+      - document_number = по индексу
+      - dismissal_reason = стандартная "по собственному"
+
+    Применяет application.stdr_records_override — ручные правки.
+
+    Заполняет фиксированное количество слотов:
+      - Таблица 1: STDR_TABLE1_SLOTS (15) — пустые слоты с пустыми строками
+      - Таблица 2: STDR_TABLE2_SLOTS (8)
+    """
+    from datetime import date as _date
+
+    STDR_TABLE1_SLOTS = 15
+    STDR_TABLE2_SLOTS = 8
+    STDR_CUTOFF = _date(2020, 1, 1)
+
+    work_history = list(applicant.work_history or [])
+
+    # 1. Распарсим все записи в (start_date, end_date, company_name, position_title)
+    parsed_records = []
+    for i, wh in enumerate(work_history):
+        if not isinstance(wh, dict):
+            continue
+        company_name = (wh.get("company") or "").strip()
+        position_title = (wh.get("position") or "").strip()
+        if not company_name:
+            continue
+        start_date = _stdr_parse_month_year_ru(wh.get("period_start", ""))
+        end_str = (wh.get("period_end") or "").strip().lower()
+        if end_str in _STDR_CURRENT_LABELS:
+            end_date = None  # текущая работа
+        else:
+            end_date_start = _stdr_parse_month_year_ru(wh.get("period_end", ""))
+            end_date = _stdr_last_day_of_month(end_date_start) if end_date_start else None
+        parsed_records.append({
+            "wh_index": i,
+            "company_name": company_name,
+            "position_title": position_title,
+            "start_date": start_date,
+            "end_date": end_date,
+        })
+
+    # 2. Override map: wh_index → dict
+    override_list = application.stdr_records_override or []
+    override_map = {}
+    if isinstance(override_list, list):
+        for ov in override_list:
+            if isinstance(ov, dict) and "wh_index" in ov:
+                override_map[ov["wh_index"]] = ov
+
+    # 3. Делим на таблицу 1 (с 2020+) и таблицу 2 (до 2020)
+    table1_events = []
+    table2_periods = []
+
+    for rec in parsed_records:
+        wh_idx = rec["wh_index"]
+        is_dn = (wh_idx == 0)
+        override = override_map.get(wh_idx, {})
+
+        # Для wh_index == 0 (DN-работа) — реальные данные
+        if is_dn and application.contract_sign_date:
+            real_start = application.contract_sign_date
+        else:
+            real_start = rec["start_date"]
+
+        if real_start is None:
+            continue
+
+        # Куда попадает: таблица 1 или 2?
+        # В таблицу 2 — только если ВСЯ запись завершилась до 2020
+        # (т.е. real_end < 2020-01-01 и real_end is not None)
+        real_end = rec["end_date"]
+        if real_end is not None and real_end < STDR_CUTOFF:
+            # Таблица 2: только периоды
+            sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
+            row = {
+                "company_with_sfr": f"{rec['company_name']} {sfr_number_auto}",
+                "date_from": _stdr_fmt_dd_mm_yyyy(real_start),
+                "date_to": _stdr_fmt_dd_mm_yyyy(real_end),
+            }
+            # Применяем override
+            sfr_override = override.get("sfr_number")
+            if sfr_override:
+                row["company_with_sfr"] = f"{rec['company_name']} {sfr_override}"
+            if override.get("acceptance_date"):
+                row["date_from"] = override["acceptance_date"]
+            if override.get("dismissal_date"):
+                row["date_to"] = override["dismissal_date"]
+            table2_periods.append(row)
+            continue
+
+        # Таблица 1: события (приём + опц. увольнение)
+        if is_dn:
+            sfr_number_auto = company.sfr_registration_number or _stdr_generate_sfr_number(rec["company_name"])
+            okz_auto = position.okz_code or ""
+        else:
+            sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
+            okz_auto = ""
+
+        company_with_sfr = f"{rec['company_name']} {override.get('sfr_number') or sfr_number_auto}"
+
+        # ПРИЁМ
+        acceptance_date_str = override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(real_start)
+        doc_name = override.get("document_name") or "Приказ"
+        doc_date = override.get("document_date") or acceptance_date_str
+        doc_number = override.get("document_number") or _stdr_generate_document_number(wh_idx)
+        okz = override.get("okz_code") or okz_auto
+
+        table1_events.append({
+            "company_with_sfr": company_with_sfr,
+            "event_date": acceptance_date_str,
+            "event_type": "ПРИЕМ",
+            "position": rec["position_title"],
+            "basis": "",
+            "okz_code": okz,
+            "dismissal_reason": "",
+            "doc_name": doc_name,
+            "doc_date": doc_date,
+            "doc_number": doc_number,
+            "cancellation": "",
+        })
+
+        # УВОЛЬНЕНИЕ (если есть)
+        if real_end is not None:
+            dismissal_date_str = override.get("dismissal_date") or _stdr_fmt_dd_mm_yyyy(real_end)
+            dismissal_reason = override.get("dismissal_reason") or _stdr_generate_dismissal_reason()
+            # Документ-основание увольнения — другой приказ с тем же idx, но другим суффиксом
+            doc_number_dismissal = override.get("document_number_dismissal") or _stdr_generate_document_number(wh_idx + 100)
+            table1_events.append({
+                "company_with_sfr": company_with_sfr,
+                "event_date": dismissal_date_str,
+                "event_type": "УВОЛЬНЕНИЕ",
+                "position": rec["position_title"],
+                "basis": "",
+                "okz_code": "",
+                "dismissal_reason": dismissal_reason,
+                "doc_name": "Приказ",
+                "doc_date": dismissal_date_str,
+                "doc_number": doc_number_dismissal,
+                "cancellation": "",
+            })
+
+    # 4. Сортируем таблицу 1 по дате события (от ранних к поздним) — как в эталоне СФР
+    def _parse_event_dt(s: str):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%d.%m.%Y").date()
+        except ValueError:
+            return None
+    table1_events.sort(key=lambda e: _parse_event_dt(e["event_date"]) or _date(1900, 1, 1))
+
+    # 5. Нумеруем и дополняем до фикс. количества слотов
+    EMPTY_TABLE1 = {
+        "index": "", "company_with_sfr": "", "event_date": "", "event_type": "",
+        "position": "", "basis": "", "okz_code": "", "dismissal_reason": "",
+        "doc_name": "", "doc_date": "", "doc_number": "", "cancellation": "",
+    }
+    EMPTY_TABLE2 = {
+        "index": "", "company_with_sfr": "", "date_from": "", "date_to": "",
+    }
+
+    table1_rows = []
+    for i, ev in enumerate(table1_events[:STDR_TABLE1_SLOTS]):
+        ev["index"] = str(i + 1)
+        table1_rows.append(ev)
+    while len(table1_rows) < STDR_TABLE1_SLOTS:
+        table1_rows.append(dict(EMPTY_TABLE1))
+
+    # Таблицу 2 сортируем по date_from (по возрастанию) — старые работы сверху
+    table2_periods.sort(key=lambda r: _parse_event_dt(r["date_from"]) or _date(1900, 1, 1))
+    table2_rows = []
+    for i, p in enumerate(table2_periods[:STDR_TABLE2_SLOTS]):
+        p["index"] = str(i + 1)
+        table2_rows.append(p)
+    while len(table2_rows) < STDR_TABLE2_SLOTS:
+        table2_rows.append(dict(EMPTY_TABLE2))
+
+    # 6. Дата формирования
+    issue_date = application.stdr_issue_date or datetime.now().date()
+
+    # 7. ФИО + СНИЛС + дата рождения
+    last_name = (applicant.last_name_native or "").upper()
+    first_name = (applicant.first_name_native or "").upper()
+    middle_name = (applicant.middle_name_native or "").upper()
+    snils = applicant.snils or ""
+    birth_date_long = _stdr_fmt_date_long_ru(applicant.birth_date)
+
+    return {
+        "applicant": {
+            "last_name_upper": last_name,
+            "first_name_upper": first_name,
+            "middle_name_upper": middle_name,
+            "snils": snils,
+            "birth_date_long": birth_date_long,
+        },
+        "issue_date_long": _stdr_fmt_date_long_ru(issue_date),
+        "table1_rows": table1_rows,
+        "table2_rows": table2_rows,
+    }
+

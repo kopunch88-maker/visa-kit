@@ -41,6 +41,7 @@ from app.templates_engine import (
     render_business_trip_order,  # Pack 50.7-C
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
+    render_stdr,  # Pack 50.9-B
 )
 # Pack 50.7-C — для проверки application_type в pipeline
 from app.models import ApplicationType
@@ -138,6 +139,11 @@ def build_full_package(
         files_to_render.append(
             ("18_2-НДФЛ.docx", "ndfl_2",
              render_ndfl_2, (application, session))
+        )
+        # Pack 50.9-B — Справка СТД-Р (ТОЛЬКО для EMPLOYMENT-заявок)
+        files_to_render.append(
+            ("19_СТД-Р.docx", "stdr",
+             render_stdr, (application, session))
         )
 
     # Корректируем под payments_period_months
