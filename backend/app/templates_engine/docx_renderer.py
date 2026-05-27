@@ -37,7 +37,7 @@ from docxtpl import DocxTemplate
 from sqlmodel import Session
 import lxml.etree as etree
 
-from app.models import Application, Applicant, Bank, Company
+from app.models import Application, Applicant, Bank, Company, Position
 from .context import build_context
 
 
