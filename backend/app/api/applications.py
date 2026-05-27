@@ -42,6 +42,7 @@ from app.templates_engine import (
     render_tech_opinion,  # Pack 40.0-G
     render_business_trip_order,  # Pack 50.7-C
     render_employment_contract,  # Pack 50.1-C
+    render_ndfl_2,  # Pack 50.8-B
 )
 from app.pdf_forms_engine import build_pdf_forms
 from .dependencies import require_manager, current_user_id
@@ -270,6 +271,11 @@ class ApplicationPatch(BaseModel):
     business_trip_duration_unit: Optional[str] = None
     business_trip_place_short: Optional[bool] = None
     employee_tab_number: Optional[str] = None
+    # Pack 50.8-B — Справка 2-НДФЛ (найм)
+    ndfl_2_year: Optional[int] = None
+    ndfl_2_period_from: Optional[int] = None
+    ndfl_2_period_to: Optional[int] = None
+    ndfl_2_issue_date: Optional[date] = None
 
 
 @router.patch("/{app_id}")
@@ -563,6 +569,8 @@ _DOWNLOAD_FILES = {
     "business_trip_order": {"name": "17_Приказ_на_командировку.docx", "kind": "docx", "fn": render_business_trip_order, "args": ()},
     # Pack 50.1-C — Трудовой договор (только для EMPLOYMENT)
     "employment_contract":  {"name": "01_Трудовой_договор.docx", "kind": "docx", "fn": render_employment_contract, "args": ()},
+    # Pack 50.8-B — Справка 2-НДФЛ (только для EMPLOYMENT)
+    "ndfl_2":               {"name": "18_2-НДФЛ.docx", "kind": "docx", "fn": render_ndfl_2, "args": ()},
 }
 
 

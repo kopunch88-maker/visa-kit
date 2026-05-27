@@ -73,6 +73,9 @@ export function CompanyContractDrawer({
   const [companyId, setCompanyId] = useState<number | "">(application.company_id || "");
   // Pack 50.7-D — ОКПО для шапки Приказа Т-9
   const [companyOkpo, setCompanyOkpo] = useState("");
+  // Pack 50.8-D — ОКТМО + телефон компании для §1 справки 2-НДФЛ
+  const [companyOktmo, setCompanyOktmo] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("");
 
   // Pack 50.7-D — поля для Приказа Т-9 о командировке (отображаются только при EMPLOYMENT)
   const isNaim = (application as any).application_type === "EMPLOYMENT";
@@ -85,6 +88,11 @@ export function CompanyContractDrawer({
   const [btDurationUnit, setBtDurationUnit] = useState((application as any).business_trip_duration_unit || "");
   const [btPlaceShort, setBtPlaceShort] = useState<boolean>((application as any).business_trip_place_short || false);
   const [empTabNumber, setEmpTabNumber] = useState((application as any).employee_tab_number || "");
+  // Pack 50.8-D — Справка 2-НДФЛ (только для EMPLOYMENT)
+  const [ndfl2Year, setNdfl2Year] = useState<number | "">((application as any).ndfl_2_year || "");
+  const [ndfl2PeriodFrom, setNdfl2PeriodFrom] = useState<number | "">((application as any).ndfl_2_period_from || "");
+  const [ndfl2PeriodTo, setNdfl2PeriodTo] = useState<number | "">((application as any).ndfl_2_period_to || "");
+  const [ndfl2IssueDate, setNdfl2IssueDate] = useState<string>((application as any).ndfl_2_issue_date || "");
   const [positionId, setPositionId] = useState<number | "">(application.position_id || "");
   const [contractNumber, setContractNumber] = useState(application.contract_number || "");
   const [contractDate, setContractDate] = useState(application.contract_sign_date || "");
@@ -135,6 +143,9 @@ export function CompanyContractDrawer({
       setDirectorFullNameLatin(selectedCompany.director_full_name_latin || "");
       // Pack 50.7-D — синхронизация ОКПО с выбранной компанией
       setCompanyOkpo((selectedCompany as any).okpo || "");
+      // Pack 50.8-D — синхронизация ОКТМО/телефона
+      setCompanyOktmo((selectedCompany as any).oktmo || "");
+      setCompanyPhone((selectedCompany as any).phone || "");
       setCompanyFieldsDirty(false);
     } else {
       setCompanyFullNameEs("");
@@ -231,6 +242,13 @@ export function CompanyContractDrawer({
         if (companyOkpo !== ((selectedCompany as any).okpo || "")) {
           updates.okpo = companyOkpo.trim() || null;
         }
+        // Pack 50.8-D — ОКТМО + телефон для 2-НДФЛ
+        if (companyOktmo !== ((selectedCompany as any).oktmo || "")) {
+          updates.oktmo = companyOktmo.trim() || null;
+        }
+        if (companyPhone !== ((selectedCompany as any).phone || "")) {
+          updates.phone = companyPhone.trim() || null;
+        }
         if (Object.keys(updates).length > 0) {
           await updateCompany(companyId as number, updates);
         }
@@ -258,6 +276,11 @@ export function CompanyContractDrawer({
         business_trip_duration_unit: btDurationUnit || undefined,
         business_trip_place_short: btPlaceShort,
         employee_tab_number: empTabNumber.trim() || undefined,
+        // Pack 50.8-D — поля Справки 2-НДФЛ (только для EMPLOYMENT; для SELF_EMPLOYED null)
+        ndfl_2_year: ndfl2Year === "" ? null : Number(ndfl2Year),
+        ndfl_2_period_from: ndfl2PeriodFrom === "" ? null : Number(ndfl2PeriodFrom),
+        ndfl_2_period_to: ndfl2PeriodTo === "" ? null : Number(ndfl2PeriodTo),
+        ndfl_2_issue_date: ndfl2IssueDate || null,
       } as any);
       onSaved();
     } catch (e) { setSaveError((e as Error).message); }
@@ -431,6 +454,36 @@ export function CompanyContractDrawer({
                     style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
                   />
                 </div>
+                {/* Pack 50.8-D — ОКТМО (8 или 11 цифр) для шапки Справки 2-НДФЛ */}
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    ОКТМО <span className="text-tertiary font-normal">(для 2-НДФЛ при найме)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={companyOktmo}
+                    onChange={(e) => { setCompanyOktmo(e.target.value); setCompanyFieldsDirty(true); }}
+                    placeholder="например 45901000000 (8 или 11 цифр)"
+                    maxLength={11}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                {/* Pack 50.8-D — Телефон компании для шапки Справки 2-НДФЛ */}
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">
+                    Телефон компании <span className="text-tertiary font-normal">(для 2-НДФЛ при найме)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={companyPhone}
+                    onChange={(e) => { setCompanyPhone(e.target.value); setCompanyFieldsDirty(true); }}
+                    placeholder="например +74954104579"
+                    maxLength={32}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
               </div>
               {companyFieldsDirty && (
                 <p className="text-[11px] text-info mt-2">
@@ -562,6 +615,105 @@ export function CompanyContractDrawer({
                     />
                     Короткий формат адреса (только страна и город)
                   </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Pack 50.8-D — Секция Справка 2-НДФЛ. Только для EMPLOYMENT. */}
+          {isNaim && (
+            <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
+                  📊 Справка 2-НДФЛ (КНД 1175018)
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // ✨ Авторасчёт: год = текущий, период 1..последний полный месяц,
+                    // дата формирования = 1-е число месяца после period_to
+                    const today = new Date();
+                    let y = today.getFullYear();
+                    let pFrom = 1;
+                    let pTo: number;
+                    if (today.getMonth() === 0) {
+                      // январь — берём декабрь предыдущего года
+                      y -= 1;
+                      pTo = 12;
+                    } else {
+                      pTo = today.getMonth();  // getMonth() = 0..11, нужен (текущий - 1) → 0..11 → 1..12 после +1
+                      // т.е. если сейчас май (getMonth()=4), pTo = 4 → апрель — последний полный месяц
+                    }
+                    setNdfl2Year(y);
+                    setNdfl2PeriodFrom(pFrom);
+                    setNdfl2PeriodTo(pTo);
+                    // issue_date = 1 число месяца после pTo
+                    const issue = pTo === 12
+                      ? new Date(y + 1, 0, 1)
+                      : new Date(y, pTo, 1);  // pTo (1..11) → pTo (как индекс месяца следующего) — потому что getMonth() 0-индекс
+                    setNdfl2IssueDate(issue.toISOString().slice(0, 10));
+                  }}
+                  className="text-[11px] px-2 py-1 rounded-md border text-secondary hover:bg-secondary flex items-center gap-1"
+                  style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
+                  title="Рассчитать автоматически: год = текущий, период с января по последний полный месяц, дата формирования = 1 число следующего"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Рассчитать авто
+                </button>
+              </div>
+              <p className="text-[11px] text-tertiary mb-3">
+                Поля для шаблона «18_2-НДФЛ.docx». Если оставить пустыми — на бэкенде вычислятся дефолты
+                (год = текущий, период 1..последний полный месяц, дата = 1 число следующего).
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Год</label>
+                  <input
+                    type="number"
+                    value={ndfl2Year}
+                    onChange={(e) => setNdfl2Year(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="2026"
+                    min={2020}
+                    max={2099}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Период с (месяц)</label>
+                  <input
+                    type="number"
+                    value={ndfl2PeriodFrom}
+                    onChange={(e) => setNdfl2PeriodFrom(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="1"
+                    min={1}
+                    max={12}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Период по (месяц)</label>
+                  <input
+                    type="number"
+                    value={ndfl2PeriodTo}
+                    onChange={(e) => setNdfl2PeriodTo(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="5"
+                    min={1}
+                    max={12}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-secondary mb-1">Дата формирования</label>
+                  <input
+                    type="date"
+                    value={ndfl2IssueDate}
+                    onChange={(e) => setNdfl2IssueDate(e.target.value)}
+                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                  />
                 </div>
               </div>
             </div>

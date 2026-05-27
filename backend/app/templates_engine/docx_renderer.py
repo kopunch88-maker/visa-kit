@@ -477,6 +477,18 @@ def render_business_trip_order(application: Application, session: Session) -> by
     context = build_context(application, session)
     return _render("business_trip_order_template.docx", context)
 
+def render_ndfl_2(application: Application, session: Session) -> bytes:
+    """Pack 50.8-B — Справка о доходах и суммах налога физического лица (2-НДФЛ).
+
+    Форма КНД 1175018, приказ ФНС России от 19.09.2023 № ЕД-7-11/649@.
+
+    Рендерится из общего build_context (включая блок 'ndfl_2'), один шаблон
+    на всех — форма ФНС универсальна.
+    """
+    context = build_context(application, session)
+    return _render("ndfl_2_template.docx", context)
+
+
 
 def render_employment_contract(application: Application, session: Session) -> bytes:
     """Pack 50.1-C — Трудовой договор (найм).

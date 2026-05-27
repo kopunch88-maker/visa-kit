@@ -2578,6 +2578,12 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
         "business_trip": build_business_trip_context(
             application, applicant, company, position, spain_address, session,
         ),
+
+        # === Pack 50.8-B: Справка 2-НДФЛ (найм) ===
+        "ndfl_2": build_ndfl_2_context(
+            application, applicant, company, session,
+            passport_number_override=_pass_number_pack41k,
+        ),
     }
 
 
@@ -2634,3 +2640,219 @@ def _resolve_passport_issuer_for_template_from_dict(passport_dict: dict, nationa
 
     return issuer
 
+# ============================================================================
+# Pack 50.8-B — Справка 2-НДФЛ (НАЙМ)
+# ============================================================================
+
+# Код страны (ISO numeric) по nationality (ISO-3). Используется в §2 справки.
+_COUNTRY_NUMERIC_CODE = {
+    "RUS": "643",
+    "BLR": "112",
+    "UKR": "804",
+    "KAZ": "398",
+    "KGZ": "417",  # Кыргызстан — в одном из образцов был такой код для имени Mērim
+    "UZB": "860",
+    "TJK": "762",
+    "ARM": "051",
+    "AZE": "031",
+    "GEO": "268",
+    "MDA": "498",
+    "TKM": "795",
+}
+
+
+def _ndfl_2_resolve_period(application) -> tuple[int, int, int, "_date"]:
+    """Возвращает (year, period_from, period_to, issue_date) с дефолтами.
+
+    Дефолты:
+      - year = текущий год
+      - period_from = 1 (январь)
+      - period_to = последний полный месяц (текущий месяц - 1; если январь — то 12 предыдущего года)
+      - issue_date = 1-е число месяца, следующего за period_to
+    """
+    from datetime import date as _date, timedelta
+
+    today = _date.today()
+    year = application.ndfl_2_year
+    period_from = application.ndfl_2_period_from
+    period_to = application.ndfl_2_period_to
+
+    if not year and not period_to:
+        # Полностью авто
+        if today.month == 1:
+            # В январе нет полных месяцев текущего года → берём декабрь предыдущего
+            year = today.year - 1
+            period_from = 1
+            period_to = 12
+        else:
+            year = today.year
+            period_from = 1
+            period_to = today.month - 1
+    else:
+        # Хотя бы что-то задано — заполняем то что не задано
+        if not year:
+            year = today.year
+        if not period_from:
+            period_from = 1
+        if not period_to:
+            if year == today.year:
+                period_to = max(1, today.month - 1)
+            else:
+                period_to = 12
+
+    # Валидация
+    period_from = max(1, min(12, int(period_from)))
+    period_to = max(period_from, min(12, int(period_to)))
+
+    # Дата формирования
+    issue_date = application.ndfl_2_issue_date
+    if not issue_date:
+        # 1-е число месяца, следующего за period_to (в том же году)
+        if period_to == 12:
+            issue_date = _date(year + 1, 1, 1)
+        else:
+            issue_date = _date(year, period_to + 1, 1)
+
+    return year, period_from, period_to, issue_date
+
+
+def _ndfl_2_fmt_money(amount) -> str:
+    """Форматирует Decimal/int как '300 000,00' (пробелы как разделители тысяч, запятая)."""
+    from decimal import Decimal as _D
+    if amount is None:
+        return ""
+    d = _D(str(amount)).quantize(_D("0.01"))
+    int_part, dec_part = str(d).split(".")
+    # Пробелы как разделители тысяч (NBSP \u00a0 не нужны — в ячейке таблицы Word не рвёт)
+    negative = int_part.startswith("-")
+    if negative:
+        int_part = int_part[1:]
+    groups = []
+    while len(int_part) > 3:
+        groups.insert(0, int_part[-3:])
+        int_part = int_part[:-3]
+    if int_part:
+        groups.insert(0, int_part)
+    formatted = " ".join(groups) + "," + dec_part
+    if negative:
+        formatted = "-" + formatted
+    return formatted
+
+
+def _ndfl_2_resolve_passport(applicant, passport_number_override: str | None = None) -> tuple[str, str]:
+    """Возвращает (id_doc_code, passport_series_number).
+
+    id_doc_code:
+      - "21" — паспорт гражданина РФ (для RUS + RU_INTERNAL)
+      - "10" — паспорт иностранного гражданина (для остальных)
+
+    passport_series_number: "XXXX YYYYYY" для РФ, либо номер как есть для иностранцев.
+
+    Используется уже выбранный паспорт (с учётом Pack 41.0-K для русских с
+    мульти-паспортом — для них передаётся passport_number_override).
+    """
+    import re as _re
+
+    raw_number = passport_number_override or (applicant.passport_number or "")
+    nationality = (applicant.nationality or "").upper()
+
+    if nationality == "RUS":
+        digits = _re.sub(r"\D", "", raw_number)
+        if len(digits) >= 10:
+            series = digits[:4]
+            number_only = digits[4:10]
+            return "21", f"{series} {number_only}"
+        # Кривой номер — но всё равно паспорт РФ
+        return "21", raw_number
+    # Иностранец
+    return "10", raw_number
+
+
+def build_ndfl_2_context(application, applicant, company, session, passport_number_override: str | None = None) -> dict:
+    """Pack 50.8-B — собирает блок 'ndfl_2' для шаблона ndfl_2_template.docx.
+
+    Args:
+        application: Application instance.
+        applicant: Applicant instance.
+        company: Company instance.
+        session: DB session (на будущее, для авто-сохранения дефолтов).
+        passport_number_override: Pack 41.0-K — выбранный паспорт для RU-документов.
+
+    Returns:
+        dict с ключами: year, period_from, period_to, issue_date_str,
+        taxpayer_status, birth_date_str, country_code, id_doc_code,
+        passport_series_number, total_income, tax_base, tax_calculated,
+        tax_withheld, months_rows.
+    """
+    from decimal import Decimal as _D
+
+    year, period_from, period_to, issue_date = _ndfl_2_resolve_period(application)
+    months_count = period_to - period_from + 1
+
+    # Сумма зарплаты в месяц
+    monthly_income = application.salary_rub or _D("0")
+    total_income = (monthly_income * _D(months_count)).quantize(_D("0.01"))
+    tax_base = total_income
+    # Налог округляется до целого рубля (стандарт ФНС)
+    tax_calculated_int = int((total_income * _D("0.13")).to_integral_value(rounding="ROUND_HALF_UP"))
+    tax_withheld_int = tax_calculated_int
+
+    # Резидент / нерезидент
+    nationality = (applicant.nationality or "").upper()
+    taxpayer_status = "1" if nationality == "RUS" else "2"
+
+    # Код страны
+    country_code = _COUNTRY_NUMERIC_CODE.get(nationality, "")
+
+    # Паспорт
+    id_doc_code, passport_series_number = _ndfl_2_resolve_passport(
+        applicant, passport_number_override
+    )
+
+    # Дата рождения
+    birth_date_str = (
+        applicant.birth_date.strftime("%d.%m.%Y") if applicant.birth_date else ""
+    )
+
+    # Месячные строки — фиксированный массив из 28 слотов (14 левая колонка +
+    # 14 правая колонка, по эталону ФНС КНД 1175018). Первые N слотов
+    # заполнены месячными доходами, остальные — пустые строки (как в бланке).
+    NDFL_2_TOTAL_SLOTS = 28
+    empty_row = {
+        "month": "",
+        "income_code": "",
+        "income_amount": "",
+        "deduction_code": "",
+        "deduction_amount": "",
+    }
+    rows = []
+    for m in range(period_from, period_to + 1):
+        rows.append({
+            "month": f"{m:02d}",
+            "income_code": "2000",
+            "income_amount": _ndfl_2_fmt_money(monthly_income),
+            "deduction_code": "",
+            "deduction_amount": "",
+        })
+    # Дополняем пустыми до 28
+    while len(rows) < NDFL_2_TOTAL_SLOTS:
+        rows.append(dict(empty_row))
+    # Защита от переполнения (если кто-то задаст период > 28 месяцев)
+    rows = rows[:NDFL_2_TOTAL_SLOTS]
+
+    return {
+        "year": str(year),
+        "period_from": period_from,
+        "period_to": period_to,
+        "issue_date_str": issue_date.strftime("%d.%m.%Y"),
+        "taxpayer_status": taxpayer_status,
+        "birth_date_str": birth_date_str,
+        "country_code": country_code,
+        "id_doc_code": id_doc_code,
+        "passport_series_number": passport_series_number,
+        "total_income": _ndfl_2_fmt_money(total_income),
+        "tax_base": _ndfl_2_fmt_money(tax_base),
+        "tax_calculated": str(tax_calculated_int),
+        "tax_withheld": str(tax_withheld_int),
+        "rows": rows,
+    }

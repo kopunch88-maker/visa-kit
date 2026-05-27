@@ -150,6 +150,12 @@ class Application(TimestampMixin, table=True):
     business_trip_place_short: bool = Field(default=False, description="True = 'Испания, г. Барселона', False = полный адрес с индексом")
     employee_tab_number: Optional[str] = Field(default=None, max_length=16, description="Табельный номер сотрудника")
 
+    # === Pack 50.8-A: Справка 2-НДФЛ (найм) ===
+    ndfl_2_year: Optional[int] = Field(default=None, description="Год отчётного периода 2-НДФЛ")
+    ndfl_2_period_from: Optional[int] = Field(default=None, description="Месяц начала (1..12)")
+    ndfl_2_period_to: Optional[int] = Field(default=None, description="Месяц конца (1..12)")
+    ndfl_2_issue_date: Optional[date] = Field(default=None, description="Дата формирования справки 2-НДФЛ")
+
     applicant: Optional["Applicant"] = Relationship(back_populates="applications")
     family_members: List["FamilyMember"] = Relationship(back_populates="application")
     previous_residences: List["PreviousResidence"] = Relationship(back_populates="application")
@@ -256,3 +262,8 @@ class ApplicationRead(SQLModel):
     business_trip_duration_unit: Optional[str] = None
     business_trip_place_short: Optional[bool] = None
     employee_tab_number: Optional[str] = None
+    # Pack 50.8-A — Справка 2-НДФЛ (найм)
+    ndfl_2_year: Optional[int] = None
+    ndfl_2_period_from: Optional[int] = None
+    ndfl_2_period_to: Optional[int] = None
+    ndfl_2_issue_date: Optional[date] = None

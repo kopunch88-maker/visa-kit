@@ -1449,3 +1449,48 @@ def apply_pack50_1_G_migration() -> None:
 
     print("[migration] Pack 50.1-G: company.employment_contract_template_slug + "
           "company.employment_contract_font_family ready")
+# ============================================================================
+# Pack 50.8-A — Справка 2-НДФЛ для NAIM-заявок
+# ============================================================================
+def apply_pack50_8_migration() -> None:
+    """Pack 50.8-A — поля для генерации справки 2-НДФЛ (КНД 1175018).
+
+    application:
+      - ndfl_2_year INT NULL — год отчётного периода (2026).
+      - ndfl_2_period_from INT NULL — месяц начала (1..12).
+      - ndfl_2_period_to INT NULL — месяц конца (1..12).
+      - ndfl_2_issue_date DATE NULL — дата формирования справки.
+
+    company:
+      - oktmo VARCHAR(11) NULL — ОКТМО (8 или 11 цифр), §1 справки 2-НДФЛ.
+      - phone VARCHAR(32) NULL — телефон компании, §1 справки 2-НДФЛ.
+
+    Идемпотентна — все ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        # === company ===
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS oktmo VARCHAR(11)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS phone VARCHAR(32)"
+        ))
+
+        # === application ===
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS ndfl_2_year INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS ndfl_2_period_from INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS ndfl_2_period_to INTEGER"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS ndfl_2_issue_date DATE"
+        ))
+
+    print("[migration] Pack 50.8-A: ndfl_2 fields + company.oktmo/phone ready")

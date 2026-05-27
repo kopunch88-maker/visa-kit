@@ -40,6 +40,7 @@ from app.templates_engine import (
     render_tech_opinion,  # Pack 40.0-G
     render_business_trip_order,  # Pack 50.7-C
     render_employment_contract,  # Pack 50.1-C
+    render_ndfl_2,  # Pack 50.8-B
 )
 # Pack 50.7-C — для проверки application_type в pipeline
 from app.models import ApplicationType
@@ -132,6 +133,11 @@ def build_full_package(
         files_to_render.append(
             ("01_Трудовой_договор.docx", "employment_contract",
              render_employment_contract, (application, session))
+        )
+        # Pack 50.8-B — Справка 2-НДФЛ (ТОЛЬКО для EMPLOYMENT-заявок)
+        files_to_render.append(
+            ("18_2-НДФЛ.docx", "ndfl_2",
+             render_ndfl_2, (application, session))
         )
 
     # Корректируем под payments_period_months
