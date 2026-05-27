@@ -83,6 +83,12 @@ class Company(TimestampMixin, table=True):
         max_length=20,
         description="Регистрационный номер в СФР (XXX-XXX-XXXXXX) — для СТД-Р",
     )
+    # Pack 50.10-A — Расчётный листок: ФИО бухгалтера для подписи
+    accountant_short_ru: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description="ФИО бухгалтера 'Сидорова Е.П.' — для расчётного листка",
+    )
 
     # Addresses — free-form strings, no parsing
     legal_address: str = Field(max_length=512)
@@ -193,6 +199,7 @@ class CompanyCreate(SQLModel):
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
     sfr_registration_number: Optional[str] = None  # Pack 50.9-A
+    accountant_short_ru: Optional[str] = None  # Pack 50.10-A
     legal_address: str
     postal_address: Optional[str] = None
     director_full_name_ru: str
@@ -226,6 +233,7 @@ class CompanyUpdate(SQLModel):
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
     sfr_registration_number: Optional[str] = None  # Pack 50.9-A
+    accountant_short_ru: Optional[str] = None  # Pack 50.10-A
     legal_address: Optional[str] = None
     postal_address: Optional[str] = None
     director_full_name_ru: Optional[str] = None
@@ -261,6 +269,7 @@ class CompanyRead(SQLModel):
     oktmo: Optional[str] = None  # Pack 50.8-A
     phone: Optional[str] = None  # Pack 50.8-A
     sfr_registration_number: Optional[str] = None  # Pack 50.9-A
+    accountant_short_ru: Optional[str] = None  # Pack 50.10-A
     legal_address: str
     postal_address: Optional[str]
     director_full_name_ru: str

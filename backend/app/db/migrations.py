@@ -1553,3 +1553,30 @@ def apply_pack50_9_migration() -> None:
         ))
 
     print("[migration] Pack 50.9-A: stdr fields + company.sfr_registration_number + position.okz_code ready")
+
+
+# ============================================================================
+# Pack 50.10-A — Расчётный листок (Payslip)
+# ============================================================================
+def apply_pack50_10_migration() -> None:
+    """Pack 50.10-A — поле для генерации расчётного листка.
+
+    company:
+      - accountant_short_ru VARCHAR(120) NULL — ФИО бухгалтера в сокращённой
+        форме "Сидорова Е.П." (по аналогии с director_short_ru). Подставляется
+        в подпись внизу расчётного листка: "Бухгалтер   Сидорова Е.П."
+
+    Оклад НЕ добавляем — уже есть как Position.salary_rub_default
+    + Application.salary_rub (override).
+
+    Идемпотентна.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE company ADD COLUMN IF NOT EXISTS accountant_short_ru VARCHAR(120)"
+        ))
+
+    print("[migration] Pack 50.10-A: company.accountant_short_ru ready")
