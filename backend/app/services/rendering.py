@@ -44,6 +44,7 @@ from app.templates_engine import (
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
     render_soo,  # Pack 50.12-D
+    render_apostille_sfr,  # Pack 50.20
     render_payslip,  # Pack 50.10-B
 )
 # Pack 50.7-C — для проверки application_type в pipeline
@@ -157,6 +158,11 @@ def build_full_package(
         files_to_render.append(
             ("24_Свидетельство_об_отъезде.docx", "soo",
              render_soo, (application, session))
+        )
+        # Pack 50.20 — Апостиль Минфина/СФР (найм)
+        files_to_render.append(
+            ("25_Апостиль_СФР.docx", "apostille_sfr",
+             render_apostille_sfr, (application, session))
         )
         # Pack 50.10-B — Расчётный листок ×3 (ТОЛЬКО для EMPLOYMENT-заявок)
         # 3 предыдущих месяца относительно application.stdr_issue_date or today().

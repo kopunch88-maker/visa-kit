@@ -46,6 +46,7 @@ from app.templates_engine import (
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
     render_soo,  # Pack 50.12-D
+    render_apostille_sfr,  # Pack 50.20
     render_payslip,  # Pack 50.10-B
 )
 from app.pdf_forms_engine import build_pdf_forms
@@ -606,6 +607,8 @@ _DOWNLOAD_FILES = {
     "employer_letter_naim": {"name": "23_Письмо_работодателя.docx", "kind": "docx", "fn": render_employer_letter_naim, "args": ()},
     # Pack 50.12-D — Свидетельство об отъезде (СОО)
     "soo":                  {"name": "24_Свидетельство_об_отъезде.docx", "kind": "docx", "fn": render_soo, "args": ()},
+    # Pack 50.20 — Апостиль Минфина/СФР (найм)
+    "apostille_sfr":        {"name": "25_Апостиль_СФР.docx", "kind": "docx", "fn": render_apostille_sfr, "args": ()},
 }
 
 

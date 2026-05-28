@@ -25,6 +25,9 @@ from .npd_certificate_lkn_renderer import render_npd_certificate_lkn
 # Pack 18.9: апостиль к справке НПД
 from .context_apostille import build_apostille_context
 from .apostille_renderer import render_apostille
+# Pack 50.20: апостиль Минфина/СФР (найм)
+from .context_apostille_sfr import build_apostille_sfr_context
+from .apostille_sfr_renderer import render_apostille_sfr
 
 __all__ = [
     "build_context",
@@ -50,4 +53,7 @@ __all__ = [
     # Pack 18.9
     "build_apostille_context",
     "render_apostille",
+    # Pack 50.20
+    "build_apostille_sfr_context",
+    "render_apostille_sfr",
 ]
