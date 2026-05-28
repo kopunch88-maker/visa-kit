@@ -33,6 +33,7 @@ from app.models import Application
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv, render_bank_statement,
+    render_employer_letter_naim,  # Pack 50.11-B
     # Pack 23.5: справки НПД и апостиль (раньше были только через download-file)
     render_npd_certificate,
     render_npd_certificate_lkn,
@@ -145,6 +146,11 @@ def build_full_package(
         files_to_render.append(
             ("19_СТД-Р.docx", "stdr",
              render_stdr, (application, session))
+        )
+        # Pack 50.11-B — Письмо работодателя (найм)
+        files_to_render.append(
+            ("23_Письмо_работодателя.docx", "employer_letter_naim",
+             render_employer_letter_naim, (application, session))
         )
         # Pack 50.10-B — Расчётный листок ×3 (ТОЛЬКО для EMPLOYMENT-заявок)
         # 3 предыдущих месяца относительно application.stdr_issue_date or today().

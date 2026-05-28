@@ -461,6 +461,17 @@ def render_employer_letter(application: Application, session: Session) -> bytes:
     return _render("employer_letter_template.docx", context)
 
 
+def render_employer_letter_naim(application: Application, session: Session) -> bytes:
+    """Pack 50.11-B — Письмо работодателя для НАЙМА (трудовой договор).
+
+    Тот же контекст что и письмо самозанятого (build_context), но другой
+    шаблон: 'работает в компании по трудовому договору', бессрочно, без
+    фраз про независимого подрядчика.
+    """
+    context = build_context(application, session)
+    return _render("employer_letter_naim_template.docx", context)
+
+
 def render_cv(application: Application, session: Session) -> bytes:
     context = build_context(application, session)
     return _render("cv_template.docx", context)

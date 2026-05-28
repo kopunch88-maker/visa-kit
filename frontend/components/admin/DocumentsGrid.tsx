@@ -59,6 +59,7 @@ const DOCUMENTS: DocItem[] = [
   { id: "payslip_1",           filename: "20_Расчётный_листок_1.docx",      kind: "docx", naimOnly: true },
   { id: "payslip_2",           filename: "21_Расчётный_листок_2.docx",      kind: "docx", naimOnly: true },
   { id: "payslip_3",           filename: "22_Расчётный_листок_3.docx",      kind: "docx", naimOnly: true },
+  { id: "employer_letter_naim", filename: "23_Письмо_работодателя.docx", kind: "docx", naimOnly: true },  // Pack 50.11-C
 ];
 
 export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {

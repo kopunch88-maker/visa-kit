@@ -6,6 +6,7 @@ from .docx_renderer import (
     render_act,
     render_invoice,
     render_employer_letter,
+    render_employer_letter_naim,  # Pack 50.11-B
     render_cv,
     render_bank_statement,
     render_tech_opinion,  # Pack 40.0-G
@@ -30,6 +31,7 @@ __all__ = [
     "render_act",
     "render_invoice",
     "render_employer_letter",
+    "render_employer_letter_naim",  # Pack 50.11-B
     "render_cv",
     "render_bank_statement",
     "render_tech_opinion",  # Pack 40.0-G

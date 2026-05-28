@@ -36,6 +36,7 @@ from app.services.rendering import build_full_package
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv, render_bank_statement,
+    render_employer_letter_naim,  # Pack 50.11-B
     render_npd_certificate, 
     render_npd_certificate_lkn,  # Pack 18.3.3
     render_apostille,  # Pack 18.9
@@ -597,6 +598,8 @@ _DOWNLOAD_FILES = {
     "payslip_1":            {"name": "20_Расчётный_листок_1.docx", "kind": "docx", "fn": render_payslip, "args": (0,)},
     "payslip_2":            {"name": "21_Расчётный_листок_2.docx", "kind": "docx", "fn": render_payslip, "args": (1,)},
     "payslip_3":            {"name": "22_Расчётный_листок_3.docx", "kind": "docx", "fn": render_payslip, "args": (2,)},
+    # Pack 50.11-B — Письмо работодателя (найм)
+    "employer_letter_naim": {"name": "23_Письмо_работодателя.docx", "kind": "docx", "fn": render_employer_letter_naim, "args": ()},
 }
 
 
