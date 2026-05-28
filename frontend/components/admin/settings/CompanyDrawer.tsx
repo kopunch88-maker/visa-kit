@@ -59,6 +59,7 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     director_full_name_ru: "",
     director_full_name_genitive_ru: "",
     director_short_ru: "",
+    accountant_short_ru: "",  // Pack 50.10-F
     director_position_ru: "Генерального директора",
     bank_name: "",
     bank_account: "",
@@ -418,6 +419,11 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                   value={form.director_short_ru || ""}
                   onChange={(v) => setField("director_short_ru", v)}
                   placeholder="Тараскин Ю.А." />
+                              {/* Pack 50.10-F — бухгалтер для расчётного листка */}
+                <TextField label="Бухгалтер (для расчётного листка)"
+                  value={form.accountant_short_ru || ""}
+                  onChange={(v) => setField("accountant_short_ru", v)}
+                  placeholder="Сидорова Е.П." />
               </Section>
 
               <Section title="Банковские реквизиты">
