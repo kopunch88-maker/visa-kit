@@ -2208,7 +2208,17 @@ def build_business_trip_context(application, applicant, company, position, spain
     from datetime import date as _date, timedelta
 
     # ---- Daты ----
-    order_date = application.business_trip_order_date or application.contract_sign_date or _date.today()
+    # Pack 50.14 (pack50_14_order_date): дата приказа = today - 7 дней,
+    # зафиксированная в БД при первой генерации (не пересчитывается при
+    # повторных скачиваниях). Если дата уже задана (вручную/прошлой генерацией) —
+    # берём её. Fallback на contract_sign_date убран намеренно.
+    order_date = application.business_trip_order_date
+    if order_date is None:
+        order_date = _date.today() - timedelta(days=7)
+        application.business_trip_order_date = order_date
+        session.add(application)
+        session.commit()
+        session.refresh(application)
     start_date = application.business_trip_start_date or application.submission_date
     if start_date is None and application.contract_sign_date:
         start_date = application.contract_sign_date + timedelta(days=30)
