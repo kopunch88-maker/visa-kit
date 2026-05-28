@@ -3463,3 +3463,185 @@ def build_payslip_context(application, applicant, company, position, month_idx: 
         }
     }
 
+
+# ============================================================================
+# Pack 50.12-B — Свидетельство об отъезде (СОО)
+# ============================================================================
+def _soo_auto_number(application, session) -> str:
+    """Авто-номерация № свидетельства по компании + год, формат 'NNN/MM/YYYY'.
+
+    Счётчик NNN — порядковый по всем заявкам компании где soo_number задан
+    (в текущем году). MM — месяц даты свидетельства, YYYY — год.
+    Формат как в эталоне: '009/03/2026'.
+    """
+    import re as _re
+    from datetime import date as _date
+    from sqlmodel import select as _select
+
+    if not application.company_id:
+        return "001"
+
+    stmt = _select(Application.soo_number).where(
+        Application.company_id == application.company_id,
+        Application.soo_number.is_not(None),
+    )
+    max_n = 0
+    for raw in session.exec(stmt).all():
+        if raw is None:
+            continue
+        m = _re.search(r"(\d+)", str(raw))
+        if m:
+            try:
+                n = int(m.group(1))
+                if n > max_n:
+                    max_n = n
+            except ValueError:
+                pass
+    return f"{max_n + 1:03d}"
+
+
+def _soo_find_foreign_passport(applicant) -> dict | None:
+    """Ищет российский загранпаспорт в applicant.passports[] (тип RU_FOREIGN).
+
+    Возвращает dict записи или None если загранника нет.
+    """
+    passports = getattr(applicant, "passports", None) or []
+    for p in passports:
+        if not isinstance(p, dict):
+            continue
+        if (p.get("passport_type") or "").upper() == "RU_FOREIGN":
+            return p
+    return None
+
+
+def _soo_find_internal_passport(applicant) -> dict | None:
+    """Ищет внутренний паспорт РФ (RU_INTERNAL) — для кода подразделения."""
+    passports = getattr(applicant, "passports", None) or []
+    for p in passports:
+        if not isinstance(p, dict):
+            continue
+        if (p.get("passport_type") or "").upper() == "RU_INTERNAL":
+            return p
+    return None
+
+
+def _soo_fmt_iso_date(iso_str) -> str:
+    """ISO '2018-08-13' → '13.08.2018'. Пусто если нет."""
+    if not iso_str:
+        return ""
+    try:
+        from datetime import date as _date
+        d = _date.fromisoformat(str(iso_str)[:10])
+        return d.strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return str(iso_str)
+
+
+def build_soo_context(application, applicant, company, position, spain_address, session) -> dict:
+    """Pack 50.12-B — собирает блок 'soo' для шаблона soo_template.docx.
+
+    Все значения — строки (для безопасной подстановки в DOCX).
+    """
+    from datetime import date as _date, timedelta
+
+    # ---- Даты (как в build_business_trip_context) ----
+    order_date = (application.business_trip_order_date
+                  or application.contract_sign_date or _date.today())
+
+    start_date = application.business_trip_start_date or application.submission_date
+    if start_date is None and application.contract_sign_date:
+        start_date = application.contract_sign_date + timedelta(days=30)
+    if start_date is None:
+        start_date = _date.today() + timedelta(days=30)
+
+    end_date = application.business_trip_end_date
+    if end_date is None:
+        try:
+            end_date = start_date.replace(year=start_date.year + 3)
+        except ValueError:
+            end_date = start_date.replace(year=start_date.year + 3, day=28)
+
+    # ---- Дата свидетельства = приказ + 2 дня (или override) ----
+    soo_date = application.soo_date or (order_date + timedelta(days=2))
+
+    # ---- № приказа Т-9 (из заявки; если нет — пусто, его генерит build_business_trip_context) ----
+    order_number = application.business_trip_order_number or ""
+
+    # ---- № свидетельства = автоген NNN/MM/YYYY ----
+    soo_number = application.soo_number
+    if not soo_number:
+        nnn = _soo_auto_number(application, session)
+        soo_number = f"{nnn}/{soo_date.month:02d}/{soo_date.year}"
+        application.soo_number = soo_number
+        session.add(application)
+        session.commit()
+        session.refresh(application)
+
+    # ---- Паспорта ----
+    internal = _soo_find_internal_passport(applicant)
+    division_code = (internal or {}).get("division_code", "") or ""
+
+    foreign = _soo_find_foreign_passport(applicant)
+    if foreign:
+        foreign_number = foreign.get("number", "") or ""
+        foreign_issue_date = _soo_fmt_iso_date(foreign.get("issue_date"))
+        foreign_issuer = foreign.get("issuer_ru") or foreign.get("issuer") or ""
+    else:
+        foreign_number = ""
+        foreign_issue_date = ""
+        foreign_issuer = ""
+
+    # ---- Паспорт РФ (внутренний) — серия/номер/выдан ----
+    passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
+    passport_series = passport_data.get("series", "")
+    passport_number_only = passport_data.get("number_only", "")
+    passport_issue_date = fmt_date_ru(applicant.passport_issue_date) if applicant.passport_issue_date else ""
+    passport_issuer = _resolve_passport_issuer_for_template(applicant)
+
+    # ---- Адрес в Испании (удалённая работа) ----
+    spain_addr_str = _bt_format_place(spain_address, False) if spain_address else ""
+
+    # ---- Гражданство ----
+    nationality_ru = _NATIONALITY_NOMINATIVE_RU.get(
+        applicant.nationality, applicant.nationality or "Российская Федерация"
+    )
+
+    return {
+        # Шапка
+        "number": soo_number,
+        "date_long": f'«{soo_date.day:02d}» {_MONTHS_GENITIVE_RU[soo_date.month - 1]} {soo_date.year}',
+        # Раздел 1 — застрахованное лицо
+        "last_name": applicant.last_name_native or "",
+        "first_name": applicant.first_name_native or "",
+        "middle_name": applicant.middle_name_native or "",
+        "full_name": _full_name_native(applicant),
+        "nationality_ru": nationality_ru,
+        "passport_series": passport_series,
+        "passport_number_only": passport_number_only,
+        "passport_issue_date": passport_issue_date,
+        "passport_issuer": passport_issuer,
+        "division_code": division_code,
+        "foreign_passport_number": foreign_number,
+        "foreign_passport_issue_date": foreign_issue_date,
+        "foreign_passport_issuer": foreign_issuer,
+        "birth_date_long": _stdr_fmt_date_long_ru(applicant.birth_date) if applicant.birth_date else "",
+        "snils": applicant.snils or "",
+        "home_address": applicant.home_address or "",
+        "phone": applicant.phone or "",
+        "email": applicant.email or "",
+        # Раздел 2 — работодатель
+        "company_full_name": company.full_name_ru or "",
+        "company_legal_address": company.legal_address or "",
+        "spain_address": spain_addr_str,
+        "company_phone": company.phone or "",
+        "company_email": company.email or "",
+        # Раздел 3 — применимое законодательство
+        "period_start": start_date.strftime("%d.%m.%Y"),
+        "period_end": end_date.strftime("%d.%m.%Y"),
+        "order_number": order_number,
+        "order_date": order_date.strftime("%d.%m.%Y"),
+        "contract_number": application.contract_number or "",
+        "contract_date": (application.contract_sign_date.strftime("%d.%m.%Y")
+                          if application.contract_sign_date else ""),
+    }
+

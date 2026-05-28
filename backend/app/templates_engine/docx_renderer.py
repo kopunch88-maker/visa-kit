@@ -37,7 +37,7 @@ from docxtpl import DocxTemplate
 from sqlmodel import Session
 import lxml.etree as etree
 
-from app.models import Application, Applicant, Bank, Company, Position
+from app.models import Application, Applicant, Bank, Company, Position, SpainAddress
 from .context import build_context
 
 
@@ -531,6 +531,36 @@ def render_stdr(application: Application, session: Session) -> bytes:
     # как алиас на верхнем уровне для удобства шаблона
     context["applicant_stdr"] = stdr_ctx["applicant"]
     return _render("stdr_template.docx", context)
+
+
+def render_soo(application: Application, session: Session) -> bytes:
+    """Pack 50.12-B — Свидетельство об отъезде (СОО).
+
+    Справка СФР по договору РФ-Испания о соцобеспечении 1994/1995.
+    Контекст 'soo' собирается через build_soo_context (отдельная функция,
+    т.к. требует position + spain_address и пишет soo_number в БД).
+    """
+    from .context import build_soo_context
+
+    if not application.applicant_id or not application.company_id or not application.position_id:
+        raise ValueError(
+            f"Application id={application.id} not fully assigned (need applicant/company/position)"
+        )
+    applicant = session.get(Applicant, application.applicant_id)
+    company = session.get(Company, application.company_id)
+    position = session.get(Position, application.position_id)
+    if not applicant or not company or not position:
+        raise ValueError(f"Application id={application.id}: applicant/company/position not found")
+
+    spain_address = (
+        session.get(SpainAddress, application.spain_address_id)
+        if application.spain_address_id else None
+    )
+
+    context = build_context(application, session)
+    soo_ctx = build_soo_context(application, applicant, company, position, spain_address, session)
+    context["soo"] = soo_ctx
+    return _render("soo_template.docx", context)
 
 
 
