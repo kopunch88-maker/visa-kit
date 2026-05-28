@@ -3592,11 +3592,20 @@ def build_soo_context(application, applicant, company, position, spain_address, 
         foreign_issuer = ""
 
     # ---- Паспорт РФ (внутренний) — серия/номер/выдан ----
-    passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
-    passport_series = passport_data.get("series", "")
-    passport_number_only = passport_data.get("number_only", "")
-    passport_issue_date = fmt_date_ru(applicant.passport_issue_date) if applicant.passport_issue_date else ""
-    passport_issuer = _resolve_passport_issuer_for_template(applicant)
+    # Pack 50.12-B-fix2_internal_passport: внутренний паспорт из RU_INTERNAL записи.
+    if internal:
+        _int_num = internal.get("number", "") or ""
+        passport_data = _parse_passport(_int_num, applicant.nationality)
+        passport_series = passport_data.get("series", "")
+        passport_number_only = passport_data.get("number_only", "")
+        passport_issue_date = _soo_fmt_iso_date(internal.get("issue_date"))
+        passport_issuer = internal.get("issuer_ru") or internal.get("issuer") or ""
+    else:
+        passport_data = _parse_passport(applicant.passport_number, applicant.nationality)
+        passport_series = passport_data.get("series", "")
+        passport_number_only = passport_data.get("number_only", "")
+        passport_issue_date = fmt_date_ru(applicant.passport_issue_date) if applicant.passport_issue_date else ""
+        passport_issuer = _resolve_passport_issuer_for_template(applicant)
 
     # ---- Адрес в Испании (удалённая работа) ----
     spain_addr_str = _bt_format_place(spain_address, False) if spain_address else ""
