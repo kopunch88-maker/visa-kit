@@ -126,7 +126,7 @@ _PATCHABLE_FIELDS = {
     "snils",
     "home_address", "home_address_line1", "home_address_line2",
     "home_country",
-    "email", "phone",
+    "email", "phone", "phone_ru",  # Pack 50.15-A
     # Pack 16.1 — банковские поля
     "bank_id",
     "bank_account",

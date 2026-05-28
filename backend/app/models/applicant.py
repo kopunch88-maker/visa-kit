@@ -226,6 +226,11 @@ class Applicant(TimestampMixin, table=True):
         default=None, max_length=32,
         description="With country code, e.g. '+7 999 ...' or '+34 ...'",
     )
+    # Pack 50.15-A — русский телефон (для русских документов; fallback на phone)
+    phone_ru: Optional[str] = Field(
+        default=None, max_length=32,
+        description="Русский телефон для русских документов. Пусто → используется phone.",
+    )
 
     # === Education and work (JSON, default empty list) ===
     education: List[dict] = Field(
@@ -308,6 +313,7 @@ class ApplicantCreate(SQLModel):
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    phone_ru: Optional[str] = None  # Pack 50.15-A
     education: List[EducationRecord] = Field(default_factory=list)
     work_history: List[WorkRecord] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
@@ -364,6 +370,7 @@ class ApplicantUpdate(SQLModel):
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    phone_ru: Optional[str] = None  # Pack 50.15-A
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None

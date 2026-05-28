@@ -1540,7 +1540,7 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
             _full = f"{_first_l} {_last_l}".strip()
         _applicant_full_name_ru = _full or None
         
-        _applicant_phone = applicant.phone
+        _applicant_phone = applicant.phone_ru or applicant.phone  # Pack 50.15-A
 
     result = generate_default_transactions(
         submission_date=base_date,
@@ -2418,7 +2418,7 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "home_address_line1": _bank_statement_address_line1(applicant),
             "home_address_line2": _bank_statement_address_line2(applicant),
             "email": applicant.email,
-            "phone": applicant.phone,
+            "phone": applicant.phone_ru or applicant.phone,  # Pack 50.15-A
             "nationality_ru_genitive": _NATIONALITY_GENITIVE_RU.get(
                 applicant.nationality, applicant.nationality or ""
             ),
@@ -3646,7 +3646,7 @@ def build_soo_context(application, applicant, company, position, spain_address, 
         "birth_date_long": _stdr_fmt_date_long_ru(applicant.birth_date) if applicant.birth_date else "",
         "snils": applicant.snils or "",
         "home_address": applicant.home_address or "",
-        "phone": applicant.phone or "",
+        "phone": applicant.phone_ru or applicant.phone or "",  # Pack 50.15-A
         "email": applicant.email or "",
         # Раздел 2 — работодатель
         "company_full_name": company.full_name_ru or "",

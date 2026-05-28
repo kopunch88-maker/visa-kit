@@ -1609,3 +1609,23 @@ def apply_pack50_12_migration() -> None:
         ))
 
     print("[migration] Pack 50.12-A: application.soo_number + soo_date ready")
+
+
+# ============================================================================
+# Pack 50.15-A — Русский телефон заявителя (applicant.phone_ru)
+# ============================================================================
+def apply_pack50_15_migration() -> None:
+    """Pack 50.15-A — applicant.phone_ru VARCHAR(32) NULL.
+
+    Русский телефон для русских документов. Если пусто — fallback на phone.
+    Идемпотентна (ADD COLUMN IF NOT EXISTS).
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS phone_ru VARCHAR(32)"
+        ))
+
+    print("[migration] Pack 50.15-A: applicant.phone_ru ready")
