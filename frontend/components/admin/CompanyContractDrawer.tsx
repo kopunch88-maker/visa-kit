@@ -71,11 +71,6 @@ export function CompanyContractDrawer({
   application, applicant, companies, positions, onClose, onSaved,
 }: Props) {
   const [companyId, setCompanyId] = useState<number | "">(application.company_id || "");
-  // Pack 50.7-D — ОКПО для шапки Приказа Т-9
-  const [companyOkpo, setCompanyOkpo] = useState("");
-  // Pack 50.8-D — ОКТМО + телефон компании для §1 справки 2-НДФЛ
-  const [companyOktmo, setCompanyOktmo] = useState("");
-  const [companyPhone, setCompanyPhone] = useState("");
 
   // Pack 50.7-D — поля для Приказа Т-9 о командировке (отображаются только при EMPLOYMENT)
   const isNaim = (application as any).application_type === "EMPLOYMENT";
@@ -141,16 +136,10 @@ export function CompanyContractDrawer({
     if (selectedCompany) {
       setCompanyFullNameEs(selectedCompany.full_name_es || "");
       setDirectorFullNameLatin(selectedCompany.director_full_name_latin || "");
-      // Pack 50.7-D — синхронизация ОКПО с выбранной компанией
-      setCompanyOkpo((selectedCompany as any).okpo || "");
-      // Pack 50.8-D — синхронизация ОКТМО/телефона
-      setCompanyOktmo((selectedCompany as any).oktmo || "");
-      setCompanyPhone((selectedCompany as any).phone || "");
       setCompanyFieldsDirty(false);
     } else {
       setCompanyFullNameEs("");
       setDirectorFullNameLatin("");
-      setCompanyOkpo("");
     }
   }, [companyId, selectedCompany?.id]);
 
@@ -237,17 +226,6 @@ export function CompanyContractDrawer({
         }
         if (directorFullNameLatin !== (selectedCompany.director_full_name_latin || "")) {
           updates.director_full_name_latin = directorFullNameLatin || null;
-        }
-        // Pack 50.7-D — ОКПО для Т-9
-        if (companyOkpo !== ((selectedCompany as any).okpo || "")) {
-          updates.okpo = companyOkpo.trim() || null;
-        }
-        // Pack 50.8-D — ОКТМО + телефон для 2-НДФЛ
-        if (companyOktmo !== ((selectedCompany as any).oktmo || "")) {
-          updates.oktmo = companyOktmo.trim() || null;
-        }
-        if (companyPhone !== ((selectedCompany as any).phone || "")) {
-          updates.phone = companyPhone.trim() || null;
         }
         if (Object.keys(updates).length > 0) {
           await updateCompany(companyId as number, updates);
@@ -439,51 +417,6 @@ export function CompanyContractDrawer({
                   loading={translitLoading === "director"}
                   placeholder='напр. "Tarakin Yury Aleksandrovich"'
                 />
-                {/* Pack 50.7-D — ОКПО (8 цифр) для шапки Приказа Т-9 */}
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    ОКПО <span className="text-tertiary font-normal">(для Т-9 при найме)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={companyOkpo}
-                    onChange={(e) => { setCompanyOkpo(e.target.value); setCompanyFieldsDirty(true); }}
-                    placeholder="например 01465988 (8 цифр)"
-                    maxLength={8}
-                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
-                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
-                  />
-                </div>
-                {/* Pack 50.8-D — ОКТМО (8 или 11 цифр) для шапки Справки 2-НДФЛ */}
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    ОКТМО <span className="text-tertiary font-normal">(для 2-НДФЛ при найме)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={companyOktmo}
-                    onChange={(e) => { setCompanyOktmo(e.target.value); setCompanyFieldsDirty(true); }}
-                    placeholder="например 45901000000 (8 или 11 цифр)"
-                    maxLength={11}
-                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
-                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
-                  />
-                </div>
-                {/* Pack 50.8-D — Телефон компании для шапки Справки 2-НДФЛ */}
-                <div>
-                  <label className="block text-xs font-medium text-secondary mb-1">
-                    Телефон компании <span className="text-tertiary font-normal">(для 2-НДФЛ при найме)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={companyPhone}
-                    onChange={(e) => { setCompanyPhone(e.target.value); setCompanyFieldsDirty(true); }}
-                    placeholder="например +74954104579"
-                    maxLength={32}
-                    className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
-                    style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
-                  />
-                </div>
               </div>
               {companyFieldsDirty && (
                 <p className="text-[11px] text-info mt-2">

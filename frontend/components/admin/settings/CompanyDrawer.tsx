@@ -52,6 +52,8 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
     tax_id_secondary: "",
     // Pack 50.1-E — поля для документов (ОКПО для Т-9, ОГРН + email для Трудового договора)
     okpo: "",
+    oktmo: "",  // Pack 50.13 — перенесено из заявки (для 2-НДФЛ)
+    phone: "",  // Pack 50.13 — перенесено из заявки (для 2-НДФЛ)
     ogrn: "",
     email: "",
     legal_address: "",
@@ -266,6 +268,13 @@ export function CompanyDrawer({ companyId, initialFields, onClose, onSaved }: Pr
                 </Grid>
                 <TextField label="Email (ЭДО — для Трудового договора)" value={(form as any).email || ""}
                   onChange={(v) => setField("email" as any, v)} placeholder="info@factorstroy.ru" />
+                {/* Pack 50.13 — ОКТМО + Телефон (перенесено из drawer заявки) */}
+                <Grid>
+                  <TextField label="ОКТМО (для 2-НДФЛ при найме)" value={(form as any).oktmo || ""}
+                    onChange={(v) => setField("oktmo" as any, v)} placeholder="45901000000 (8 или 11 цифр)" />
+                  <TextField label="Телефон компании (для 2-НДФЛ при найме)" value={(form as any).phone || ""}
+                    onChange={(v) => setField("phone" as any, v)} placeholder="+74954104579" />
+                </Grid>
               </Section>
 
               {/* Pack 50.1-G — Единая секция «Шаблоны договоров» с табами [Самозанятый][Найм] */}
