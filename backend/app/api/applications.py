@@ -45,6 +45,7 @@ from app.templates_engine import (
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
+    render_soo,  # Pack 50.12-D
     render_payslip,  # Pack 50.10-B
 )
 from app.pdf_forms_engine import build_pdf_forms
@@ -603,6 +604,8 @@ _DOWNLOAD_FILES = {
     "payslip_3":            {"name": "22_Расчётный_листок_3.docx", "kind": "docx", "fn": render_payslip, "args": (2,)},
     # Pack 50.11-B — Письмо работодателя (найм)
     "employer_letter_naim": {"name": "23_Письмо_работодателя.docx", "kind": "docx", "fn": render_employer_letter_naim, "args": ()},
+    # Pack 50.12-D — Свидетельство об отъезде (СОО)
+    "soo":                  {"name": "24_Свидетельство_об_отъезде.docx", "kind": "docx", "fn": render_soo, "args": ()},
 }
 
 

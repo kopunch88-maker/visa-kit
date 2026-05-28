@@ -43,6 +43,7 @@ from app.templates_engine import (
     render_employment_contract,  # Pack 50.1-C
     render_ndfl_2,  # Pack 50.8-B
     render_stdr,  # Pack 50.9-B
+    render_soo,  # Pack 50.12-D
     render_payslip,  # Pack 50.10-B
 )
 # Pack 50.7-C — для проверки application_type в pipeline
@@ -151,6 +152,11 @@ def build_full_package(
         files_to_render.append(
             ("23_Письмо_работодателя.docx", "employer_letter_naim",
              render_employer_letter_naim, (application, session))
+        )
+        # Pack 50.12-D — Свидетельство об отъезде (СОО)
+        files_to_render.append(
+            ("24_Свидетельство_об_отъезде.docx", "soo",
+             render_soo, (application, session))
         )
         # Pack 50.10-B — Расчётный листок ×3 (ТОЛЬКО для EMPLOYMENT-заявок)
         # 3 предыдущих месяца относительно application.stdr_issue_date or today().
