@@ -111,6 +111,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [mother_name_latin, setMotherNameLatin] = useState(applicant.mother_name_latin || "");
   const [email, setEmail] = useState(applicant.email || "");
   const [phone, setPhone] = useState(applicant.phone || "");
+  // Pack 50.15-B — русский телефон (для русских документов)
+  const [phone_ru, setPhoneRu] = useState((applicant as any).phone_ru || "");
   const [inn, setInn] = useState(applicant.inn || "");
   // Pack 17.3 — модал генерации ИНН + дата регистрации НПД
   const [innModalOpen, setInnModalOpen] = useState(false);
@@ -511,6 +513,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         mother_name_latin: mother_name_latin.trim() || null,
         email: email.trim(),
         phone: phone.trim(),
+        phone_ru: phone_ru.trim() || null,  // Pack 50.15-B
         inn: inn.trim(),
         inn_registration_date: inn_registration_date || null,
         inn_kladr_code: inn_kladr_code || null,
@@ -822,6 +825,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Email" value={email} onChange={setEmail} placeholder="user@example.com" />
               <Field label="Телефон" value={phone} onChange={setPhone} placeholder="+7 999 ..." />
+              {/* Pack 50.15-B — русский телефон: если заполнен, идёт в русские документы */}
+              <Field label="Телефон (рус.)" value={phone_ru} onChange={setPhoneRu} placeholder="+7 999 ... (для русских документов)" />
             </div>
             <Field label="ИНН" value={inn} onChange={setInn} placeholder="123456789012"
               actionButton={
