@@ -33,7 +33,7 @@ const DOCUMENTS: DocItem[] = [
   { id: "invoice_2",           filename: "06_Счёт_2.docx",                    kind: "docx", selfEmployedOnly: true },
   { id: "invoice_3",           filename: "07_Счёт_3.docx",                    kind: "docx", selfEmployedOnly: true },
   { id: "employer_letter",     filename: "08_Письмо.docx",          kind: "docx", selfEmployedOnly: true },
-  { id: "cv",                  filename: "09_Резюме.docx",          kind: "docx" },
+  { id: "employment_contract", filename: "01_Трудовой_договор.docx",        kind: "docx", naimOnly: true },  // Pack 50.10-G swap
   { id: "bank_statement",      filename: "10_Выписка.docx",    kind: "docx" },
   { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
   { id: "designacion",         filename: "12_Designacion_representante.pdf",                      kind: "pdf"  },
@@ -50,7 +50,7 @@ const DOCUMENTS: DocItem[] = [
   // Pack 50.7-C — Приказ Т-9 о командировке (только для EMPLOYMENT)
   { id: "business_trip_order", filename: "17_Приказ_на_командировку.docx", kind: "docx", naimOnly: true },
   // Pack 50.1-C — Трудовой договор (только для EMPLOYMENT)
-  { id: "employment_contract", filename: "01_Трудовой_договор.docx",        kind: "docx", naimOnly: true },
+  { id: "cv",                  filename: "09_Резюме.docx",          kind: "docx" },
   // Pack 50.8-D — Справка 2-НДФЛ (только для EMPLOYMENT)
   { id: "ndfl_2",              filename: "18_2-НДФЛ.docx",                  kind: "docx", naimOnly: true },
   // Pack 50.9-D — Справка СТД-Р (только для EMPLOYMENT)
