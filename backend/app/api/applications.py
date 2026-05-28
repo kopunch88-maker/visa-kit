@@ -289,6 +289,9 @@ class ApplicationPatch(BaseModel):
     business_trip_duration_unit: Optional[str] = None
     business_trip_place_short: Optional[bool] = None
     employee_tab_number: Optional[str] = None
+    # Pack 50.12-A — Свидетельство об отъезде (СОО)
+    soo_number: Optional[str] = None
+    soo_date: Optional[date] = None
     # Pack 50.8-B — Справка 2-НДФЛ (найм)
     ndfl_2_year: Optional[int] = None
     ndfl_2_period_from: Optional[int] = None

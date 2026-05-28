@@ -149,6 +149,9 @@ class Application(TimestampMixin, table=True):
     business_trip_duration_unit: Optional[str] = Field(default=None, max_length=16, description="Единица: 'days', 'months', 'years'. Авто, если NULL.")
     business_trip_place_short: bool = Field(default=False, description="True = 'Испания, г. Барселона', False = полный адрес с индексом")
     employee_tab_number: Optional[str] = Field(default=None, max_length=16, description="Табельный номер сотрудника")
+    # === Pack 50.12-A: Свидетельство об отъезде (СОО) ===
+    soo_number: Optional[str] = Field(default=None, max_length=20, description="№ свидетельства об отъезде ('009/03/2026'). Автоген.")
+    soo_date: Optional[date] = Field(default=None, description="Дата свидетельства (default = business_trip_order_date + 2 дня)")
 
     # === Pack 50.8-A: Справка 2-НДФЛ (найм) ===
     ndfl_2_year: Optional[int] = Field(default=None, description="Год отчётного периода 2-НДФЛ")
@@ -276,6 +279,9 @@ class ApplicationRead(SQLModel):
     business_trip_end_date: Optional[date] = None
     business_trip_purpose_override: Optional[str] = None
     business_trip_duration_words: Optional[str] = None
+    # Pack 50.12-A — СОО
+    soo_number: Optional[str] = None
+    soo_date: Optional[date] = None
     business_trip_duration_unit: Optional[str] = None
     business_trip_place_short: Optional[bool] = None
     employee_tab_number: Optional[str] = None

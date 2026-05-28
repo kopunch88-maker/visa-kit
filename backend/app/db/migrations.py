@@ -1580,3 +1580,32 @@ def apply_pack50_10_migration() -> None:
         ))
 
     print("[migration] Pack 50.10-A: company.accountant_short_ru ready")
+
+
+# ============================================================================
+# Pack 50.12-A — Свидетельство об отъезде (СОО)
+# ============================================================================
+def apply_pack50_12_migration() -> None:
+    """Pack 50.12-A — поля для Свидетельства об отъезде.
+
+    application:
+      - soo_number VARCHAR(20) NULL — № свидетельства ("009/03/2026").
+        Автогенерируется (счётчик по компании + месяц/год), как business_trip_order_number.
+      - soo_date DATE NULL — дата свидетельства. Default = business_trip_order_date + 2 дня.
+
+    Код подразделения паспорта живёт в passports[] JSON (Pack 50.12-A-fe), не здесь.
+
+    Идемпотентна — ADD COLUMN IF NOT EXISTS.
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS soo_number VARCHAR(20)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE application ADD COLUMN IF NOT EXISTS soo_date DATE"
+        ))
+
+    print("[migration] Pack 50.12-A: application.soo_number + soo_date ready")
