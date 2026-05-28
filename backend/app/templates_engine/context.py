@@ -2192,6 +2192,29 @@ def _bt_resolve_purpose(application, position) -> str:
     return ""
 
 
+# ============================================================================
+# Pack 50.17 (pack50_17_end_date) — авто-конец командировки
+# ============================================================================
+def _bt_auto_end_date(start_date):
+    """Конец командировки (авто) = start + 3 года + 6 месяцев.
+
+    Если итог выпадает на субботу/воскресенье — сдвиг вперёд на понедельник.
+    День месяца обрезается до последнего дня (напр. 31 авг -> 28/29 фев).
+    Гарантирует запас ~6 мес для ВНЖ и рабочий день в качестве конца периода.
+    """
+    import calendar as _calendar
+    from datetime import date as _d, timedelta as _td
+
+    total = start_date.month - 1 + 42  # 36 (3 года) + 6 месяцев
+    y = start_date.year + total // 12
+    m = total % 12 + 1
+    day = min(start_date.day, _calendar.monthrange(y, m)[1])
+    d = _d(y, m, day)
+    while d.weekday() >= 5:  # 5=сб, 6=вс
+        d += _td(days=1)
+    return d
+
+
 def build_business_trip_context(application, applicant, company, position, spain_address, session) -> dict:
     """Pack 50.7-C — собирает блок 'business_trip' для шаблона Т-9.
 
@@ -2227,12 +2250,7 @@ def build_business_trip_context(application, applicant, company, position, spain
 
     end_date = application.business_trip_end_date
     if end_date is None:
-        # +3 года от start
-        try:
-            end_date = start_date.replace(year=start_date.year + 3)
-        except ValueError:
-            # 29 февраля високосного → 28 февраля
-            end_date = start_date.replace(year=start_date.year + 3, day=28)
+        end_date = _bt_auto_end_date(start_date)
 
     acknowledged_date = order_date  # дата ознакомления = дата приказа
 
