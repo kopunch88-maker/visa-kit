@@ -3584,10 +3584,9 @@ def build_soo_context(application, applicant, company, position, spain_address, 
 
     end_date = application.business_trip_end_date
     if end_date is None:
-        try:
-            end_date = start_date.replace(year=start_date.year + 3)
-        except ValueError:
-            end_date = start_date.replace(year=start_date.year + 3, day=28)
+        # Pack 50.18 (pack50_18_soo_end): тот же расчёт что и для Приказа Т-9
+        # (start + 3 года + 6 месяцев, обход выходных). Менеджерская дата выше.
+        end_date = _bt_auto_end_date(start_date)
 
     # ---- Дата свидетельства = приказ + 2 дня (или override) ----
     soo_date = application.soo_date or (order_date + timedelta(days=2))
