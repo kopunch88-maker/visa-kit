@@ -317,6 +317,25 @@ export function PassportsSection({
               </div>
             </div>
 
+            {/* Pack 50.12 — Код подразделения (только для паспорта РФ внутреннего) */}
+            {rec.passport_type === "RU_INTERNAL" && (
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-slate-700">
+                  Код подразделения
+                </label>
+                <input
+                  type="text"
+                  value={(rec as any).division_code || ""}
+                  onChange={(e) =>
+                    handleUpdate(rec.id, { division_code: e.target.value || null } as any)
+                  }
+                  placeholder="770-046"
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2
+                             text-sm placeholder-slate-400 focus:border-slate-500 focus:outline-none"
+                />
+              </div>
+            )}
+
             {rec.notes && (
               <div className="text-xs text-slate-500 italic">
                 Заметка: {rec.notes}
