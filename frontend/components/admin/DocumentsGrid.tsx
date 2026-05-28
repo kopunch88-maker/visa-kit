@@ -37,7 +37,7 @@ const DOCUMENTS: DocItem[] = [
   { id: "bank_statement",      filename: "10_Выписка.docx",    kind: "docx" },
   { id: "mi_t",                filename: "11_MI-T.pdf",                                           kind: "pdf"  },
   { id: "designacion",         filename: "12_Designacion_representante.pdf",                      kind: "pdf"  },
-  { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf"  },
+  { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf", selfEmployedOnly: true },  // Pack 50.19
   { id: "declaracion",         filename: "14_Declaracion_antecedentes.pdf",                       kind: "pdf"  },
   // Pack 36.1 — TIE формы (только если у заявки заполнены NIE и fingerprint_date)
   { id: "mi_tie",              filename: "15_MI-TIE.pdf",                                         kind: "pdf"  },

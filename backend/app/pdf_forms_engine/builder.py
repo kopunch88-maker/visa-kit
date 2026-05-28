@@ -16,7 +16,7 @@ from typing import Dict, Optional
 
 from sqlmodel import Session
 
-from app.models import Application, Applicant, Representative, SpainAddress
+from app.models import Application, Applicant, Representative, SpainAddress, ApplicationType  # Pack 50.19
 from .flatten_form import flatten_pdf_form
 from .render_mi_t import render_mi_t
 from .render_designacion import render_designacion
@@ -102,11 +102,13 @@ def build_pdf_forms(
         log.exception(f"Failed to render Designación: {e}")
 
     # 13. Compromiso de alta en SS (RETA) — генерация с нуля.
-    try:
-        compromiso_bytes = render_compromiso(application, applicant, spain_address)
-        result["13_Compromiso_RETA.pdf"] = flatten_pdf_form(compromiso_bytes)
-    except Exception as e:
-        log.exception(f"Failed to render Compromiso: {e}")
+    # Pack 50.19 — только для самозанятых; для НАЙМА (EMPLOYMENT) не нужна.
+    if application.application_type != ApplicationType.EMPLOYMENT:
+        try:
+            compromiso_bytes = render_compromiso(application, applicant, spain_address)
+            result["13_Compromiso_RETA.pdf"] = flatten_pdf_form(compromiso_bytes)
+        except Exception as e:
+            log.exception(f"Failed to render Compromiso: {e}")
 
     # 14. Declaración responsable — генерация с нуля.
     try:
