@@ -181,6 +181,8 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
         applicant_phone=_applicant_phone,
         
         statement_date_override=getattr(application, "bank_statement_date", None),
+        # Pack 50.31 — найм: аванс+зарплата по трудовому договору
+        is_employment=str(getattr(application.application_type, "value", application.application_type)) == "EMPLOYMENT",
     )
 
 
