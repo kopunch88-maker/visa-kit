@@ -67,6 +67,20 @@ function minRequiredContractEndDate(submissionDate: string): string {
   return sub.toISOString().slice(0, 10);
 }
 
+
+// Pack 50.39 — извлечь город из юр.адреса РФ (без «г.»): «121108, г. Москва, ...» → «Москва»
+function extractCityFromLegalAddress(legalAddress: string): string {
+  if (!legalAddress) return "";
+  let s = legalAddress;
+  s = s.replace(/\b\d{6}\b/g, "");  // почтовый индекс РФ
+  const parts = s.split(",").map((p) => p.trim()).filter(Boolean);
+  for (const p of parts) {
+    const m = p.match(/^г\.?\s*(.+)/i) || p.match(/^город\s+(.+)/i);
+    if (m) return m[1].trim();
+  }
+  return "";
+}
+
 export function CompanyContractDrawer({
   application, applicant, companies, positions, onClose, onSaved,
 }: Props) {
@@ -126,6 +140,16 @@ export function CompanyContractDrawer({
 
   // Pack 15.1 — поля компании для качественного перевода
   const selectedCompany = companies.find((c) => c.id === companyId);
+
+  // Pack 50.39 — автоподстановка города подписания из юр.адреса компании
+  useEffect(() => {
+    if (!selectedCompany) return;
+    if (contractCity && contractCity.trim()) return;  // не трогаем заполненное
+    const city = extractCityFromLegalAddress(selectedCompany.legal_address || "");
+    if (city) setContractCity(city);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
+
   const [companyFullNameEs, setCompanyFullNameEs] = useState("");
   const [directorFullNameLatin, setDirectorFullNameLatin] = useState("");
   const [translitLoading, setTranslitLoading] = useState<"name" | "director" | null>(null);
