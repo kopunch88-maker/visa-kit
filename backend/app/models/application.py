@@ -98,6 +98,9 @@ class Application(TimestampMixin, table=True):
     employer_letter_date: Optional[date] = None
     employer_letter_number: Optional[str] = Field(default=None, max_length=32)
     submission_date: Optional[date] = Field(default=None)
+    # Pack 50.38-A — город/провинция ПОДАЧИ (≠ адрес проживания)
+    submission_city: Optional[str] = Field(default=None, max_length=64)
+    submission_province: Optional[str] = Field(default=None, max_length=64)
     payments_period_months: Optional[int] = Field(default=3)
     tasa_type: TasaType = Field(default=TasaType.TASA_038)
     tasa_nrc: Optional[str] = Field(default=None, max_length=64)
@@ -254,6 +257,8 @@ class ApplicationRead(SQLModel):
     salary_rub: Optional[Decimal] = None
     employer_letter_date: Optional[date] = None
     submission_date: Optional[date] = None
+    submission_city: Optional[str] = None  # Pack 50.38-A
+    submission_province: Optional[str] = None  # Pack 50.38-A
     payments_period_months: Optional[int] = None
     tasa_type: Optional[TasaType] = None
     tasa_nrc: Optional[str] = None

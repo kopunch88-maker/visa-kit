@@ -269,6 +269,9 @@ class ApplicationPatch(BaseModel):
     contract_end_date: Optional[date] = None
     salary_rub: Optional[float] = None
     submission_date: Optional[date] = None
+    # Pack 50.38-A — город/провинция подачи
+    submission_city: Optional[str] = None
+    submission_province: Optional[str] = None
     payments_period_months: Optional[int] = None
     internal_notes: Optional[str] = None
     # Pack 9: NRC квитанции пошлины (для PDF-форм MI-T)
