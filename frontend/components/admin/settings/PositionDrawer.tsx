@@ -64,6 +64,8 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
   const [techOpinion, setTechOpinion] = useState<TechOpinionState>(EMPTY_TECH_OPINION);
   // Pack 50.7-D2 — цель командировки для Приказа Т-9 (найм)
   const [businessTripPurpose, setBusinessTripPurpose] = useState("");
+  // Pack 50.21 — код ОКЗ (для §3 справки СТД-Р, ручной ввод)
+  const [okzCode, setOkzCode] = useState("");
   const [generatingBusinessTripPurpose, setGeneratingBusinessTripPurpose] = useState(false);
 
   // Pack 20.1: извлекаем уникальные specialty из уже загруженных Position'ов
@@ -120,6 +122,7 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
         });
         // Pack 50.7-D2 — цель командировки
         setBusinessTripPurpose(d.business_trip_purpose || "");
+        setOkzCode((d as any).okz_code || "");  // Pack 50.21
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -257,6 +260,7 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
         tech_opinion_contract_clause_es: techOpinion.contract_clause_es || null,
         // Pack 50.7-D2 — цель командировки для Приказа Т-9
         business_trip_purpose: businessTripPurpose.trim() || null,
+        okz_code: okzCode.trim() || null,  // Pack 50.21
       };
       if (isNew) {
         await createPosition(payload);
@@ -545,6 +549,25 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
                 <p className="text-[10px] text-tertiary mt-1">
                   Текст в родительном падеже (после «с целью...»). Подставляется в Т-9 при найме.
                   Можно переопределить для конкретной заявки в поле «Цель командировки (override)».
+                </p>
+              </div>
+
+              {/* Pack 50.21 — Код ОКЗ для справки СТД-Р */}
+              <div className="border-t pt-4" style={{ borderColor: "var(--color-border-tertiary)", borderTopWidth: 0.5 }}>
+                <label className="block text-xs font-medium text-secondary mb-2">
+                  🔢 Код ОКЗ <span className="text-tertiary font-normal">(для §3 справки СТД-Р, напр. 2631.5)</span>
+                </label>
+                <input
+                  type="text"
+                  value={okzCode}
+                  onChange={(e) => setOkzCode(e.target.value)}
+                  placeholder="напр. 2421.9"
+                  className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary"
+                  style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }}
+                />
+                <p className="text-[10px] text-tertiary mt-1">
+                  Код по Общероссийскому классификатору занятий. Подставляется в столбец
+                  «Код выполняемой функции» справки СТД-Р. Можно переопределить на уровне заявки.
                 </p>
               </div>
 
