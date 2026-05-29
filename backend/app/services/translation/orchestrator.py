@@ -109,15 +109,15 @@ KIND_CONFIG: dict[TranslationKind, dict] = {
     },
     TranslationKind.PAYSLIP_1: {
         "filename": "20_Nomina_1.docx",
-        "render": lambda app, sess: render_payslip(app, sess, 1),
+        "render": lambda app, sess: render_payslip(app, sess, 0),  # Pack 50.35: 0-indexed
     },
     TranslationKind.PAYSLIP_2: {
         "filename": "21_Nomina_2.docx",
-        "render": lambda app, sess: render_payslip(app, sess, 2),
+        "render": lambda app, sess: render_payslip(app, sess, 1),  # Pack 50.35
     },
     TranslationKind.PAYSLIP_3: {
         "filename": "22_Nomina_3.docx",
-        "render": lambda app, sess: render_payslip(app, sess, 3),
+        "render": lambda app, sess: render_payslip(app, sess, 2),  # Pack 50.35
     },
     TranslationKind.EMPLOYER_LETTER_NAIM: {
         "filename": "23_Carta_del_empleador.docx",

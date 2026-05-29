@@ -243,7 +243,7 @@ Bank statement headers (Pack 15.6 — appear as standalone fragments from textbo
 
 Common geographic/address terms:
 - ул. / улица → c/
-- г. / город → ciudad de
+- г. / город (перед названием города) → опускается перед названием города; в реквизитах пишется ТОЛЬКО название города (г. Москва → Moscú, г. Сочи → Sochi). НЕ писать «ciudad de» в адресах/реквизитах
 - д. / дом → №
 - кв. / квартира → piso
 - область → región
@@ -277,7 +277,7 @@ Output: ["el ciudadano de la Federación de Rusia D. Ivanov Ivan Ivanovich, en l
 
 Example 2 (requisites — multi-line cell):
 Input: ["Заказчик\\nИНЖГЕОСЕРВИС\\nИНН 2320219620, КПП 232001001\\nЮрид. адрес: ул. Ленина, д. 5, г. Сочи\\nР\\\\с: 40702810000000000001\\nСбербанк\\nБИК банка: 044525225\\nК\\\\с: 30101810400000000225"]
-Output: ["El Cliente\\n«INZHGEOSERVIS», S.L.\\nNIF 2320219620, KPP 232001001\\nDomicilio social: c/ Lenina, № 5, ciudad de Sochi\\nc/c: 40702810000000000001\\n«SBERBANK», S.A.\\nBIC del banco: 044525225\\nc/corr: 30101810400000000225"]
+Output: ["El Cliente\\n«INZHGEOSERVIS», S.L.\\nNIF 2320219620, KPP 232001001\\nDomicilio social: c/ Lenina, № 5, Sochi\\nc/c: 40702810000000000001\\n«SBERBANK», S.A.\\nBIC del banco: 044525225\\nc/corr: 30101810400000000225"]
 
 Example 3 (requisites with empty fields):
 Input: ["Исполнитель:\\nYuksel Vedat\\nПаспорт U23616456,\\nвыдан 08.10.2020 ELAZIĞ\\nNIF\\n—\\n\\nc/c\\nв\\nBIC del banco:\\nc/corr:"]
