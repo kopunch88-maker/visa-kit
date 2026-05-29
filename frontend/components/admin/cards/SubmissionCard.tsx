@@ -51,8 +51,8 @@ export function SubmissionCard({ application, representative, address, onEdit }:
               {application.submission_date
                 ? new Date(application.submission_date).toLocaleDateString("ru")
                 : "—"}
-              {address?.city && (
-                <span className="text-tertiary text-xs ml-2">· {address.city}</span>
+              {(application.submission_city || address?.city) && (
+                <span className="text-tertiary text-xs ml-2">· {application.submission_city || address?.city}</span>
               )}
             </div>
           </div>

@@ -124,6 +124,8 @@ export type ApplicationResponse = {
   contract_sign_city?: string;
   salary_rub?: number;
   submission_date?: string;
+  submission_city?: string;        // Pack 50.38-A — город подачи
+  submission_province?: string;    // Pack 50.38-A — провинция подачи
   payments_period_months?: number;
   recommendation_snapshot?: any;
   tasa_nrc?: string;

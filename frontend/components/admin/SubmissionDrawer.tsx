@@ -23,6 +23,9 @@ export function SubmissionDrawer({
   const [representativeId, setRepresentativeId] = useState<number | "">(application.representative_id || "");
   const [spainAddressId, setSpainAddressId] = useState<number | "">(application.spain_address_id || "");
   const [submissionDate, setSubmissionDate] = useState(application.submission_date || "");
+  // Pack 50.38-A — город/провинция подачи
+  const [submissionCity, setSubmissionCity] = useState(application.submission_city || "");
+  const [submissionProvince, setSubmissionProvince] = useState(application.submission_province || "");
   // Pack 9: номер квитанции пошлины (для PDF-форм)
   const [tasaNrc, setTasaNrc] = useState<string>((application as any).tasa_nrc || "");
 
@@ -34,6 +37,16 @@ export function SubmissionDrawer({
     document.addEventListener("keydown", handleEsc);
     return () => document.removeEventListener("keydown", handleEsc);
   }, [onClose]);
+
+  // Pack 50.38-A — автоподстановка провинции по городу
+  const CITY_PROVINCE: Record<string, string> = { barcelona: "Barcelona", madrid: "Madrid" };
+  function handleCityChange(value: string) {
+    setSubmissionCity(value);
+    const auto = CITY_PROVINCE[value.trim().toLowerCase()];
+    if (auto && !submissionProvince.trim()) {
+      setSubmissionProvince(auto);
+    }
+  }
 
   async function handleSave() {
     setSaveError(null);
@@ -47,6 +60,8 @@ export function SubmissionDrawer({
         representative_id: representativeId as number,
         spain_address_id: spainAddressId as number,
         submission_date: submissionDate || undefined,
+        submission_city: submissionCity || undefined,
+        submission_province: submissionProvince || undefined,
         tasa_nrc: tasaNrc || undefined,
       } as any);
       onSaved();
@@ -116,6 +131,31 @@ export function SubmissionDrawer({
               style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
             <p className="text-xs text-tertiary mt-1">Минимум 90 дней с даты подписания договора</p>
           </div>
+
+          {/* Pack 50.38-A — город и провинция подачи */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-secondary mb-1">
+                Город подачи
+              </label>
+              <input type="text" value={submissionCity}
+                onChange={(e) => handleCityChange(e.target.value)}
+                placeholder="Barcelona или Madrid"
+                className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-secondary mb-1">
+                Провинция подачи
+              </label>
+              <input type="text" value={submissionProvince}
+                onChange={(e) => setSubmissionProvince(e.target.value)}
+                placeholder="авто по городу"
+                className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary placeholder:text-tertiary focus:outline-none focus:ring-2"
+                style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+            </div>
+          </div>
+          <p className="text-xs text-tertiary -mt-2">Место подписи и Provincia в формах MI-T, EX-17 и др. Если пусто — берётся адрес проживания.</p>
 
           {/* Pack 9 — поле NRC */}
           <div>
