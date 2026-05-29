@@ -3118,66 +3118,49 @@ def build_stdr_context(
         if real_start is None:
             continue
 
-        # Куда попадает: таблица 1 или 2?
-        # В таблицу 2 — только если ВСЯ запись завершилась до 2020
-        # (т.е. real_end < 2020-01-01 и real_end is not None)
+        # Pack 50.32 — три ветки распределения (двойная запись при пересечении 2020):
+        #   start >= 2020           → ВЕРХНЯЯ: приём + (увольнение)
+        #   end < 2020 (вся до 2019)→ НИЖНЯЯ: период start..end
+        #   пересечение 01.01.2020  → НИЖНЯЯ (start..31.12.2019) + ВЕРХНЯЯ (только увольнение)
         real_end = rec["end_date"]
-        if real_end is not None and real_end < STDR_CUTOFF:
-            # Таблица 2: только периоды
-            sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
-            row = {
-                "company_with_sfr": f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(sfr_number_auto)}",  # Pack 50.24
-                "date_from": _stdr_fmt_dd_mm_yyyy(real_start),
-                "date_to": _stdr_fmt_dd_mm_yyyy(real_end),
-            }
-            # Применяем override
-            sfr_override = override.get("sfr_number")
-            if sfr_override:
-                row["company_with_sfr"] = f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(sfr_override)}"  # Pack 50.24
-            if override.get("acceptance_date"):
-                row["date_from"] = override["acceptance_date"]
-            if override.get("dismissal_date"):
-                row["date_to"] = override["dismissal_date"]
-            table2_periods.append(row)
-            continue
+        _CUTOFF_LAST = _date(2019, 12, 31)  # 31.12.2019 включительно
 
-        # Таблица 1: события (приём + опц. увольнение)
+        # SFR-номер и ОКЗ (общие для веток)
         if is_dn:
             sfr_number_auto = company.sfr_registration_number or _stdr_generate_sfr_number(rec["company_name"])
             okz_auto = position.okz_code or ""
         else:
             sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
             okz_auto = ""
+        _sfr_eff = override.get("sfr_number") or sfr_number_auto
+        company_with_sfr = f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(_sfr_eff)}"  # Pack 50.24
 
-        company_with_sfr = f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(override.get('sfr_number') or sfr_number_auto)}"  # Pack 50.24
+        def _t2_row(d_from, d_to):
+            row = {
+                "company_with_sfr": company_with_sfr,
+                "date_from": override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(d_from),
+                "date_to": override.get("dismissal_date") or _stdr_fmt_dd_mm_yyyy(d_to),
+            }
+            return row
 
-        # ПРИЁМ
-        acceptance_date_str = override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(real_start)
-        doc_name = override.get("document_name") or "ПРИКАЗ"  # Pack 50.25
-        doc_date = override.get("document_date") or acceptance_date_str
-        doc_number = override.get("document_number") or _stdr_generate_document_number(wh_idx)
-        okz = override.get("okz_code") or okz_auto
+        def _t1_priem():
+            acceptance_date_str = override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(real_start)
+            table1_events.append({
+                "company_with_sfr": company_with_sfr,
+                "event_date": acceptance_date_str,
+                "event_type": "ПРИЕМ",
+                "position": rec["position_title"],
+                "basis": "",
+                "okz_code": override.get("okz_code") or okz_auto,
+                "dismissal_reason": "",
+                "doc_name": override.get("document_name") or "ПРИКАЗ",  # Pack 50.25
+                "doc_date": override.get("document_date") or acceptance_date_str,
+                "doc_number": override.get("document_number") or _stdr_generate_document_number(wh_idx),
+                "cancellation": "",
+            })
 
-        table1_events.append({
-            "company_with_sfr": company_with_sfr,
-            "event_date": acceptance_date_str,
-            "event_type": "ПРИЕМ",
-            "position": rec["position_title"],
-            "basis": "",
-            "okz_code": okz,
-            "dismissal_reason": "",
-            "doc_name": doc_name,
-            "doc_date": doc_date,
-            "doc_number": doc_number,
-            "cancellation": "",
-        })
-
-        # УВОЛЬНЕНИЕ (если есть)
-        if real_end is not None:
-            dismissal_date_str = override.get("dismissal_date") or _stdr_fmt_dd_mm_yyyy(real_end)
-            dismissal_reason = override.get("dismissal_reason") or _stdr_generate_dismissal_reason()
-            # Документ-основание увольнения — другой приказ с тем же idx, но другим суффиксом
-            doc_number_dismissal = override.get("document_number_dismissal") or _stdr_generate_document_number(wh_idx + 100)
+        def _t1_uvol(end_dt):
+            dismissal_date_str = override.get("dismissal_date") or _stdr_fmt_dd_mm_yyyy(end_dt)
             table1_events.append({
                 "company_with_sfr": company_with_sfr,
                 "event_date": dismissal_date_str,
@@ -3185,12 +3168,31 @@ def build_stdr_context(
                 "position": rec["position_title"],
                 "basis": "",
                 "okz_code": "",
-                "dismissal_reason": dismissal_reason,
+                "dismissal_reason": override.get("dismissal_reason") or _stdr_generate_dismissal_reason(),
                 "doc_name": "ПРИКАЗ",  # Pack 50.25
                 "doc_date": dismissal_date_str,
-                "doc_number": doc_number_dismissal,
+                "doc_number": override.get("document_number_dismissal") or _stdr_generate_document_number(wh_idx + 100),
                 "cancellation": "",
             })
+
+        if real_end is not None and real_end < STDR_CUTOFF:
+            # Вся запись до 2020 → только НИЖНЯЯ
+            table2_periods.append(_t2_row(real_start, real_end))
+            continue
+
+        if real_start >= STDR_CUTOFF:
+            # Вся запись с 2020 → только ВЕРХНЯЯ (приём + увольнение)
+            _t1_priem()
+            if real_end is not None:
+                _t1_uvol(real_end)
+            continue
+
+        # ПЕРЕСЕЧЕНИЕ границы 01.01.2020 (start <= 2019 и end None/>= 2020):
+        # НИЖНЯЯ — период start..31.12.2019; ВЕРХНЯЯ — только увольнение (если end >= 2020).
+        table2_periods.append(_t2_row(real_start, _CUTOFF_LAST))
+        if real_end is not None and real_end >= STDR_CUTOFF:
+            _t1_uvol(real_end)
+        # если real_end is None (текущая работа с 2019) — в верхней событий нет
 
     # 4. Сортируем таблицу 1 по дате события (от ранних к поздним) — как в эталоне СФР
     def _parse_event_dt(s: str):
