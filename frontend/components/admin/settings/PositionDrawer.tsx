@@ -178,6 +178,7 @@ export function PositionDrawer({ positionId, allPositions = [], onClose, onSaved
       setDutiesText(result.duties.join("\n"));
       setTagsText(result.tags.join(", "));
       setProfileDescription(result.profile_description);
+      setOkzCode(result.okz_code || "");  // Pack 50.22
       // Заполняем tech_opinion RU-поля (ES не трогаем — для них отдельная кнопка)
       setTechOpinion((prev) => ({
         ...prev,

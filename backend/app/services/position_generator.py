@@ -55,6 +55,8 @@ class _GeneratedFields(BaseModel):
     tech_opinion_grounds_ru: List[str] = Field(..., min_length=2)
     tech_opinion_contract_clause_ru: str = Field(..., min_length=30)
     international_analog_ru: str = Field(..., min_length=3)
+    # Pack 50.22 — код ОКЗ (Optional: если LLM не уверена, пусто)
+    okz_code: Optional[str] = Field(default="")
 
 
 # ============================================================== Input schema
@@ -109,6 +111,8 @@ _SYSTEM_PROMPT = """Ты — эксперт по составлению долж
 
 9. **international_analog_ru** (строка 20-80 символов) — английский эталон должности (через «или» если несколько вариантов), пример: «data analyst или business intelligence analyst». Используется во фразе «должность аналогична позиции ___ в международной практике».
 
+10. **okz_code** (строка, формат «NNNN.N») — код по Общероссийскому классификатору занятий (ОКЗ ОК 010-2014) для этой профессии. ВАЖНО: это юридически значимый код для справки СФР (СТД-Р), указывай НАИБОЛЕЕ ТОЧНЫЙ 4-значный код базовой группы с подгруппой через точку. Примеры: бизнес-аналитик — «2421.9», инженер-проектировщик — «2142.9», разработчик ПО — «2512.1», врач-терапевт — «2211.1». Если профессия не вписывается точно — выбери ближайшую группу ОКЗ. НЕ выдумывай несуществующие коды.
+
 ВАЖНЫЕ ПРАВИЛА:
 - НЕ копируй мой шаблон фраз — пиши под КОНКРЕТНУЮ должность
 - НЕ выдумывай факты которые не относятся к этой профессии
@@ -127,7 +131,8 @@ _SYSTEM_PROMPT = """Ты — эксперт по составлению долж
   "tech_opinion_steps_ru": [{"title": "...", "body": "..."}, ...],
   "tech_opinion_grounds_ru": ["...", "..."],
   "tech_opinion_contract_clause_ru": "...",
-  "international_analog_ru": "..."
+  "international_analog_ru": "...",
+  "okz_code": "2421.9"
 }
 """
 
@@ -221,6 +226,7 @@ async def generate_position_fields(inp: PositionGenerateInput) -> Dict[str, Any]
         "tech_opinion_grounds_ru": validated.tech_opinion_grounds_ru,
         "tech_opinion_contract_clause_ru": validated.tech_opinion_contract_clause_ru,
         "international_analog_ru": validated.international_analog_ru,
+        "okz_code": validated.okz_code or "",  # Pack 50.22
     }
 
     log.info(
