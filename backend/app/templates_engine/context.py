@@ -3124,14 +3124,14 @@ def build_stdr_context(
             # Таблица 2: только периоды
             sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
             row = {
-                "company_with_sfr": f"{rec['company_name']}\n{_stdr_sfr_nbr(sfr_number_auto)}",  # Pack 50.24
+                "company_with_sfr": f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(sfr_number_auto)}",  # Pack 50.24
                 "date_from": _stdr_fmt_dd_mm_yyyy(real_start),
                 "date_to": _stdr_fmt_dd_mm_yyyy(real_end),
             }
             # Применяем override
             sfr_override = override.get("sfr_number")
             if sfr_override:
-                row["company_with_sfr"] = f"{rec['company_name']}\n{_stdr_sfr_nbr(sfr_override)}"  # Pack 50.24
+                row["company_with_sfr"] = f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(sfr_override)}"  # Pack 50.24
             if override.get("acceptance_date"):
                 row["date_from"] = override["acceptance_date"]
             if override.get("dismissal_date"):
@@ -3147,7 +3147,7 @@ def build_stdr_context(
             sfr_number_auto = _stdr_generate_sfr_number(rec["company_name"])
             okz_auto = ""
 
-        company_with_sfr = f"{rec['company_name']}\n{_stdr_sfr_nbr(override.get('sfr_number') or sfr_number_auto)}"  # Pack 50.24
+        company_with_sfr = f"{rec['company_name'].upper()}\n{_stdr_sfr_nbr(override.get('sfr_number') or sfr_number_auto)}"  # Pack 50.24
 
         # ПРИЁМ
         acceptance_date_str = override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(real_start)
