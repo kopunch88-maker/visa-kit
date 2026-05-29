@@ -640,6 +640,7 @@ export type ImportFileAssignment = {
 export type ImportFinalizeRequest = {
   application_id: number | null;
   internal_notes?: string | null;
+  manager_text?: string;  // Pack 50.38-D4 — текст менеджера для автозаполнения
   files: ImportFileAssignment[];
   run_ocr: boolean;
   // Pack 50.0-C5 — тип заявки (только для target=new)
@@ -727,6 +728,7 @@ export type ImportFinalizeWithCompanyRequest = {
   company: CompanyCreatePayload;
   application_id: number | null;
   internal_notes?: string | null;
+  manager_text?: string;  // Pack 50.38-D4 — текст менеджера для автозаполнения
   files: ImportFileAssignment[];
   run_ocr: boolean;
   // Pack 50.0-C5 — тип заявки (только для target=new)

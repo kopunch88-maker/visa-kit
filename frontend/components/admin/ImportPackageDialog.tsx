@@ -95,6 +95,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
 
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [internalNotes, setInternalNotes] = useState("");
+  // Pack 50.38-D4 — текст менеджера для автозаполнения
+  const [managerText, setManagerText] = useState("");
   const [existingApplicationId, setExistingApplicationId] = useState<number | null>(null);
   // Pack 50.0-C5 — тип заявки для нового импорта
   const [selectedImportType, setSelectedImportType] = useState<ApplicationType>("SELF_EMPLOYED");
@@ -374,6 +376,7 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
       const result = await importPackageFinalize(importSession.session_id, {
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        manager_text: target === "new" ? (managerText || undefined) : undefined,
         // Pack 50.0-C5 — тип заявки только для target=new
         application_type: target === "new" ? selectedImportType : undefined,
         files: fileAssignments,
@@ -448,6 +451,7 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
         company: companyForm,
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        manager_text: target === "new" ? (managerText || undefined) : undefined,
         // Pack 50.0-C5 — тип заявки только для target=new
         application_type: target === "new" ? selectedImportType : undefined,
         files: buildAssignments(),
@@ -473,6 +477,7 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
       const result = await importPackageFinalizeSkipCompany(importSession.session_id, {
         application_id: target === "existing" ? existingApplicationId : null,
         internal_notes: target === "new" ? internalNotes : null,
+        manager_text: target === "new" ? (managerText || undefined) : undefined,
         // Pack 50.0-C5 — тип заявки только для target=new
         application_type: target === "new" ? selectedImportType : undefined,
         files: buildAssignments(),
@@ -631,6 +636,8 @@ export function ImportPackageDialog({ applications, onClose, onImported, initial
               setTarget={setTarget}
               internalNotes={internalNotes}
               setInternalNotes={setInternalNotes}
+              managerText={managerText}
+              setManagerText={setManagerText}
               existingApplicationId={existingApplicationId}
               setExistingApplicationId={setExistingApplicationId}
               applications={applications}
@@ -1169,6 +1176,8 @@ function ClassifyStep({
   setTarget,
   internalNotes,
   setInternalNotes,
+  managerText,
+  setManagerText,
   existingApplicationId,
   setExistingApplicationId,
   applications,
@@ -1184,6 +1193,8 @@ function ClassifyStep({
   setTarget: (t: "new" | "existing") => void;
   internalNotes: string;
   setInternalNotes: (s: string) => void;
+  managerText: string;
+  setManagerText: (s: string) => void;
   existingApplicationId: number | null;
   setExistingApplicationId: (id: number | null) => void;
   applications: ApplicationResponse[];
@@ -1245,6 +1256,23 @@ function ClassifyStep({
                     color: "var(--color-text-primary)",
                   }}
                 />
+                {/* Pack 50.38-D4 — текст менеджера для автозаполнения */}
+                <textarea
+                  value={managerText}
+                  onChange={(e) => setManagerText(e.target.value)}
+                  placeholder="Сообщение от менеджера (опционально) — вставьте текст из Telegram"
+                  rows={4}
+                  className="mt-2 w-full px-2 py-1.5 rounded-md text-sm border"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <p className="mt-1 text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+                  Заполнит компанию, должность, представителя, адрес, тип заявки (НАЙМ) и город подачи. Данные со сканов имеют приоритет.
+                </p>
                 {/* Pack 50.0-C5 — индикатор типа заявки */}
                 <div
                   className="mt-2 flex items-center justify-between gap-2 px-2 py-1.5 rounded-md"
