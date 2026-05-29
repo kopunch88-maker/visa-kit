@@ -139,6 +139,29 @@ def resolve_representative(
     return None, {"reason": "no_match", "best": (f"{best.first_name} {best.last_name}" if best else None), "score": round(best_score, 3)}
 
 
+# Pack 50.38-D1-fix — шум адреса (тип улицы, этаж, индекс, город)
+_ADDR_NOISE = [
+    "carrer de la", "carrer del", "carrer de", "carrer",
+    "calle de la", "calle del", "calle de", "calle", "c/",
+    "avenida de", "avenida", "avda", "av", "passeig de", "passeig",
+    "piso", "puerta", "planta", "esc", "escalera", "bajo",
+    "atico", "\u00e1tico", "izquierda", "derecha", "izq", "der",
+    "barcelona", "madrid", "montmelo", "montmel\u00f3",
+    "espana", "espa\u00f1a",
+]
+
+
+def _addr_core(s):
+    """Извлекает ядро адреса: улица + номер дома, без типа улицы,
+    этажа/двери, почтового индекса и города. Для устойчивого сравнения."""
+    s = _normalize(s)
+    s = re.sub(r"\b\d{5}\b", " ", s)  # почтовый индекс
+    for w in _ADDR_NOISE:
+        s = re.sub(r"\b" + re.escape(w) + r"\b", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def resolve_spain_address(
     session: Session,
     raw: Optional[str] = None,
@@ -153,18 +176,22 @@ def resolve_spain_address(
     if not query and not city:
         return None, {"reason": "empty"}
 
+    # Pack 50.38-D1-fix: сравниваем по ЯДРУ (улица+номер), отбросив шум
+    q_core = _addr_core(query)
     best, best_score = None, 0.0
     for a in addrs:
-        # сравниваем по street, label и комбинации street+city
-        candidates = [
-            getattr(a, "street", "") or "",
-            getattr(a, "label", "") or "",
-            f"{getattr(a, 'street', '') or ''} {getattr(a, 'city', '') or ''}",
+        street = getattr(a, "street", "") or ""
+        label = getattr(a, "label", "") or ""
+        acity = getattr(a, "city", "") or ""
+        # ядра кандидата: label (обычно «Улица Номер, Город») и street+label
+        cand_cores = [
+            _addr_core(label),
+            _addr_core(f"{street} {label}"),
+            _addr_core(f"{street} {acity}"),
         ]
-        for cand in candidates:
-            score = _sim(query, cand)
-            if score > best_score:
-                best, best_score = a, score
+        score = max(_sim(q_core, c) for c in cand_cores if c)
+        if score > best_score:
+            best, best_score = a, score
     if best and best_score >= threshold:
         return best.id, {"matched": getattr(best, "label", None), "score": round(best_score, 3)}
     return None, {"reason": "no_match", "best": getattr(best, "label", None), "score": round(best_score, 3)}
