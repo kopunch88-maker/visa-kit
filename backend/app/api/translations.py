@@ -140,9 +140,11 @@ def start_package_translation(
             detail="Translations already exist. Use DELETE /translations first to retry.",
         )
 
-    # Создаём 10 записей PENDING
+    # Создаём записи PENDING (Pack 50.33 — фильтр по типу заявки)
+    from ..services.translation.orchestrator import kinds_for_application
+    target_kinds = kinds_for_application(application)
     now = datetime.utcnow()
-    for kind in ALL_KINDS:
+    for kind in target_kinds:
         tr = Translation(
             application_id=app_id,
             kind=kind,
@@ -152,14 +154,14 @@ def start_package_translation(
         session.add(tr)
     session.commit()
 
-    log.info(f"[translations] Created {len(ALL_KINDS)} PENDING records for app {app_id}")
+    log.info(f"[translations] Created {len(target_kinds)} PENDING records for app {app_id}")
 
     # Запускаем фоновую задачу
     background_tasks.add_task(run_translate_package, app_id, None)
 
     return {
         "status": "started",
-        "kinds_count": len(ALL_KINDS),
+        "kinds_count": len(target_kinds),
     }
 
 

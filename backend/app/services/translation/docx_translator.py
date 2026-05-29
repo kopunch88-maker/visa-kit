@@ -187,6 +187,34 @@ Document types:
 - Письмо от компании / Письмо-поручение → Carta de la empresa
 - Выписка по счёту → Extracto de cuenta
 - Справка → Certificado
+- Трудовой договор → Contrato de trabajo
+- Приказ о направлении в командировку → Orden de comisión de servicio
+- Приказ → Orden
+- Справка о доходах и суммах налога физического лица / 2-НДФЛ → Certificado de ingresos y retenciones (2-NDFL)
+- Сведения о трудовой деятельности → Información sobre la actividad laboral
+- Расчётный листок → Nómina (hoja de salario)
+- Письмо работодателя → Carta del empleador
+- Свидетельство об отъезде → Certificado de salida
+- Апостиль → Apostilla
+
+Employment (НАЙМ) terms:
+- Работодатель → Empleador
+- Работник → Trabajador
+- Аванс → Anticipo
+- Заработная плата → Salario
+- Оклад → Sueldo base
+- Должность → Cargo
+- Трудовая функция → Función laboral
+- Приём (на работу) → Alta (contratación)
+- Увольнение → Baja (cese)
+- Перевод → Traslado
+- Командировка → Comisión de servicio / viaje de trabajo
+- Фонд пенсионного и социального страхования / СФР → Fondo de Pensiones y Seguro Social (SFR)
+- Регистрационный номер в СФР → Número de registro en el SFR
+- Периоды работы → Períodos de trabajo
+- Сведения о приёме, переводе, увольнении → Información sobre alta, traslado y baja
+- по собственному желанию → por voluntad propia
+- Трудовой кодекс Российской Федерации → Código de Trabajo de la Federación de Rusia
 
 Bank statement headers (Pack 15.6 — appear as standalone fragments from textbox columns):
 - Номер счета → Número de cuenta

@@ -32,6 +32,10 @@ from app.services.storage import get_storage
 from app.templates_engine import (
     render_contract, render_act, render_invoice,
     render_employer_letter, render_cv, render_bank_statement,
+    # Pack 50.33 — рендереры найма
+    render_employment_contract, render_business_trip_order,
+    render_ndfl_2, render_stdr, render_payslip,
+    render_employer_letter_naim, render_soo, render_apostille_sfr,
 )
 
 from .docx_translator import translate_docx
@@ -86,11 +90,88 @@ KIND_CONFIG: dict[TranslationKind, dict] = {
         "filename": "10_Extracto_bancario.docx",
         "render": lambda app, sess: render_bank_statement(app, sess),
     },
+    # Pack 50.33 — документы найма
+    TranslationKind.EMPLOYMENT_CONTRACT: {
+        "filename": "01_Contrato_de_trabajo.docx",
+        "render": lambda app, sess: render_employment_contract(app, sess),
+    },
+    TranslationKind.BUSINESS_TRIP_ORDER: {
+        "filename": "17_Orden_de_comision_de_servicio.docx",
+        "render": lambda app, sess: render_business_trip_order(app, sess),
+    },
+    TranslationKind.NDFL_2: {
+        "filename": "18_Certificado_2-NDFL.docx",
+        "render": lambda app, sess: render_ndfl_2(app, sess),
+    },
+    TranslationKind.STDR: {
+        "filename": "19_STD-R.docx",
+        "render": lambda app, sess: render_stdr(app, sess),
+    },
+    TranslationKind.PAYSLIP_1: {
+        "filename": "20_Nomina_1.docx",
+        "render": lambda app, sess: render_payslip(app, sess, 1),
+    },
+    TranslationKind.PAYSLIP_2: {
+        "filename": "21_Nomina_2.docx",
+        "render": lambda app, sess: render_payslip(app, sess, 2),
+    },
+    TranslationKind.PAYSLIP_3: {
+        "filename": "22_Nomina_3.docx",
+        "render": lambda app, sess: render_payslip(app, sess, 3),
+    },
+    TranslationKind.EMPLOYER_LETTER_NAIM: {
+        "filename": "23_Carta_del_empleador.docx",
+        "render": lambda app, sess: render_employer_letter_naim(app, sess),
+    },
+    TranslationKind.SOO: {
+        "filename": "24_Certificado_de_salida.docx",
+        "render": lambda app, sess: render_soo(app, sess),
+    },
+    TranslationKind.APOSTILLE_SFR: {
+        "filename": "25_Apostilla_SFR.docx",
+        "render": lambda app, sess: render_apostille_sfr(app, sess),
+    },
 }
 
 
 # Все типы по умолчанию для «Перевести пакет»
 ALL_KINDS = list(KIND_CONFIG.keys())
+
+
+# Pack 50.33 — пакеты документов по типу заявки
+_SAMOZANYATYI_KINDS = [
+    TranslationKind.CONTRACT,
+    TranslationKind.ACT_1, TranslationKind.ACT_2, TranslationKind.ACT_3,
+    TranslationKind.INVOICE_1, TranslationKind.INVOICE_2, TranslationKind.INVOICE_3,
+    TranslationKind.EMPLOYER_LETTER,
+    TranslationKind.CV,
+    TranslationKind.BANK_STATEMENT,
+]
+
+_EMPLOYMENT_KINDS = [
+    TranslationKind.EMPLOYMENT_CONTRACT,
+    TranslationKind.CV,
+    TranslationKind.BANK_STATEMENT,
+    TranslationKind.BUSINESS_TRIP_ORDER,
+    TranslationKind.NDFL_2,
+    TranslationKind.STDR,
+    TranslationKind.PAYSLIP_1, TranslationKind.PAYSLIP_2, TranslationKind.PAYSLIP_3,
+    TranslationKind.EMPLOYER_LETTER_NAIM,
+    TranslationKind.SOO,
+    TranslationKind.APOSTILLE_SFR,
+]
+
+
+def kinds_for_application(application) -> list:
+    """Pack 50.33 — список документов на перевод по типу заявки.
+
+    EMPLOYMENT → пакет найма; иначе (самозанятый) → пакет самозанятого.
+    """
+    at = getattr(application, "application_type", None)
+    at_val = str(getattr(at, "value", at) or "").upper()
+    if at_val == "EMPLOYMENT":
+        return list(_EMPLOYMENT_KINDS)
+    return list(_SAMOZANYATYI_KINDS)
 
 
 def _r2_key(application_id: int, kind: TranslationKind) -> str:

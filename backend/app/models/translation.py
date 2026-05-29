@@ -37,6 +37,17 @@ class TranslationKind(str, Enum):
     EMPLOYER_LETTER = "employer_letter"
     CV = "cv"
     BANK_STATEMENT = "bank_statement"
+    # Pack 50.33 — документы найма
+    EMPLOYMENT_CONTRACT = "employment_contract"
+    BUSINESS_TRIP_ORDER = "business_trip_order"
+    NDFL_2 = "ndfl_2"
+    STDR = "stdr"
+    PAYSLIP_1 = "payslip_1"
+    PAYSLIP_2 = "payslip_2"
+    PAYSLIP_3 = "payslip_3"
+    EMPLOYER_LETTER_NAIM = "employer_letter_naim"
+    SOO = "soo"
+    APOSTILLE_SFR = "apostille_sfr"
 
 
 class TranslationStatus(str, Enum):
