@@ -1864,7 +1864,18 @@ export type TranslationKind =
   | "invoice_3"
   | "employer_letter"
   | "cv"
-  | "bank_statement";
+  | "bank_statement"
+  // Pack 50.34 — документы найма
+  | "employment_contract"
+  | "business_trip_order"
+  | "ndfl_2"
+  | "stdr"
+  | "payslip_1"
+  | "payslip_2"
+  | "payslip_3"
+  | "employer_letter_naim"
+  | "soo"
+  | "apostille_sfr";
 
 export type TranslationStatus = "pending" | "in_progress" | "done" | "failed";
 
@@ -1910,6 +1921,17 @@ export const TRANSLATION_KIND_INFO: Record<
   employer_letter: { ru_label: "Письмо",      es_filename: "08_Carta_de_la_empresa.docx", order: 8  },
   cv:              { ru_label: "Резюме",      es_filename: "09_CV.docx",                  order: 9  },
   bank_statement:  { ru_label: "Выписка",     es_filename: "10_Extracto_bancario.docx",   order: 10 },
+  // Pack 50.34 — документы найма
+  employment_contract:  { ru_label: "Трудовой договор",   es_filename: "01_Contrato_de_trabajo.docx",            order: 11 },
+  business_trip_order:  { ru_label: "Приказ Т-9",         es_filename: "17_Orden_de_comision_de_servicio.docx",  order: 12 },
+  ndfl_2:               { ru_label: "2-НДФЛ",             es_filename: "18_Certificado_2-NDFL.docx",             order: 13 },
+  stdr:                 { ru_label: "СТД-Р",              es_filename: "19_STD-R.docx",                          order: 14 },
+  payslip_1:            { ru_label: "Расчётный листок 1", es_filename: "20_Nomina_1.docx",                       order: 15 },
+  payslip_2:            { ru_label: "Расчётный листок 2", es_filename: "21_Nomina_2.docx",                       order: 16 },
+  payslip_3:            { ru_label: "Расчётный листок 3", es_filename: "22_Nomina_3.docx",                       order: 17 },
+  employer_letter_naim: { ru_label: "Письмо работодателя", es_filename: "23_Carta_del_empleador.docx",          order: 18 },
+  soo:                  { ru_label: "Свидетельство об отъезде", es_filename: "24_Certificado_de_salida.docx",   order: 19 },
+  apostille_sfr:        { ru_label: "Апостиль СФР",       es_filename: "25_Apostilla_SFR.docx",                  order: 20 },
 };
 
 /** Запустить перевод всего пакета (10 документов) в фоне. */

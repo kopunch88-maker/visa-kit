@@ -52,7 +52,9 @@ export function TranslationPanel({ applicationId }: Props) {
       const data = await getTranslations(applicationId);
       // Сортируем по order из TRANSLATION_KIND_INFO
       const sorted = [...data.translations].sort(
-        (a, b) => TRANSLATION_KIND_INFO[a.kind].order - TRANSLATION_KIND_INFO[b.kind].order,
+        (a, b) =>
+          (TRANSLATION_KIND_INFO[a.kind]?.order ?? 999) -
+          (TRANSLATION_KIND_INFO[b.kind]?.order ?? 999),
       );
       setItems(sorted);
       setSummary(data.summary);
@@ -325,7 +327,7 @@ export function TranslationPanel({ applicationId }: Props) {
 
       {!hasAny && (
         <div className="text-sm text-tertiary py-2">
-          Переводов ещё нет. Нажмите «Перевести пакет», чтобы перевести 10 русских документов на испанский через AI. Это займёт около минуты.
+          Переводов ещё нет. Нажмите «Перевести пакет», чтобы перевести русские документы на испанский через AI. Это займёт около минуты.
         </div>
       )}
 
