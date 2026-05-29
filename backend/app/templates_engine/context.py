@@ -3151,7 +3151,7 @@ def build_stdr_context(
 
         # ПРИЁМ
         acceptance_date_str = override.get("acceptance_date") or _stdr_fmt_dd_mm_yyyy(real_start)
-        doc_name = override.get("document_name") or "Приказ"
+        doc_name = override.get("document_name") or "ПРИКАЗ"  # Pack 50.25
         doc_date = override.get("document_date") or acceptance_date_str
         doc_number = override.get("document_number") or _stdr_generate_document_number(wh_idx)
         okz = override.get("okz_code") or okz_auto
@@ -3184,7 +3184,7 @@ def build_stdr_context(
                 "basis": "",
                 "okz_code": "",
                 "dismissal_reason": dismissal_reason,
-                "doc_name": "Приказ",
+                "doc_name": "ПРИКАЗ",  # Pack 50.25
                 "doc_date": dismissal_date_str,
                 "doc_number": doc_number_dismissal,
                 "cancellation": "",
