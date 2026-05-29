@@ -23,6 +23,8 @@ from .countries_es import country_es, month_es_lower
 from .fonts import BODY_FONT, BODY_FONT_BOLD
 
 
+from .submission_location import submission_city_province
+
 def render_declaracion(
     application: Application,
     applicant: Optional[Applicant],
@@ -78,7 +80,8 @@ def render_declaracion(
         addr_line = ", ".join(parts)
 
     cp = spain_address.zip if spain_address else ""
-    city = (spain_address.city if spain_address else "Barcelona") or "Barcelona"
+    _sub_city, _sub_prov = submission_city_province(application, spain_address)  # Pack 50.38-A2
+    city = _sub_city or "Barcelona"
 
     sign_date = application.submission_date or date.today()
     date_text = f"{sign_date.day:02d} de {month_es_lower(sign_date.month)} de {sign_date.year}"

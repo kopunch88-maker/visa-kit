@@ -37,6 +37,8 @@ from .countries_es import country_es, month_es
 from .flatten_form import flatten_pdf_form
 
 
+from .submission_location import submission_city_province
+
 def render_mi_tie(
     application: Application,
     applicant: Optional[Applicant],
@@ -155,7 +157,8 @@ def _build_mi_tie_fields(
 
     # ============ FOOTER: место + дата подписи ============
     sign_date = app.fingerprint_date or app.submission_date or date.today()
-    sign_city = (addr.city if addr else "BARCELONA") or "BARCELONA"
+    _sub_city, _sub_prov = submission_city_province(app, addr)  # Pack 50.38-A2
+    sign_city = _sub_city or "BARCELONA"
 
     fields["Provincia_4"] = sign_city.upper()
     fields["Día_1"] = f"{sign_date.day:02d}"

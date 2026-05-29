@@ -22,6 +22,8 @@ from app.models import Application, Applicant, SpainAddress
 from .fonts import BODY_FONT, BODY_FONT_BOLD
 
 
+from .submission_location import submission_city_province
+
 def render_compromiso(
     application: Application,
     applicant: Optional[Applicant],
@@ -65,7 +67,8 @@ def render_compromiso(
 
     full_name = _full_name_latin(applicant)
     passport = applicant.passport_number if applicant else ""
-    city = (spain_address.city if spain_address else "Barcelona") or "Barcelona"
+    _sub_city, _sub_prov = submission_city_province(application, spain_address)  # Pack 50.38-A2
+    city = _sub_city or "Barcelona"
     sign_date = application.submission_date or date.today()
     date_str = f"{sign_date.day:02d}.{sign_date.month:02d}.{sign_date.year}"
 

@@ -30,6 +30,8 @@ TIPO_AUTORIZACION_TEXT = (
 )
 
 
+from .submission_location import submission_city_province
+
 def render_designacion(
     application: Application,
     applicant: Optional[Applicant],
@@ -134,7 +136,8 @@ def _build_designacion_fields(
 
     # ============= Подпись (Texto36-Texto39) =============
     sign_date = app.submission_date or date.today()
-    sign_city = (addr.city if addr else "BARCELONA") or "BARCELONA"
+    _sub_city, _sub_prov = submission_city_province(app, addr)  # Pack 50.38-A2
+    sign_city = _sub_city or "BARCELONA"
 
     fields["Texto36"] = sign_city.upper()
     fields["Texto37"] = f"{sign_date.day:02d}"
