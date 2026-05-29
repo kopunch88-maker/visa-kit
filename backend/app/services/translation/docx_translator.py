@@ -162,6 +162,8 @@ Output: JSON array of Spanish translations, EXACTLY same length and order. No co
 
 1. NEVER MODIFY any Latin-script text already in the input — names of people, companies, addresses, banks. They have been pre-substituted from official documents (passports, EGRYL extracts) and must be preserved character-for-character. If you see "Yuksel Vedat", "INZHGEOSERVIS", "SBERBANK" — output them unchanged.
 
+1b. TRANSLITERATE NAMES FULLY — no leftover Cyrillic. When the input is a Russian name, surname, patronymic or INITIALS in Cyrillic (e.g. "Доценко С.С.", "Иванов И.И."), transliterate EVERY letter to Latin. The output must contain ZERO Cyrillic characters in the name. WATCH OUT for letters that look identical in both alphabets — Cyrillic С/Р/О/А/Е/Н/К/М/Т/В/Х/У must become Latin S/R/O/A/E/N/K/M/T/V/KH/U, never left as Cyrillic. Example: "Доценко С.С." → "DOTSENKO S.S." (BOTH initials Latin S, not "S.С."). Surname transliteration (GOST): С→S, Ч→CH, Ш→SH, Щ→SHCH, Ж→ZH, Х→KH, Ц→TS, Ю→IU, Я→IA, Й→I, Ё→E, Ы→Y, Ь→(omit). A single trailing Cyrillic letter in an otherwise-Latin token is ALWAYS a bug — fix it.
+
 2. NEVER MODIFY: numbers (1234.56, 100 000), dates in any format (04.05.2025, 2025-05-04, «04» мая 2025 г. — translate ONLY the Russian month name, keep digits/structure), tax IDs and account numbers (the digit strings — but DO translate the LABEL before them, see rule 4), email addresses, phone numbers, document codes (#2026-0003).
 
 3. If a fragment is already in Spanish or English — return it unchanged. If a fragment is a Jinja template marker like {{ var }} — return unchanged.
