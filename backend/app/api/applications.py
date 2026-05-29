@@ -228,6 +228,36 @@ async def parse_manager_text_endpoint(
     return result
 
 
+@router.post("/{app_id}/apply-manager-text-existing")
+async def apply_manager_text_existing(
+    app_id: int,
+    payload: ManagerTextPayload,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Pack 50.38-D3-2: дозакинуть текст менеджера в СУЩЕСТВУЮЩУЮ заявку.
+    Парсит текст и применяет (apply_parsed) — заполняет пустые поля,
+    привязывает справочники, пишет заметки. Скан-данные не трогаются."""
+    from app.services.manager_text import (
+        parse_manager_text as _parse, apply_parsed_to_application as _apply,
+        determine_application_type as _dettype, ManagerTextParseError as _err,
+    )
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+    try:
+        parsed = await _parse(payload.text)
+        parsed["_raw_text"] = payload.text
+    except _err as e:
+        raise HTTPException(422, f"Не удалось распарсить текст: {e}")
+    _det = _dettype(parsed)
+    if _det is not None:
+        app.application_type = _det
+    report = _apply(session, app, parsed)
+    session.commit()
+    return {"ok": True, "report": report}
+
+
 @router.post("", status_code=201)
 def create_application(
     payload: ApplicationCreate,

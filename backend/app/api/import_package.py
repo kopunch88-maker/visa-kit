@@ -58,6 +58,12 @@ from app.services.applicant_passports import (
 )  # Pack 41.0-C
 
 from .dependencies import require_manager
+# Pack 50.38-D3-2 — применение текста менеджера
+from app.services.manager_text import (
+    parse_manager_text,
+    apply_parsed_to_application,
+    determine_application_type,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1306,7 +1312,7 @@ async def _run_ocr_for_doc(doc_id: int):
         session.commit()
 
 
-async def _run_ocr_for_docs_batch(doc_ids: List[int], application_id: int):
+async def _run_ocr_for_docs_batch(doc_ids: List[int], application_id: int, parsed_text: Optional[dict] = None):
     """
     Запускает OCR для всех документов последовательно.
     После завершения OCR — автоматически применяет распознанные данные к Applicant
@@ -1322,12 +1328,12 @@ async def _run_ocr_for_docs_batch(doc_ids: List[int], application_id: int):
 
     # === Pack 14b+c: автоприменение OCR данных к Applicant ===
     try:
-        _auto_apply_ocr_to_applicant(application_id)
+        _auto_apply_ocr_to_applicant(application_id, parsed_text=parsed_text)
     except Exception as e:
         log.error(f"Auto-apply OCR to applicant failed for app {application_id}: {e}", exc_info=True)
 
 
-def _auto_apply_ocr_to_applicant(application_id: int):
+def _auto_apply_ocr_to_applicant(application_id: int, parsed_text: Optional[dict] = None):
     """
     Применяет OCR данные ко всем документам этой заявки → Applicant.
 
@@ -1353,6 +1359,14 @@ def _auto_apply_ocr_to_applicant(application_id: int):
 
         if not docs:
             log.info(f"Auto-apply: no OCR_DONE docs for app {application_id}, skip")
+            # Pack 50.38-D3-2: нет сканов, но может быть текст менеджера
+            if parsed_text:
+                try:
+                    apply_parsed_to_application(session, application, parsed_text)
+                    session.commit()
+                    log.info(f"Pack 50.38: applied manager text (no OCR docs) to app {application_id}")
+                except Exception as e:
+                    log.error(f"Pack 50.38: apply manager text (no docs) failed: {e}", exc_info=True)
             return
 
         # Pack 41.0-C: collect_ocr_data возвращает кортеж
@@ -1490,6 +1504,16 @@ def _auto_apply_ocr_to_applicant(application_id: int):
 
         session.commit()
 
+        # Pack 50.38-D3-2: применяем текст менеджера ПОСЛЕ OCR (скан = истина)
+        if parsed_text:
+            try:
+                session.refresh(application)
+                apply_parsed_to_application(session, application, parsed_text)
+                session.commit()
+                log.info(f'Pack 50.38: applied manager text to app {application_id}')
+            except Exception as e:
+                log.error(f'Pack 50.38: apply manager text failed for app {application_id}: {e}', exc_info=True)
+
 
 # ============================================================================
 # Endpoint: /finalize
@@ -1517,6 +1541,20 @@ async def finalize_import(
     internal_notes = (body.get("internal_notes") or "").strip()
     # Pack 50.0-C5 — тип заявки из payload (только для target=new, опционально)
     application_type = body.get("application_type")
+    # Pack 50.38-D3-2 — текст менеджера (опционально)
+    manager_text = (body.get("manager_text") or "").strip()
+    parsed_text = None
+    if manager_text:
+        try:
+            parsed_text = await parse_manager_text(manager_text)
+            parsed_text["_raw_text"] = manager_text
+            if application_type is None:
+                _det = determine_application_type(parsed_text)
+                if _det is not None:
+                    application_type = _det
+        except Exception as e:
+            log.error(f"Pack 50.38: parse manager text failed: {e}", exc_info=True)
+            parsed_text = None
     file_assignments = body.get("files") or []
 
     if not file_assignments:
@@ -1651,7 +1689,7 @@ async def finalize_import(
     import_sessions.pop(session_id, None)
 
     # === OCR в фоне (после возврата ответа клиенту) ===
-    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids, application.id)
+    background_tasks.add_task(_run_ocr_for_docs_batch, created_doc_ids, application.id, parsed_text)
 
     return {
         "requires_company_creation": False,
