@@ -239,23 +239,32 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   // Двуязычное ФИО.
   // Pack 32.0: если applicant создан с placeholder'ами «—» — не показываем
   // эту фейковую запись в шапке заявки, fallback на internal_notes.
-  const isPlaceholderApplicant =
+  // isPlaceholderApplicant — Pack 50.38-D-fix: placeholder только если
+  // И native, И latin пустые/«—». Иностранец (native=«—», latin валиден)
+  // НЕ placeholder — заголовок должен показать latin, не заметки.
+  const _nativeIsPlaceholder =
+    !applicant ||
+    ((applicant.last_name_native || "").trim() === "—" &&
+     (applicant.first_name_native || "").trim() === "—") ||
+    (!(applicant.last_name_native || "").trim() &&
+     !(applicant.first_name_native || "").trim());
+  const _latinValid =
     !!applicant &&
-    (applicant.last_name_native || "").trim() === "—" &&
-    (applicant.first_name_native || "").trim() === "—";
-
+    !!applicant.last_name_latin &&
+    !!applicant.first_name_latin &&
+    applicant.last_name_latin !== "—" &&
+    applicant.first_name_latin !== "—";
+  // Полностью фейковая запись — нет ни native, ни latin
+  const isPlaceholderApplicant = _nativeIsPlaceholder && !_latinValid;
+  const fullNameLatin = _latinValid
+    ? `${applicant!.last_name_latin} ${applicant!.first_name_latin}`
+    : null;
+  // Заголовок: native ФИО → latin ФИО → заметки → "Без имени"
   const fullNameRu =
-    (!isPlaceholderApplicant && applicant?.full_name_native) ||
+    (!_nativeIsPlaceholder && applicant?.full_name_native) ||
+    fullNameLatin ||
     application.internal_notes ||
     "Без имени";
-  const fullNameLatin =
-    !isPlaceholderApplicant &&
-    applicant?.last_name_latin &&
-    applicant?.first_name_latin &&
-    applicant.last_name_latin !== "—" &&
-    applicant.first_name_latin !== "—"
-      ? `${applicant.last_name_latin} ${applicant.first_name_latin}`
-      : null;
 
   return (
     <div className="space-y-4">
