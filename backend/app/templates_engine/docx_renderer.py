@@ -330,13 +330,33 @@ def _apply_page_break_before_requisites(docx_bytes: bytes) -> bytes:
     return out.getvalue()
 
 
-def _render(template_name: str, context: dict) -> bytes:
+def _stdr_strip_empty_rows(doc) -> None:
+    """Pack 50.27 — удаляет пустые строки данных в таблицах СТД-Р.
+
+    Таблица 0 (после 2019): данные с 5-й строки (индекс 4) — заголовки R0..R3.
+    Таблица 1 (до 2019): данные с 3-й строки (индекс 2) — заголовки R0..R1.
+    Строка считается пустой, если ВСЕ её ячейки без текста.
+    Документ заканчивается на последней реальной записи (нет пустых страниц).
+    """
+    specs = [(0, 4), (1, 2)]  # (table_index, data_start_row)
+    for tbl_idx, data_start in specs:
+        if tbl_idx >= len(doc.tables):
+            continue
+        table = doc.tables[tbl_idx]
+        for row in list(table.rows[data_start:]):
+            if not any(c.text.strip() for c in row.cells):
+                table._tbl.remove(row._tr)
+
+
+def _render(template_name: str, context: dict, post_process=None) -> bytes:
     template_path = TEMPLATES_DIR / template_name
     if not template_path.exists():
         raise FileNotFoundError(f"Template not found: {template_path}")
 
     template = DocxTemplate(str(template_path))
     template.render(context)
+    if post_process is not None:  # Pack 50.27
+        post_process(template.docx)
 
     buffer = io.BytesIO()
     template.save(buffer)
@@ -530,7 +550,7 @@ def render_stdr(application: Application, session: Session) -> bytes:
     # Также пробрасываем applicant_stdr (uppercase ФИО + birth_date_long + snils)
     # как алиас на верхнем уровне для удобства шаблона
     context["applicant_stdr"] = stdr_ctx["applicant"]
-    return _render("stdr_template.docx", context)
+    return _render("stdr_template.docx", context, post_process=_stdr_strip_empty_rows)  # Pack 50.27
 
 
 def render_soo(application: Application, session: Session) -> bytes:
