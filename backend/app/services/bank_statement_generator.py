@@ -261,6 +261,22 @@ def _short_name_for_sbp(full_name_ru: Optional[str]) -> str:
 
 # === Главная функция ===
 
+def _split_salary_employment(gross_salary):
+    """Pack 50.30 — грязный оклад → (аванс, зарплата) на руки для НАЙМА.
+
+    на_руки = оклад * 0.87 (минус 13% НДФЛ);
+    аванс ≈ 40%, округлён вниз до 10 тыс (реалистично, как у эталона);
+    зарплата = остаток. Эталон: 310000 → 269700 → 100000 + 169700.
+    """
+    from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+    na_ruki = (Decimal(gross_salary) * Decimal("0.87")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP)
+    avans = (na_ruki * Decimal("0.40") / 10000).quantize(
+        Decimal("1"), rounding=ROUND_DOWN) * 10000
+    zarplata = (na_ruki - avans).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return avans, zarplata
+
+
 def generate_default_transactions(
     *,
     submission_date: date,
@@ -281,6 +297,7 @@ def generate_default_transactions(
     applicant_phone: Optional[str] = None,
     
     statement_date_override: Optional[date] = None,
+    is_employment: bool = False,  # Pack 50.30
 ) -> dict:
     """
     Генерирует черновик списка транзакций для выписки.
@@ -369,8 +386,56 @@ def generate_default_transactions(
         month_name_nominative = _MONTHS_NOMINATIVE_RU[month - 1]
         last_day = _last_day_of_month(year, month)
 
-        # 1. Поступление от Заказчика (~6 числа следующего месяца)
         next_y, next_m = (year, month + 1) if month < 12 else (year + 1, 1)
+
+        # Pack 50.30 — НАЙМ: аванс (текущий месяц) + зарплата (следующий месяц),
+        # без НПД/KWIKPAY/комиссии. Самозанятый идёт прежним путём ниже.
+        if is_employment:
+            _company_display = _shorten_opf(company_full_name)
+            _cn = contract_number or ""
+            _csd = contract_sign_date.strftime("%d.%m.%Y") if contract_sign_date else ""
+            _avans, _zarplata = _split_salary_employment(salary_rub)
+            # Аванс — 20-25 число ТЕКУЩЕГО месяца (year, month)
+            _av_day = random.randint(20, 25)
+            try:
+                _av_date = _adjust_to_business_day(date(year, month, _av_day))
+            except ValueError:
+                _av_date = None
+            if _av_date and period_start <= _av_date <= period_end:
+                transactions.append({
+                    "transaction_date": _av_date,
+                    "code": _gen_credit_code(),
+                    "description": (
+                        f"{_company_display}, ИНН {company_inn}  Аванс за "
+                        f"{month_name_nominative} {year}г. по Трудовому договору "
+                        f"№{_cn} от {_csd}"
+                    ),
+                    "amount": _avans.quantize(Decimal("0.01")),
+                    "currency": "RUR",
+                    "category": "Прочие операции",
+                })
+            # Зарплата — 5-9 число СЛЕДУЮЩЕГО месяца (next_y, next_m)
+            _zp_day = random.randint(5, 9)
+            try:
+                _zp_date = _adjust_to_business_day(date(next_y, next_m, _zp_day))
+            except ValueError:
+                _zp_date = None
+            if _zp_date and period_start <= _zp_date <= period_end:
+                transactions.append({
+                    "transaction_date": _zp_date,
+                    "code": _gen_credit_code(),
+                    "description": (
+                        f"{_company_display}, ИНН {company_inn}  Заработная плата за "
+                        f"{month_name_nominative} {year}г. по Трудовому договору "
+                        f"№{_cn} от {_csd}"
+                    ),
+                    "amount": _zarplata.quantize(Decimal("0.01")),
+                    "currency": "RUR",
+                    "category": "Прочие операции",
+                })
+            continue  # найм: пропускаем KWIKPAY/НПД/комиссию
+
+        # 1. Поступление от Заказчика (~6 числа следующего месяца)
         income_day = random.randint(5, 8)
         try:
             income_date = _adjust_to_business_day(date(next_y, next_m, income_day))

@@ -1559,6 +1559,8 @@ def _generate_fresh_bank_context(application: Application, company: Company | No
         
         # Pack 25.9: ручной override даты формирования (если задан в админке)
         statement_date_override=getattr(application, "bank_statement_date", None),
+        # Pack 50.30 — найм: аванс+зарплата по трудовому договору
+        is_employment=str(getattr(application.application_type, "value", application.application_type)) == "EMPLOYMENT",
     )
 
     # Pack 25.9: legacy bank_period_start/end больше не override-ят период.
