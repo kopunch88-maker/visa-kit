@@ -207,6 +207,27 @@ def get_application(
     return _enrich(app, session)
 
 
+# Pack 50.38-B — парсинг текста менеджера в поля заявки (предпросмотр)
+class ManagerTextPayload(BaseModel):
+    text: str
+
+
+@router.post("/parse-manager-text")
+async def parse_manager_text_endpoint(
+    payload: ManagerTextPayload,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Извлекает поля заявки из свободного текста менеджера (LLM).
+    Возвращает структурированный JSON для предпросмотра/заполнения.
+    Раскладка по дроверам — на стороне фронта / следующего пака."""
+    from app.services.manager_text import parse_manager_text, ManagerTextParseError
+    try:
+        result = await parse_manager_text(payload.text)
+    except ManagerTextParseError as e:
+        raise HTTPException(422, f"Не удалось распарсить текст: {e}")
+    return result
+
+
 @router.post("", status_code=201)
 def create_application(
     payload: ApplicationCreate,
