@@ -773,12 +773,10 @@ def _money_to_words_ru(amount) -> str:
     n = int(amount)
     if n in _SALARY_WORDS_RU:
         return _SALARY_WORDS_RU[n]
-    if n % 1000 == 0:
-        thousands = n // 1000
-        if thousands == 1:
-            return "одна тысяча"
-        return f"{thousands} тысяч"
-    return str(n)
+    # Pack 50.40: суммы вне сетки _SALARY_WORDS_RU — полные слова через
+    # общий генератор _number_to_words_ru (тот же, что и для EUR),
+    # а не компактное "N тысяч".
+    return _number_to_words_ru(n)
 
 
 def _number_to_words_ru(n) -> str:
