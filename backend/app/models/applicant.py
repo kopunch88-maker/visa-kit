@@ -57,6 +57,18 @@ class Applicant(TimestampMixin, table=True):
         description="ФИО в винительном падеже: 'Орлова Ивана Андреевича'. Хранится готовым.",
     )
 
+    # Pack 50.41 — родительный + творительный падеж ФИО для письма работодателя (найм)
+    full_name_genitive: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="ФИО в родительном падеже: 'Баклан Елены Александровны' (размер вознаграждения кого?).",
+    )
+    full_name_instrumental: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="ФИО в творительном падеже: 'Баклан Еленой Александровной' (трудовой договор с кем?).",
+    )
+
     # === Demographics — все Optional для пошагового сохранения ===
     birth_date: Optional[date] = Field(default=None)
     birth_place_latin: Optional[str] = Field(default=None, max_length=128)
@@ -282,6 +294,9 @@ class ApplicantCreate(SQLModel):
     first_name_latin: str
     # Pack 50.7-C-prep — винительный падеж ФИО для Т-9
     full_name_accusative: Optional[str] = None
+    # Pack 50.41 — родительный + творительный падеж ФИО (найм)
+    full_name_genitive: Optional[str] = None
+    full_name_instrumental: Optional[str] = None
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10
@@ -333,6 +348,9 @@ class ApplicantUpdate(SQLModel):
     first_name_latin: Optional[str] = None
     # Pack 50.7-C-prep — винительный падеж ФИО для Т-9
     full_name_accusative: Optional[str] = None
+    # Pack 50.41 — родительный + творительный падеж ФИО (найм)
+    full_name_genitive: Optional[str] = None
+    full_name_instrumental: Optional[str] = None
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10

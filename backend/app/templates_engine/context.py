@@ -2459,6 +2459,9 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "languages": applicant.languages or [],
             # === Pack 50.7-C: винительный падеж ФИО для Приказа Т-9 ===
             "full_name_accusative": applicant.full_name_accusative or _full_name_native(applicant),
+            # === Pack 50.41: родительный/творительный для письма работодателя (найм) ===
+            "full_name_genitive": applicant.full_name_genitive or _full_name_native(applicant),
+            "full_name_instrumental": applicant.full_name_instrumental or _full_name_native(applicant),
             # === Pack 40.0: tech_opinion ===
             "full_name_latin": _full_name_latin_combined(applicant),
             **_build_applicant_honorifics(applicant),

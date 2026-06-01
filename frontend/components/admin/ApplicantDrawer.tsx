@@ -87,6 +87,9 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [middle_name_native, setMiddleNameNative] = useState(applicant.middle_name_native || "");
   // Pack 50.7-D — ФИО в винительном падеже для Приказа Т-9 (найм)
   const [full_name_accusative, setFullNameAccusative] = useState((applicant as any).full_name_accusative || "");
+  // Pack 50.41 — родительный/творительный падеж ФИО для письма работодателя (найм)
+  const [full_name_genitive, setFullNameGenitive] = useState((applicant as any).full_name_genitive || "");
+  const [full_name_instrumental, setFullNameInstrumental] = useState((applicant as any).full_name_instrumental || "");
   const [last_name_latin, setLastNameLatin] = useState(applicant.last_name_latin || "");
   const [first_name_latin, setFirstNameLatin] = useState(applicant.first_name_latin || "");
   const [sex, setSex] = useState(applicant.sex || "");
@@ -497,6 +500,9 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         first_name_latin: first_name_latin.trim(),
         // Pack 50.7-D — винительный падеж для Т-9
         full_name_accusative: full_name_accusative.trim() || null,
+        // Pack 50.41 — родительный/творительный падеж ФИО (письмо работодателя, найм)
+        full_name_genitive: full_name_genitive.trim() || null,
+        full_name_instrumental: full_name_instrumental.trim() || null,
         sex,
         marital_status,
         nationality,
@@ -671,13 +677,34 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <Field label="Отчество (если есть)" value={middle_name_native} onChange={setMiddleNameNative}
               onBlur={() => setMiddleNameNative(toTitleCase(middle_name_native))}
               placeholder="Петрович — для русских клиентов" />
-            {/* Pack 50.7-D — винительный падеж ФИО для Приказа Т-9 (найм). Заполняется вручную. */}
-            <Field
-              label="ФИО в винительном падеже (для Т-9)"
-              value={full_name_accusative}
-              onChange={setFullNameAccusative}
-              placeholder="Например: Орлова Ивана Андреевича"
-            />
+            {/* Pack 50.41 — падежные формы ФИО показываем только для НАЙМА
+                (винительный для Т-9 + родительный/творительный для письма работодателя).
+                У самозанятых эти поля не нужны. */}
+            {application?.application_type === "EMPLOYMENT" && (
+              <>
+                {/* Pack 50.7-D — винительный падеж ФИО для Приказа Т-9. Заполняется вручную. */}
+                <Field
+                  label="ФИО в винительном падеже (для Т-9)"
+                  value={full_name_accusative}
+                  onChange={setFullNameAccusative}
+                  placeholder="Например: Орлова Ивана Андреевича"
+                />
+                {/* Pack 50.41 — родительный падеж: «размер вознаграждения кого?» */}
+                <Field
+                  label="ФИО в родительном падеже (размер вознаграждения кого?)"
+                  value={full_name_genitive}
+                  onChange={setFullNameGenitive}
+                  placeholder="Например: Орлова Ивана Андреевича"
+                />
+                {/* Pack 50.41 — творительный падеж: «трудовой договор с кем?» */}
+                <Field
+                  label="ФИО в творительном падеже (трудовой договор с кем?)"
+                  value={full_name_instrumental}
+                  onChange={setFullNameInstrumental}
+                  placeholder="Например: Орловым Иваном Андреевичем"
+                />
+              </>
+            )}
           </Section>
 
           <Section title="ФИО латиницей (как в паспорте)">
