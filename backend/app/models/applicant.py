@@ -68,6 +68,12 @@ class Applicant(TimestampMixin, table=True):
         max_length=128,
         description="ФИО в творительном падеже: 'Баклан Еленой Александровной' (трудовой договор с кем?).",
     )
+    # Pack 50.42 — дательный падеж ФИО (разрешает выполнение работ кому?)
+    full_name_dative: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="ФИО в дательном падеже: 'Баклан Елене Александровне' (разрешает выполнение работ кому?).",
+    )
 
     # === Demographics — все Optional для пошагового сохранения ===
     birth_date: Optional[date] = Field(default=None)
@@ -297,6 +303,7 @@ class ApplicantCreate(SQLModel):
     # Pack 50.41 — родительный + творительный падеж ФИО (найм)
     full_name_genitive: Optional[str] = None
     full_name_instrumental: Optional[str] = None
+    full_name_dative: Optional[str] = None  # Pack 50.42
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10
@@ -351,6 +358,7 @@ class ApplicantUpdate(SQLModel):
     # Pack 50.41 — родительный + творительный падеж ФИО (найм)
     full_name_genitive: Optional[str] = None
     full_name_instrumental: Optional[str] = None
+    full_name_dative: Optional[str] = None  # Pack 50.42
     birth_date: Optional[date] = None
     birth_place_latin: Optional[str] = None
     birth_country: Optional[CountryCode] = None  # Pack 18.10

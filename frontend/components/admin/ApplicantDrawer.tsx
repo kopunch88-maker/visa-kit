@@ -90,6 +90,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   // Pack 50.41 — родительный/творительный падеж ФИО для письма работодателя (найм)
   const [full_name_genitive, setFullNameGenitive] = useState((applicant as any).full_name_genitive || "");
   const [full_name_instrumental, setFullNameInstrumental] = useState((applicant as any).full_name_instrumental || "");
+  // Pack 50.42 — дательный падеж ФИО (разрешает выполнение работ кому?)
+  const [full_name_dative, setFullNameDative] = useState((applicant as any).full_name_dative || "");
   const [last_name_latin, setLastNameLatin] = useState(applicant.last_name_latin || "");
   const [first_name_latin, setFirstNameLatin] = useState(applicant.first_name_latin || "");
   const [sex, setSex] = useState(applicant.sex || "");
@@ -503,6 +505,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         // Pack 50.41 — родительный/творительный падеж ФИО (письмо работодателя, найм)
         full_name_genitive: full_name_genitive.trim() || null,
         full_name_instrumental: full_name_instrumental.trim() || null,
+        // Pack 50.42 — дательный падеж ФИО (письмо работодателя, найм)
+        full_name_dative: full_name_dative.trim() || null,
         sex,
         marital_status,
         nationality,
@@ -702,6 +706,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   value={full_name_instrumental}
                   onChange={setFullNameInstrumental}
                   placeholder="Например: Орловым Иваном Андреевичем"
+                />
+                {/* Pack 50.42 — дательный падеж: «разрешает выполнение работ кому?» */}
+                <Field
+                  label="ФИО в дательном падеже (разрешает выполнение работ кому?)"
+                  value={full_name_dative}
+                  onChange={setFullNameDative}
+                  placeholder="Например: Орлову Ивану Андреевичу"
                 />
               </>
             )}
