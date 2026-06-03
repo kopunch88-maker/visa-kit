@@ -16,6 +16,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlmodel import Session, select
+from sqlalchemy import text as _sa_text, bindparam as _sa_bindparam  # Pack 50.41
+from pydantic import BaseModel as _PydBaseModel  # Pack 50.41
 
 from app.db.session import get_session, engine
 from app.models import Application, Applicant
@@ -694,3 +696,66 @@ def admin_delete_client_document(
 
     log.info(f"Pack 42.1: client document {doc_id} (app={application_id}) deleted")
     return {"deleted": True, "doc_id": doc_id}
+
+
+# ============================================================================
+# Pack 50.41 — состояние «просмотрено» документов (сетки + сканы), общее на команду.
+# Таблица document_view_state(application_id, doc_key, seen_at, seen_by).
+# doc_key: для сетки = doc.id ("contract"...), для скана = "scan:{id}".
+# ============================================================================
+
+class _DocViewKeys(_PydBaseModel):
+    keys: list[str] = []
+
+
+@router.get("/{application_id}/doc-view-state")
+def get_doc_view_state(
+    application_id: int,
+    session: Session = Depends(get_session),
+):
+    """Список doc_key, помеченных как просмотренные для заявки."""
+    rows = session.execute(
+        _sa_text("SELECT doc_key FROM document_view_state WHERE application_id = :a"),
+        {"a": application_id},
+    ).all()
+    return {"seen": [r[0] for r in rows]}
+
+
+@router.post("/{application_id}/doc-view-state/seen")
+def mark_doc_view_seen(
+    application_id: int,
+    payload: _DocViewKeys,
+    session: Session = Depends(get_session),
+):
+    """Пометить документы просмотренными (open/download/ZIP). Идемпотентно."""
+    marked = 0
+    for k in payload.keys:
+        if not k:
+            continue
+        session.execute(
+            _sa_text(
+                "INSERT INTO document_view_state (application_id, doc_key) "
+                "VALUES (:a, :k) ON CONFLICT (application_id, doc_key) DO NOTHING"
+            ),
+            {"a": application_id, "k": k[:120]},
+        )
+        marked += 1
+    session.commit()
+    return {"ok": True, "marked": marked}
+
+
+@router.post("/{application_id}/doc-view-state/unseen")
+def mark_doc_view_unseen(
+    application_id: int,
+    payload: _DocViewKeys,
+    session: Session = Depends(get_session),
+):
+    """Вернуть документам статус «новый» (ручной toggle по точке)."""
+    keys = [k for k in payload.keys if k]
+    if keys:
+        stmt = _sa_text(
+            "DELETE FROM document_view_state WHERE application_id = :a AND doc_key IN :keys"
+        ).bindparams(_sa_bindparam("keys", expanding=True))
+        session.execute(stmt, {"a": application_id, "keys": keys})
+        session.commit()
+    return {"ok": True, "unmarked": len(keys)}

@@ -3733,3 +3733,33 @@ export async function generateSnils(): Promise<string> {
   const data = await res.json();
   return data.snils as string;
 }
+
+
+// ============================================================================
+// Pack 50.41 — состояние «просмотрено» документов (сетки + сканы клиента)
+// ============================================================================
+export async function getDocViewState(applicationId: number): Promise<string[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`doc-view-state ${res.status}`);
+  const data = await res.json();
+  return (data.seen as string[]) || [];
+}
+
+export async function markDocsSeen(applicationId: number, keys: string[]): Promise<void> {
+  if (!keys.length) return;
+  await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state/seen`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ keys }) },
+  );
+}
+
+export async function markDocsUnseen(applicationId: number, keys: string[]): Promise<void> {
+  if (!keys.length) return;
+  await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state/unseen`,
+    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ keys }) },
+  );
+}

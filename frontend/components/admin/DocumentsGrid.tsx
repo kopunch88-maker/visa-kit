@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";  // Pack 50.41
 import { Download, Loader2, Check, RefreshCw } from "lucide-react";
 import { API_BASE_URL, getToken } from "@/lib/api";
+import { getDocViewState, markDocsSeen, markDocsUnseen } from "@/lib/api"; // Pack 50.41
 // Pack 29.4
 import { ContractTemplatePickerModal } from "./ContractTemplatePickerModal";
 
@@ -72,6 +73,22 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     if (d.selfEmployedOnly && applicationType === "EMPLOYMENT") return false;
     return true;
   });
+  // Pack 50.41 — состояние «просмотрено» (общее на команду)
+  const [seenKeys, setSeenKeys] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    getDocViewState(applicationId).then((ks) => setSeenKeys(new Set(ks))).catch(() => {});
+  }, [applicationId]);
+  function _applySeen(keys: string[]) {
+    setSeenKeys((prev) => { const n = new Set(prev); keys.forEach((k) => n.add(k)); return n; });
+    markDocsSeen(applicationId, keys).catch(() => {});
+  }
+  function _applyUnseen(keys: string[]) {
+    setSeenKeys((prev) => { const n = new Set(prev); keys.forEach((k) => n.delete(k)); return n; });
+    markDocsUnseen(applicationId, keys).catch(() => {});
+  }
+  function toggleSeen(id: string) {
+    if (seenKeys.has(id)) _applyUnseen([id]); else _applySeen([id]);
+  }
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [zipDownloaded, setZipDownloaded] = useState(false);
   const [downloadingDocxZip, setDownloadingDocxZip] = useState(false);
@@ -136,6 +153,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
 
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `package_${applicationId}.zip`);
+      _applySeen(visibleDocs.map((d) => d.id)); // Pack 50.41
 
       setZipDownloaded(true);
       setTimeout(() => setZipDownloaded(false), 3000);
@@ -158,6 +176,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `docx_package_${applicationId}.zip`);
+      _applySeen(visibleDocs.filter((d) => d.kind === "docx").map((d) => d.id)); // Pack 50.41
       setDocxZipDownloaded(true);
       setTimeout(() => setDocxZipDownloaded(false), 3000);
     } catch (e) {
@@ -179,6 +198,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `pdf_forms_${applicationId}.zip`);
+      _applySeen(visibleDocs.filter((d) => d.kind === "pdf").map((d) => d.id)); // Pack 50.41
       setPdfZipDownloaded(true);
       setTimeout(() => setPdfZipDownloaded(false), 3000);
     } catch (e) {
@@ -205,6 +225,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
 
       const blob = await res.blob();
       _triggerBrowserDownload(blob, doc.filename);
+      _applySeen([doc.id]); // Pack 50.41
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -286,6 +307,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
             <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
               className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
               style={{ background: "var(--color-bg-secondary)" }}>
+              <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
               <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
                 style={{ background: "var(--color-bg-info)", color: "var(--color-text-info)" }}>DOC</div>
               <div className="min-w-0 flex-1">
@@ -320,6 +342,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
               <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
                 className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
                 style={{ background: "var(--color-bg-secondary)" }}>
+                <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
                 <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
                   style={{ background: "var(--color-bg-danger)", color: "var(--color-text-danger)" }}>PDF</div>
                 <div className="min-w-0 flex-1">
@@ -349,6 +372,21 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
         />
       )}
     </div>
+  );
+}
+
+function NewDot({ seen, onToggle }: { seen: boolean; onToggle: () => void }) {
+  return (
+    <span
+      role="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
+      title={seen ? "Просмотрен — клик вернёт «новый»" : "Новый — клик пометит просмотренным"}
+      className="flex-shrink-0 w-2.5 h-2.5 rounded-full cursor-pointer self-center"
+      style={{
+        background: seen ? "transparent" : "var(--color-accent)",
+        border: seen ? "1.5px solid var(--color-border-tertiary)" : "1.5px solid var(--color-accent)",
+      }}
+    />
   );
 }
 

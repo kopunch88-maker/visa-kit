@@ -17,6 +17,9 @@ import {
   // Pack 42.3 — для ImportPackageDialog (drag-and-drop)
   ApplicationResponse,
   listApplications,
+  getDocViewState,
+  markDocsSeen,
+  markDocsUnseen,  // Pack 50.41
 } from "@/lib/api";
 import { pdfToImagePages, PdfPagePreview } from "@/lib/pdfConverter";
 import { ImportPackageDialog } from "./ImportPackageDialog";  // Pack 42.3
@@ -57,6 +60,22 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 
 export function AdminClientDocuments({ applicationId }: Props) {
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
+  // Pack 50.41 — «просмотрено» для сканов (ключ scan:{id}), общее на команду
+  const [seenKeys, setSeenKeys] = useState<Set<string>>(new Set());
+  function _scanKey(id: number) { return `scan:${id}`; }
+  function markScanSeen(id: number) {
+    const k = _scanKey(id);
+    setSeenKeys((prev) => { const n = new Set(prev); n.add(k); return n; });
+    markDocsSeen(applicationId, [k]).catch(() => {});
+  }
+  function toggleScanSeen(id: number) {
+    const k = _scanKey(id);
+    if (seenKeys.has(k)) {
+      setSeenKeys((prev) => { const n = new Set(prev); n.delete(k); return n; });
+      markDocsUnseen(applicationId, [k]).catch(() => {});
+    } else { markScanSeen(id); }
+  }
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recognizingId, setRecognizingId] = useState<number | null>(null);
@@ -71,6 +90,7 @@ export function AdminClientDocuments({ applicationId }: Props) {
     try {
       const docs = await adminListClientDocuments(applicationId);
       setDocuments(docs);
+      try { setSeenKeys(new Set(await getDocViewState(applicationId))); } catch {} // Pack 50.41
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -263,6 +283,9 @@ export function AdminClientDocuments({ applicationId }: Props) {
               isRecognizing={recognizingId === doc.id}
               onRecognize={() => handleRecognizeClick(doc)}
               onDelete={() => handleDelete(doc.id)}
+              isNew={!seenKeys.has(`scan:${doc.id}`)}
+              onMarkSeen={() => markScanSeen(doc.id)}
+              onToggleSeen={() => toggleScanSeen(doc.id)}
             />
           ))}
         </div>
@@ -297,6 +320,21 @@ export function AdminClientDocuments({ applicationId }: Props) {
 }
 
 
+function NewScanDot({ seen, onToggle }: { seen: boolean; onToggle: () => void }) {
+  return (
+    <span
+      role="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
+      title={seen ? "Просмотрен — клик вернёт «новый»" : "Новый — клик пометит просмотренным"}
+      className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full cursor-pointer z-10"
+      style={{
+        background: seen ? "transparent" : "var(--color-accent)",
+        border: seen ? "1.5px solid var(--color-border-tertiary)" : "1.5px solid var(--color-accent)",
+      }}
+    />
+  );
+}
+
 function EmptyState() {
   return (
     <div
@@ -321,11 +359,17 @@ function DocumentCard({
   isRecognizing,
   onRecognize,
   onDelete,  // Pack 42.1
+  isNew,
+  onMarkSeen,
+  onToggleSeen,  // Pack 50.41
 }: {
   doc: ClientDocument;
   isRecognizing: boolean;
   onRecognize: () => void;
   onDelete: () => void;  // Pack 42.1
+  isNew: boolean;
+  onMarkSeen: () => void;
+  onToggleSeen: () => void;  // Pack 50.41
 }) {
   const statusColor = STATUS_COLORS[doc.status] || STATUS_COLORS.uploaded;
   const isImage = doc.content_type.startsWith("image/");
@@ -342,12 +386,13 @@ function DocumentCard({
 
   return (
     <div
-      className="rounded-md p-3 flex gap-3"
+      className="rounded-md p-3 flex gap-3 relative"
       style={{
-        border: "0.5px solid var(--color-border-tertiary)",
+        border: isNew ? "1.5px solid var(--color-accent)" : "0.5px solid var(--color-border-tertiary)",
         background: "var(--color-bg-primary)",
       }}
     >
+      <NewScanDot seen={!isNew} onToggle={onToggleSeen} />
       {/* Превью */}
       <div
         className="w-24 h-24 flex-shrink-0 rounded-md overflow-hidden flex items-center justify-center"
@@ -364,6 +409,7 @@ function DocumentCard({
             rel="noopener noreferrer"
             className="w-full h-full block"
             title="Открыть в полном размере"
+            onClick={onMarkSeen}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -476,6 +522,7 @@ function DocumentCard({
               target="_blank"
               rel="noopener noreferrer"
               download={doc.file_name}
+              onClick={onMarkSeen}
               className="text-xs px-2.5 py-1 rounded-md border text-secondary hover:bg-secondary transition-colors flex items-center gap-1"
               style={{
                 borderColor: "var(--color-border-tertiary)",
@@ -499,6 +546,7 @@ function DocumentCard({
                 borderWidth: 0.5,
               }}
               title="Оригинальный PDF файл (для отправки в финальную инстанцию)"
+              onClick={onMarkSeen}
             >
               <FileText className="w-3 h-3" />
               Скачать оригинал PDF
