@@ -306,7 +306,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
           return (
             <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
               className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
-              style={{ background: "var(--color-bg-secondary)" }}>
+              style={{ background: "var(--color-bg-secondary)", border: !seenKeys.has(doc.id) ? "1.5px solid var(--color-accent)" : "1.5px solid transparent" }}>
               <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
               <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
                 style={{ background: "var(--color-bg-info)", color: "var(--color-text-info)" }}>DOC</div>
@@ -341,7 +341,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
             return (
               <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
                 className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
-                style={{ background: "var(--color-bg-secondary)" }}>
+                style={{ background: "var(--color-bg-secondary)", border: !seenKeys.has(doc.id) ? "1.5px solid var(--color-accent)" : "1.5px solid transparent" }}>
                 <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
                 <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
                   style={{ background: "var(--color-bg-danger)", color: "var(--color-text-danger)" }}>PDF</div>
