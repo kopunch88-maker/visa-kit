@@ -64,11 +64,36 @@ _HELV_WIDTHS = {
 _FONT_SIZE = 9.0
 _Y_BASELINE = 3.117  # pt над низом поля
 _X_MARGIN = 2.0      # pt от левого/правого края поля
+_MIN_FONT_SIZE = 5.0  # Pack 51.0: минимальный кегль при auto-shrink длинных значений
 
 
 def _text_width(text: str, font_size: float = _FONT_SIZE) -> float:
     """Ширина строки в Helvetica указанного размера (pt)."""
     return sum(_HELV_WIDTHS.get(ch, 556) for ch in text) * font_size / 1000.0
+
+
+def _fit_font_size(
+    text: str,
+    field_width: float,
+    max_size: float = _FONT_SIZE,
+    min_size: float = _MIN_FONT_SIZE,
+    step: float = 0.25,
+) -> float:
+    """
+    Pack 51.0: подбирает кегль Helvetica так, чтобы строка влезла в
+    field_width (минус _X_MARGIN с обеих сторон). Стартует с max_size (9pt)
+    и ужимает шагами step до min_size. Если строка влезает на max_size —
+    возвращает max_size без изменений (no-op для коротких значений, рендер
+    байт-в-байт как раньше). Нужно, чтобы длинные значения (NRC в MI-T,
+    ~127pt на 9pt) не обрезались BBox'ом Form XObject.
+    """
+    avail = field_width - 2 * _X_MARGIN
+    if avail <= 0:
+        return max_size
+    size = max_size
+    while size > min_size and _text_width(text, size) > avail:
+        size -= step
+    return round(size, 2)
 
 
 def _pdf_string_escape(s: str) -> str:
@@ -83,7 +108,8 @@ def _build_text_appearance_content(
     Content stream для /AP /N текстового виджета.
     alignment: 0=left, 1=center, 2=right (значение /Q из PDF поля).
     """
-    tw = _text_width(value, _FONT_SIZE)
+    font_size = _fit_font_size(value, field_width)  # Pack 51.0: auto-shrink длинных значений
+    tw = _text_width(value, font_size)
     if alignment == 1:
         x = max(_X_MARGIN, (field_width - tw) / 2)
     elif alignment == 2:
@@ -99,7 +125,7 @@ def _build_text_appearance_content(
         f"BT\n"
         f"0 g\n"
         f"{x:.4f} {_Y_BASELINE:.4f} Td\n"
-        f"/Helv {_FONT_SIZE} Tf\n"
+        f"/Helv {font_size} Tf\n"
         f"({safe}) Tj\n"
         f"ET\n"
         f"Q\n"
