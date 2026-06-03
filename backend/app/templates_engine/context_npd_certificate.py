@@ -40,6 +40,7 @@ from sqlmodel import Session, select
 
 from app.models import Applicant, Application
 from app.models.ifns_mfc import IfnsOffice, MfcOffice
+from ._doc_numbering import compute_doc_number  # Pack 50.40
 
 log = logging.getLogger(__name__)
 
@@ -445,10 +446,13 @@ def build_npd_certificate_context(
         issued_hour, issued_minute,
     )
 
-    # ---- 3. Номер справки ----
-    base = 106_800_000
-    cert_number = base + (applicant_id or 0) * 7 + (issued_date.toordinal() % 100)
-    cert_number = cert_number % 1_000_000_000
+    # ---- 3. Номер справки ----  # Pack 50.40: ~+500 за раб.день, монотонно по issued_date
+    cert_number = compute_doc_number(
+        issued_date,
+        step=500,
+        base=106_800_000,
+        seed=f"npd:{applicant_id or 0}:{issued_date.isoformat()}",
+    )
 
     # ---- 4. Код документа удостоверения личности ----
     nat = (applicant.nationality or "").upper()

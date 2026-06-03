@@ -29,6 +29,7 @@ from app.models import Application
 from .context_npd_certificate import (
     build_npd_certificate_context,
 )
+from ._doc_numbering import compute_doc_number  # Pack 50.40
 
 log = logging.getLogger(__name__)
 
@@ -86,13 +87,14 @@ def _full_to_short(full_name: str) -> str:
     return f"{last} {first_initial}."
 
 
-def _generate_apostille_number(applicant_id: int) -> str:
-    """
-    Pack 18.9: '77-{NNNNN}/26' где NNNNN — стабильное число от applicant_id.
-    Диапазон NNNNN: 03000-04500 (приближен к примеру 77-03404/26).
-    """
-    rng = Random(applicant_id or 0)
-    n = rng.randint(3000, 4500)
+def _generate_apostille_number(applicant_id: int, apostille_date: date) -> str:
+    # Pack 50.40: NNNNN растёт ~+350 за раб.день, монотонно по дате апостиля.
+    n = compute_doc_number(
+        apostille_date,
+        step=350,
+        base=3000,
+        seed=f"apo:{applicant_id or 0}:{apostille_date.isoformat()}",
+    )
     return f"77-{n:05d}/26"
 
 
@@ -186,7 +188,7 @@ def build_apostille_context(
     apostille_date = _add_business_days(issued_date, business_days)
 
     # 4. Номер
-    apostille_number = _generate_apostille_number(applicant_id)
+    apostille_number = _generate_apostille_number(applicant_id, apostille_date)
 
     # 5. aposId
     qr_apos_id = _generate_qr_apos_id(applicant_id)

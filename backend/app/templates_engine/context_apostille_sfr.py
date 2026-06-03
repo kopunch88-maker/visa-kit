@@ -21,6 +21,7 @@ from typing import Optional
 from sqlmodel import Session
 
 from app.models import Application, Applicant
+from ._doc_numbering import compute_doc_number  # Pack 50.40
 
 log = logging.getLogger(__name__)
 
@@ -59,9 +60,14 @@ def _add_business_days(start: date, days: int) -> date:
     return current
 
 
-def _generate_apostille_number(applicant_id: int) -> str:
-    rng = Random(applicant_id or 0)
-    n = rng.randint(3000, 4500)
+def _generate_apostille_number(applicant_id: int, apostille_date: date) -> str:
+    # Pack 50.40: NNNNN растёт ~+350 за раб.день, монотонно по дате апостиля.
+    n = compute_doc_number(
+        apostille_date,
+        step=350,
+        base=3000,
+        seed=f"sfr:{applicant_id or 0}:{apostille_date.isoformat()}",
+    )
     return f"77-{n:05d}/26"
 
 
@@ -128,7 +134,7 @@ def build_apostille_sfr_context(
     apostille_date = _add_business_days(anchor, business_days)
 
     # 3. Номер + aposId (те же генераторы)
-    apostille_number = _generate_apostille_number(applicant_id)
+    apostille_number = _generate_apostille_number(applicant_id, apostille_date)
     qr_apos_id = _generate_qr_apos_id(applicant_id)
 
     # 4. Подписант апостиля (Байрамов / из applicant)
