@@ -1148,66 +1148,71 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 </p>
               </div>
 
-              {/* Pack 51 — append-режим: дополнить выписку за суб-период */}
-              {hasOverride && (
-                <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--color-border-tertiary)" }}>
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={appendEnabled}
-                      onChange={(e) => setAppendEnabled(e.target.checked)}
-                      disabled={bankRegenerating}
-                    />
-                    <span>📅 Дополнить период (не трогая существующие транзакции)</span>
-                  </label>
+              {/* Pack 51-fix1: показываем всегда, даже когда override ещё нет.
+                  Бэк сам зафиксирует дефолтную выписку как override перед append. */}
+              <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--color-border-tertiary)" }}>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={appendEnabled}
+                    onChange={(e) => setAppendEnabled(e.target.checked)}
+                    disabled={bankRegenerating}
+                  />
+                  <span>📅 Дополнить период (не трогая существующие транзакции)</span>
+                </label>
 
-                  {appendEnabled && (
-                    <div className="mt-3 space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <Field
-                          label="С"
-                          value={appendFrom}
-                          onChange={setAppendFrom}
-                          type="date"
-                        />
-                        <Field
-                          label="По"
-                          value={appendTo}
-                          onChange={setAppendTo}
-                          type="date"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleAppendBankStatement}
-                        disabled={bankRegenerating || !appendFrom || !appendTo}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
-                        style={{
-                          background: "var(--color-accent)",
-                          color: "white",
-                        }}
-                      >
-                        {bankRegenerating ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Дополняем...
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-4 h-4" />
-                            Дополнить выписку
-                          </>
-                        )}
-                      </button>
-                      <p className="text-[11px] text-tertiary">
-                        Сгенерирует транзакции только для указанного периода и добавит к существующим.
-                        Если период раньше текущего — пересчитает начальный остаток так, чтобы закрытие
-                        на старом конце не сдвинулось.
-                      </p>
+                {appendEnabled && (
+                  <div className="mt-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field
+                        label="С"
+                        value={appendFrom}
+                        onChange={setAppendFrom}
+                        type="date"
+                      />
+                      <Field
+                        label="По"
+                        value={appendTo}
+                        onChange={setAppendTo}
+                        type="date"
+                      />
                     </div>
-                  )}
-                </div>
-              )}
+                    <button
+                      type="button"
+                      onClick={handleAppendBankStatement}
+                      disabled={bankRegenerating || !appendFrom || !appendTo}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
+                      style={{
+                        background: "var(--color-accent)",
+                        color: "white",
+                      }}
+                    >
+                      {bankRegenerating ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Дополняем...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4" />
+                          Дополнить выписку
+                        </>
+                      )}
+                    </button>
+                    <p className="text-[11px] text-tertiary">
+                      Сгенерирует транзакции только для указанного периода и добавит к существующим.
+                      Если период раньше текущего — пересчитает начальный остаток так, чтобы закрытие
+                      на старом конце не сдвинулось.
+                      {!hasOverride && (
+                        <>
+                          {" "}<strong>Текущая дефолтная выписка будет зафиксирована</strong> —
+                          после этого она перестанет авто-обновляться при изменении настроек.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
+              </div>
             </Section>
           )}
 

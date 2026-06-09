@@ -412,12 +412,24 @@ def append_bank_transactions(
     if payload.period_from > payload.period_to:
         raise HTTPException(422, "period_from must be <= period_to")
 
+    # Pack 51-fix1: если override ещё не существует — генерим базовую выписку
+    # с текущими настройками и сохраняем как override. Это фиксирует
+    # «дефолтное» состояние (что показывалось бы при on-the-fly рендере),
+    # чтобы было что дополнять. На UI это поведение отражено хинтом
+    # «Текущая дефолтная выписка будет зафиксирована».
     if not application.bank_transactions_override:
-        raise HTTPException(
-            422,
-            "Нельзя дополнить: выписка ещё не сгенерирована. "
-            "Сначала нажмите «Сгенерировать выписку»."
-        )
+        base_data = _generate_for_app(application, session)
+        if base_data is None:
+            raise HTTPException(
+                422,
+                "Cannot append: missing required application fields "
+                "(salary_rub, submission_date, contract_number, "
+                "contract_sign_date, company_id)"
+            )
+        application.bank_transactions_override = serialize_for_storage(base_data)
+        session.add(application)
+        session.flush()
+        session.refresh(application)
 
     data = _append_for_app(application, session, payload.period_from, payload.period_to)
     if data is None:
