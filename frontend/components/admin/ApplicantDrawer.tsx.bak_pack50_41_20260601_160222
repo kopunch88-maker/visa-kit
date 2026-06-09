@@ -29,7 +29,6 @@ import {
   ApplicationResponse,
   patchApplication,
   regenerateBankTransactions,
-  appendBankTransactions, // Pack 51
   // Pack 34.0 — единый список стран (~195) для Гражданство/Страна рождения/Страна жительства
   COUNTRY_OPTIONS as ALL_COUNTRIES,
 } from "@/lib/api";
@@ -88,11 +87,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [middle_name_native, setMiddleNameNative] = useState(applicant.middle_name_native || "");
   // Pack 50.7-D — ФИО в винительном падеже для Приказа Т-9 (найм)
   const [full_name_accusative, setFullNameAccusative] = useState((applicant as any).full_name_accusative || "");
-  // Pack 50.41 — родительный/творительный падеж ФИО для письма работодателя (найм)
-  const [full_name_genitive, setFullNameGenitive] = useState((applicant as any).full_name_genitive || "");
-  const [full_name_instrumental, setFullNameInstrumental] = useState((applicant as any).full_name_instrumental || "");
-  // Pack 50.42 — дательный падеж ФИО (разрешает выполнение работ кому?)
-  const [full_name_dative, setFullNameDative] = useState((applicant as any).full_name_dative || "");
   const [last_name_latin, setLastNameLatin] = useState(applicant.last_name_latin || "");
   const [first_name_latin, setFirstNameLatin] = useState(applicant.first_name_latin || "");
   const [sex, setSex] = useState(applicant.sex || "");
@@ -176,11 +170,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   );
   const [bankRegenerating, setBankRegenerating] = useState(false);
   const hasOverride = !!(application as any)?.bank_transactions_override;
-
-  // Pack 51 — append-режим: дополнить выписку за указанный суб-период
-  const [appendEnabled, setAppendEnabled] = useState(false);
-  const [appendFrom, setAppendFrom] = useState("");
-  const [appendTo, setAppendTo] = useState("");
 
   // Pack 18.9: подписант апостиля (опционально, если пусто — backend подставит дефолт Байрамова)
   const [apostille_signer_short, setApostilleSignerShort] = useState(
@@ -471,32 +460,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     }
   }
 
-  // Pack 51 — дополнить выписку за период [appendFrom, appendTo] без перезаписи
-  async function handleAppendBankStatement() {
-    if (!application) return;
-    if (!appendFrom || !appendTo) {
-      setError("Укажите обе даты периода (С и По)");
-      return;
-    }
-    if (appendFrom > appendTo) {
-      setError("Дата 'С' должна быть раньше или равна дате 'По'");
-      return;
-    }
-    setBankRegenerating(true);
-    setError(null);
-    try {
-      await appendBankTransactions(application.id, appendFrom, appendTo);
-      setAppendEnabled(false);
-      setAppendFrom("");
-      setAppendTo("");
-      if (onApplicationSaved) onApplicationSaved();
-    } catch (e) {
-      setError(`Не удалось дополнить выписку: ${(e as Error).message}`);
-    } finally {
-      setBankRegenerating(false);
-    }
-  }
-
   // Pack 35.3 — кнопка генерации рядом с «Кем выдан (рус., для договора)»
   
 
@@ -534,11 +497,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         first_name_latin: first_name_latin.trim(),
         // Pack 50.7-D — винительный падеж для Т-9
         full_name_accusative: full_name_accusative.trim() || null,
-        // Pack 50.41 — родительный/творительный падеж ФИО (письмо работодателя, найм)
-        full_name_genitive: full_name_genitive.trim() || null,
-        full_name_instrumental: full_name_instrumental.trim() || null,
-        // Pack 50.42 — дательный падеж ФИО (письмо работодателя, найм)
-        full_name_dative: full_name_dative.trim() || null,
         sex,
         marital_status,
         nationality,
@@ -713,41 +671,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
             <Field label="Отчество (если есть)" value={middle_name_native} onChange={setMiddleNameNative}
               onBlur={() => setMiddleNameNative(toTitleCase(middle_name_native))}
               placeholder="Петрович — для русских клиентов" />
-            {/* Pack 50.41 — падежные формы ФИО показываем только для НАЙМА
-                (винительный для Т-9 + родительный/творительный для письма работодателя).
-                У самозанятых эти поля не нужны. */}
-            {application?.application_type === "EMPLOYMENT" && (
-              <>
-                {/* Pack 50.7-D — винительный падеж ФИО для Приказа Т-9. Заполняется вручную. */}
-                <Field
-                  label="ФИО в винительном падеже (для Т-9)"
-                  value={full_name_accusative}
-                  onChange={setFullNameAccusative}
-                  placeholder="Например: Орлова Ивана Андреевича"
-                />
-                {/* Pack 50.41 — родительный падеж: «размер вознаграждения кого?» */}
-                <Field
-                  label="ФИО в родительном падеже (размер вознаграждения кого?)"
-                  value={full_name_genitive}
-                  onChange={setFullNameGenitive}
-                  placeholder="Например: Орлова Ивана Андреевича"
-                />
-                {/* Pack 50.41 — творительный падеж: «трудовой договор с кем?» */}
-                <Field
-                  label="ФИО в творительном падеже (трудовой договор с кем?)"
-                  value={full_name_instrumental}
-                  onChange={setFullNameInstrumental}
-                  placeholder="Например: Орловым Иваном Андреевичем"
-                />
-                {/* Pack 50.42 — дательный падеж: «разрешает выполнение работ кому?» */}
-                <Field
-                  label="ФИО в дательном падеже (разрешает выполнение работ кому?)"
-                  value={full_name_dative}
-                  onChange={setFullNameDative}
-                  placeholder="Например: Орлову Ивану Андреевичу"
-                />
-              </>
-            )}
+            {/* Pack 50.7-D — винительный падеж ФИО для Приказа Т-9 (найм). Заполняется вручную. */}
+            <Field
+              label="ФИО в винительном падеже (для Т-9)"
+              value={full_name_accusative}
+              onChange={setFullNameAccusative}
+              placeholder="Например: Орлова Ивана Андреевича"
+            />
           </Section>
 
           <Section title="ФИО латиницей (как в паспорте)">
@@ -1120,16 +1050,15 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 <button
                   type="button"
                   onClick={handleRegenerateBankStatement}
-                  disabled={bankRegenerating || appendEnabled}
+                  disabled={bankRegenerating}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
                   style={{
                     background: "var(--color-bg-secondary)",
                     border: "1px solid var(--color-border-tertiary)",
                     color: "var(--color-text-primary)",
-                    opacity: appendEnabled ? 0.5 : 1,
                   }}
                 >
-                  {bankRegenerating && !appendEnabled ? (
+                  {bankRegenerating ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
                       Перегенерируем...
@@ -1147,67 +1076,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                     : "Создаст черновик транзакций по текущим настройкам"}
                 </p>
               </div>
-
-              {/* Pack 51 — append-режим: дополнить выписку за суб-период */}
-              {hasOverride && (
-                <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--color-border-tertiary)" }}>
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={appendEnabled}
-                      onChange={(e) => setAppendEnabled(e.target.checked)}
-                      disabled={bankRegenerating}
-                    />
-                    <span>📅 Дополнить период (не трогая существующие транзакции)</span>
-                  </label>
-
-                  {appendEnabled && (
-                    <div className="mt-3 space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <Field
-                          label="С"
-                          value={appendFrom}
-                          onChange={setAppendFrom}
-                          type="date"
-                        />
-                        <Field
-                          label="По"
-                          value={appendTo}
-                          onChange={setAppendTo}
-                          type="date"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleAppendBankStatement}
-                        disabled={bankRegenerating || !appendFrom || !appendTo}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
-                        style={{
-                          background: "var(--color-accent)",
-                          color: "white",
-                        }}
-                      >
-                        {bankRegenerating ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Дополняем...
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-4 h-4" />
-                            Дополнить выписку
-                          </>
-                        )}
-                      </button>
-                      <p className="text-[11px] text-tertiary">
-                        Сгенерирует транзакции только для указанного периода и добавит к существующим.
-                        Если период раньше текущего — пересчитает начальный остаток так, чтобы закрытие
-                        на старом конце не сдвинулось.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
             </Section>
           )}
 

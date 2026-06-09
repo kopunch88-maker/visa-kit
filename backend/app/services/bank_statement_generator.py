@@ -298,6 +298,11 @@ def generate_default_transactions(
     
     statement_date_override: Optional[date] = None,
     is_employment: bool = False,  # Pack 50.30
+    # Pack 51 — append-режим: явный период перекрывает statement_date-расчёт.
+    # Используется через POST /bank-transactions/append для до-генерации
+    # суб-периода поверх существующего bank_transactions_override.
+    period_start_override: Optional[date] = None,
+    period_end_override: Optional[date] = None,
 ) -> dict:
     """
     Генерирует черновик списка транзакций для выписки.
@@ -339,8 +344,14 @@ def generate_default_transactions(
 
     # Pack 25.11: period_end = statement_date - 1 день (как реально делают банки).
     # Пример: дата формирования 06.05 → период 06.02..05.05 (3 мес минус 1 день).
-    period_end = statement_date - timedelta(days=1)
-    period_start = (statement_date - relativedelta(months=period_months))
+    # Pack 51: если задан явный период [start, end] — используем его вместо
+    # statement_date-расчёта. Нужно для до-генерации суб-периода (append-режим).
+    if period_start_override is not None and period_end_override is not None:
+        period_start = period_start_override
+        period_end = period_end_override
+    else:
+        period_end = statement_date - timedelta(days=1)
+        period_start = (statement_date - relativedelta(months=period_months))
 
     # Налог и сумма перевода KWIKPAY (с копейками)
     tax_amount = (Decimal(salary_rub) * npd_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -532,7 +543,12 @@ def generate_default_transactions(
     self_short_name = _short_name_for_sbp(applicant_full_name_ru)
 
 
-    sbp_count_total = random.randint(3, 8)  # 3-8 за весь период (~1-3 в месяц)
+    # Pack 51: scale на длину периода (baseline 90 дней = 3-8). Для коротких
+    # append-периодов это даёт пропорционально меньше СБП-переводов.
+    _sbp_scale = max(1, (period_end - period_start).days + 1) / 90.0
+    _sbp_min = max(0, round(3 * _sbp_scale))
+    _sbp_max = max(_sbp_min, round(8 * _sbp_scale))
+    sbp_count_total = random.randint(_sbp_min, _sbp_max) if _sbp_max > 0 else 0
     for _ in range(sbp_count_total):
         # Случайная дата внутри периода
         delta_days = random.randint(0, (period_end - period_start).days)
@@ -557,7 +573,11 @@ def generate_default_transactions(
         })
 
     # === Pack 25.8: онлайн-подписки и оплаты сервисов ===
-    subs_count_total = random.randint(10, 20)  # за весь период
+    # Pack 51: scale на длину периода (baseline 90 дней = 10-20).
+    _subs_scale = max(1, (period_end - period_start).days + 1) / 90.0
+    _subs_min = max(0, round(10 * _subs_scale))
+    _subs_max = max(_subs_min, round(20 * _subs_scale))
+    subs_count_total = random.randint(_subs_min, _subs_max) if _subs_max > 0 else 0
     for _ in range(subs_count_total):
         delta_days = random.randint(0, (period_end - period_start).days)
         sub_date = period_start + timedelta(days=delta_days)

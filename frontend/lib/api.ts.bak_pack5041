@@ -2515,31 +2515,6 @@ export async function regenerateBankTransactions(
 }
 
 /**
- * Pack 51 — дополнить выписку транзакциями за [periodFrom, periodTo]
- * БЕЗ перезаписи существующих. Backend пересчитает opening_balance чтобы
- * closing на старом period_end не сдвинулся (точка непрерывности баланса).
- */
-export async function appendBankTransactions(
-  appId: number,
-  periodFrom: string,
-  periodTo: string
-): Promise<BankStatementResponse> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${appId}/bank-transactions/append`,
-    {
-      method: "POST",
-      headers: jsonHeaders(),
-      body: JSON.stringify({ period_from: periodFrom, period_to: periodTo }),
-    }
-  );
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to append bank transactions: ${res.status}`);
-  }
-  return res.json();
-}
-
-/**
  * Получить текущие банковские транзакции заявки (если override установлен).
  * Возвращает null если override пустой.
  */
@@ -3757,34 +3732,4 @@ export async function generateSnils(): Promise<string> {
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.snils as string;
-}
-
-
-// ============================================================================
-// Pack 50.41 — состояние «просмотрено» документов (сетки + сканы клиента)
-// ============================================================================
-export async function getDocViewState(applicationId: number): Promise<string[]> {
-  const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state`,
-    { headers: authHeaders() },
-  );
-  if (!res.ok) throw new Error(`doc-view-state ${res.status}`);
-  const data = await res.json();
-  return (data.seen as string[]) || [];
-}
-
-export async function markDocsSeen(applicationId: number, keys: string[]): Promise<void> {
-  if (!keys.length) return;
-  await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state/seen`,
-    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ keys }) },
-  );
-}
-
-export async function markDocsUnseen(applicationId: number, keys: string[]): Promise<void> {
-  if (!keys.length) return;
-  await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state/unseen`,
-    { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ keys }) },
-  );
 }
