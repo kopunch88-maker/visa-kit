@@ -130,29 +130,33 @@ def _normalize_extracted_fields(data: dict) -> dict:
     return cleaned
 
 
-async def extract_company_from_docx(docx_bytes: bytes) -> dict:
+# Pack 26.x — подсказка LLM для двуязычных выписок (испанский перевод + русский оригинал).
+_BILINGUAL_HINT = (
+    "ВАЖНО: документ может содержать ИСПАНСКИЙ перевод и РУССКИЙ оригинал "
+    "выписки ЕГРЮЛ в одном файле (часто сначала идёт испанский перевод, затем "
+    "русский оригинал). Все поля — особенно ФИО директора во всех падежах "
+    "(склонения) и юридический адрес — бери ИЗ РУССКОЙ части документа. "
+    "Испанский текст используй только если соответствующего поля нет в русской "
+    "части. Числовые реквизиты (ИНН, КПП, ОГРН, расчётный счёт, корр. счёт, БИК) "
+    "одинаковы в обеих частях — бери как есть."
+)
+
+
+async def _extract_fields_from_text(text: str, *, bilingual_hint: bool = False) -> dict:
     """
-    Главная функция Pack 26.0.
+    Pack 26.x — общий шаг «plaintext → поля компании через LLM».
 
-    Args:
-        docx_bytes: содержимое .docx файла
-
-    Returns:
-        dict с полями совместимыми с CompanyCreate (плюс доп. charter_capital в notes)
-
-    Raises:
-        CompanyExtractError при любой проблеме (плохой файл, плохой ответ LLM, и т.д.)
+    Используется и DOCX-путём (Pack 26.0), и PDF-путём (Pack 26.x).
+    bilingual_hint=True добавляет инструкцию про испанский+русский в одном файле.
     """
-    text = _read_docx_to_text(docx_bytes)
-
-    log.info(f"Pack 26.0: extracted {len(text)} chars from DOCX, calling LLM...")
-
     client = get_llm_client()
+
+    hint = f"\n\n{_BILINGUAL_HINT}" if bilingual_hint else ""
 
     try:
         response_text = await client.complete(
             system="You are a precise data extraction assistant. Always return strict JSON.",
-            user=f"{COMPANY_REQUISITES_PROMPT}\n\n--- DOCUMENT TEXT ---\n{text}\n--- END ---",
+            user=f"{COMPANY_REQUISITES_PROMPT}{hint}\n\n--- DOCUMENT TEXT ---\n{text}\n--- END ---",
             max_tokens=2048,
             temperature=0.0,
         )
@@ -176,8 +180,92 @@ async def extract_company_from_docx(docx_bytes: bytes) -> dict:
     normalized = _normalize_extracted_fields(parsed)
 
     log.info(
-        f"Pack 26.0: extracted {sum(1 for v in normalized.values() if v is not None)}"
+        f"Pack 26.x: extracted {sum(1 for v in normalized.values() if v is not None)}"
         f"/{len(normalized)} fields"
     )
 
     return normalized
+
+
+async def _read_pdf_to_text(pdf_bytes: bytes) -> str:
+    """
+    Pack 26.x — PDF → plaintext через гибридный экстрактор Pack 39.0-C.
+
+    Текстовый PDF → pypdf (бесплатно). Скан-PDF → Vision (claude-sonnet-4-5).
+    Импорт ленивый: модуль тянет pypdfium2 и не нужен на DOCX-пути.
+    """
+    from app.services.final_submission.extractor import extract_document_text
+
+    result = await extract_document_text(pdf_bytes, "company.pdf", "application/pdf")
+
+    if result.method == "failed" or not result.text:
+        raise CompanyExtractError(
+            f"Не удалось прочитать PDF: {result.error or 'пустой текст'}"
+        )
+
+    text = result.text.strip()
+    if len(text) < 30:
+        raise CompanyExtractError(
+            f"PDF content too short ({len(text)} chars) — likely not a requisites document"
+        )
+
+    log.info(
+        f"Pack 26.x: PDF extracted {len(text)} chars via '{result.method}' "
+        f"(pages={result.page_count}, cost=${result.cost_usd})"
+    )
+    return text
+
+
+async def extract_company_from_docx(docx_bytes: bytes) -> dict:
+    """
+    Pack 26.0 — извлечение реквизитов компании из DOCX.
+
+    Args:
+        docx_bytes: содержимое .docx файла
+
+    Returns:
+        dict с полями совместимыми с CompanyCreate (плюс доп. charter_capital в notes)
+
+    Raises:
+        CompanyExtractError при любой проблеме (плохой файл, плохой ответ LLM, и т.д.)
+    """
+    text = _read_docx_to_text(docx_bytes)
+    log.info(f"Pack 26.0: extracted {len(text)} chars from DOCX, calling LLM...")
+    return await _extract_fields_from_text(text, bilingual_hint=False)
+
+
+async def extract_company_from_file(
+    content: bytes,
+    filename: str,
+    mime_type: str = "",
+) -> dict:
+    """
+    Pack 26.x — единая точка входа: DOCX или PDF.
+
+    .docx → python-docx (как Pack 26.0).
+    .pdf  → гибрид pypdf/Vision + двуязычная подсказка (исп. перевод + рус. оригинал).
+
+    Args:
+        content: байты файла
+        filename: оригинальное имя (для определения расширения)
+        mime_type: content-type из UploadFile (fallback к расширению)
+
+    Returns:
+        dict с полями совместимыми с CompanyCreate
+
+    Raises:
+        CompanyExtractError при неподдерживаемом типе или проблеме извлечения
+    """
+    name = (filename or "").lower()
+
+    if name.endswith(".docx") or "wordprocessingml" in (mime_type or ""):
+        return await extract_company_from_docx(content)
+
+    if name.endswith(".pdf") or (mime_type or "") == "application/pdf":
+        text = await _read_pdf_to_text(content)
+        log.info(f"Pack 26.x: extracted {len(text)} chars from PDF, calling LLM...")
+        return await _extract_fields_from_text(text, bilingual_hint=True)
+
+    raise CompanyExtractError(
+        f"Неподдерживаемый тип файла: {filename}. Нужен .docx или .pdf"
+    )

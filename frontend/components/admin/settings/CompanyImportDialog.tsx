@@ -55,8 +55,9 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
   async function handleFile(file: File) {
     setError(null);
     setConflict(null);
-    if (!file.name.toLowerCase().endsWith(".docx")) {
-      setError(`Нужен .docx файл. Получено: ${file.name}`);
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith(".docx") && !lower.endsWith(".pdf")) {
+      setError(`Нужен .docx или .pdf файл. Получено: ${file.name}`);
       return;
     }
     setExtracting(true);
@@ -185,7 +186,7 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
 
           <div className="p-5 space-y-4">
             <p className="text-xs text-tertiary">
-              Перетащите DOCX-файл с реквизитами компании. Система распознает
+              Перетащите DOCX или PDF-файл с реквизитами компании. Система распознает
               ИНН, КПП, ОГРН, юр. адрес, банк, директора (включая склонения) и
               откроет редактор компании с заполненными полями.
             </p>
@@ -234,10 +235,10 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
                 <div className="flex flex-col items-center gap-2">
                   <Upload className="w-8 h-8 text-tertiary" />
                   <span className="text-sm text-secondary font-medium">
-                    Перетащите .docx или нажмите для выбора
+                    Перетащите .docx / .pdf или нажмите для выбора
                   </span>
                   <span className="text-xs text-tertiary">
-                    Поддерживается только .docx (до 5 МБ)
+                    Поддерживается .docx и .pdf (до 5 МБ)
                   </span>
                 </div>
               )}
@@ -246,7 +247,7 @@ export function CompanyImportDialog({ onClose, onSelect }: Props) {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".docx"
+              accept=".docx,.pdf"
               className="hidden"
               onChange={handleFileInput}
               disabled={extracting}

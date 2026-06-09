@@ -34,9 +34,10 @@ from app.templates_engine.employment_contracts_registry import (
     get_available_employment_template_options,
     is_employment_template_slug_valid,
 )
-# Pack 26.0 — импорт реквизитов из DOCX
+# Pack 26.0 — импорт реквизитов из DOCX; Pack 26.x — + PDF
 from app.services.company_extractor import (
     extract_company_from_docx,
+    extract_company_from_file,
     CompanyExtractError,
 )
 from .dependencies import require_manager  # JWT + role check
@@ -264,13 +265,14 @@ async def extract_company_from_document(
     - Если existing_company_id null → открывает CompanyDrawer (создание) с prefilled полями
     - Если есть → диалог «Обновить / Создать новую / Отмена»
 
-    Поддерживается ТОЛЬКО .docx. PDF/JPG в следующих пакетах.
+    Поддерживается .docx и .pdf (двуязычные выписки исп.+рус.). JPG — в след. пакетах.
     """
     filename = file.filename or "unknown"
-    if not filename.lower().endswith(".docx"):
+    name_lower = filename.lower()
+    if not (name_lower.endswith(".docx") or name_lower.endswith(".pdf")):
         raise HTTPException(
             400,
-            f"Поддерживается только .docx. Получено: {filename}",
+            f"Поддерживается .docx или .pdf. Получено: {filename}",
         )
 
     contents = await file.read()
@@ -280,7 +282,9 @@ async def extract_company_from_document(
         raise HTTPException(400, "Файл слишком маленький (<100 байт), битый?")
 
     try:
-        fields = await extract_company_from_docx(contents)
+        fields = await extract_company_from_file(
+            contents, filename, file.content_type or ""
+        )
     except CompanyExtractError as e:
         raise HTTPException(422, f"Не удалось распознать реквизиты: {e}")
     except Exception as e:
