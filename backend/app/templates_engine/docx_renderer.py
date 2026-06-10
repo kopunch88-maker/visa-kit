@@ -870,7 +870,7 @@ def _ensure_paragraphs_at_tc_end(doc) -> None:
 # ============================================================================
 
 # Pack 52-fix17: helper для floating-якоря.
-def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0):
+def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0, z_order=None):
     """
     Вставляет PNG как floating anchor.
     relativeFrom="column" для X, "paragraph" для Y, layoutInCell=0.
@@ -894,12 +894,15 @@ def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset
     x_emu = int(x_offset_mm * 36000)
     y_emu = int(y_offset_mm * 36000)
     rid = random.randint(10000, 99999)
+    # Pack 54.0-fix5: z_order управляет relativeHeight (порядком отрисовки).
+    # None = random (как было раньше, для Альфы Pack 52). Передан — детерминировано.
+    rh = z_order if z_order is not None else rid
     anchor_xml = (
         f'<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
         f'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
         f'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
         f'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
-        f'distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{rid}" '
+        f'distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{rh}" '
         f'behindDoc="0" locked="0" layoutInCell="0" allowOverlap="1">'
         f'<wp:simplePos x="0" y="0"/>'
         f'<wp:positionH relativeFrom="column"><wp:posOffset>{x_emu}</wp:posOffset></wp:positionH>'
@@ -1717,20 +1720,29 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
     signature_png = assets_dir / "signature.png"
     bank_png      = assets_dir / "stamp_bank.png"
 
-    # Этап 2. Чистим target_p и вставляем подпись INLINE
-    # Pack 54.0-fix3: ширина 35мм → 25мм. По эталону Сбера подпись маленькая
-    # (~25мм). При 35мм Row 0 растягивался до 20мм высотой → большой провал
-    # между «Подпись» и «Сотрудник, ...». С 25мм + vAlign=BOTTOM в R0C3
-    # (см. fix3 в шаблоне) подпись сидит низом на линии подписи.
+    # Этап 2. Pack 54.0-fix5: подпись INLINE → FLOATING (как Альфа Pack 52).
+    # INLINE раздувал Row 0 (ячейка растягивалась под высоту картинки ~14мм).
+    # FLOATING висит поверх таблицы, не влияет на высоту ячейки → Row 0
+    # остаётся компактным (~9мм текстовой высоты).
+    # Чистим маркер __STAMP_SIGNATURE__ из target_p (параграф остаётся, пустой).
     for r in list(target_p.runs):
         r._element.getparent().remove(r._element)
     if signature_png.exists():
         try:
-            run = target_p.add_run()
-            run.add_picture(str(signature_png), width=Mm(25))
+            # Подпись Кирьянова FLOATING, якорь = target_p (пустой параграф R0C3).
+            # x=+130мм от поля страницы — чуть левее центра печати (та на +140);
+            # подпись видна слева от печати, печать перекрывает справа.
+            # y=+2 — рабочее значение Альфы Pack 52 для signature (низ крестится
+            # с линией подписи). z_order=10 — рисуется ПОД печатью (z=20).
+            _add_floating_picture(
+                target_p, signature_png, 25,
+                x_offset_mm=130,
+                y_offset_mm=2,
+                z_order=10,
+            )
         except Exception as e:
             import logging
-            logging.warning("Pack 54: не удалось inline %s: %s", signature_png.name, e)
+            logging.warning("Pack 54.0-fix5: не удалось floating signature: %s", e)
 
     # Этап 3. Круглая печать Сбера floating, якорь = target_p
     # Pack 52 урок: маленькие y_off (±5..15мм), не доверять локальному превью —
@@ -1749,6 +1761,7 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
                 target_p, bank_png, 35,
                 x_offset_mm=140,
                 y_offset_mm=-5,
+                z_order=20,   # Pack 54.0-fix5: поверх подписи (z=10)
             )
         except Exception as e:
             import logging
