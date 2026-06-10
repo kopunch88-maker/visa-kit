@@ -1718,12 +1718,16 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
     bank_png      = assets_dir / "stamp_bank.png"
 
     # Этап 2. Чистим target_p и вставляем подпись INLINE
+    # Pack 54.0-fix3: ширина 35мм → 25мм. По эталону Сбера подпись маленькая
+    # (~25мм). При 35мм Row 0 растягивался до 20мм высотой → большой провал
+    # между «Подпись» и «Сотрудник, ...». С 25мм + vAlign=BOTTOM в R0C3
+    # (см. fix3 в шаблоне) подпись сидит низом на линии подписи.
     for r in list(target_p.runs):
         r._element.getparent().remove(r._element)
     if signature_png.exists():
         try:
             run = target_p.add_run()
-            run.add_picture(str(signature_png), width=Mm(35))
+            run.add_picture(str(signature_png), width=Mm(25))
         except Exception as e:
             import logging
             logging.warning("Pack 54: не удалось inline %s: %s", signature_png.name, e)
