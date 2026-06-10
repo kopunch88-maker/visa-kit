@@ -691,13 +691,26 @@ def download_single_file(
 
     # Pack 52 PDF: bank_statement для v2-шаблона (bank_template_legacy_v1=False)
     # отдаём в PDF — менеджеру удобнее давать клиенту PDF. v1 (legacy) остаётся DOCX.
+    # Pack 53: если у заявки есть bank_statement_translation_storage_key —
+    # отдаём combined PDF (RU с печатями + ES без печатей).
     if file_id == "bank_statement" and not bool(getattr(app, "bank_template_legacy_v1", True)):
         try:
-            from app.templates_engine.docx_renderer import render_bank_statement_to_pdf
-            content = render_bank_statement_to_pdf(app, session)
+            from app.templates_engine.docx_renderer import (
+                render_bank_statement_to_pdf,
+                render_bank_statement_combined_to_pdf,
+            )
+            translation_key = getattr(app, "bank_statement_translation_storage_key", None)
+            if translation_key:
+                # Pack 53: combined PDF (RU + ES)
+                from app.services.storage import get_storage
+                es_docx_bytes = get_storage().read(translation_key)
+                content = render_bank_statement_combined_to_pdf(app, session, es_docx_bytes)
+            else:
+                # Pack 52: только RU PDF
+                content = render_bank_statement_to_pdf(app, session)
         except Exception as e:
             import logging
-            logging.getLogger(__name__).exception("Pack 52: failed to render bank_statement PDF")
+            logging.getLogger(__name__).exception("Pack 52/53: failed to render bank_statement PDF")
             raise HTTPException(
                 500,
                 f"Failed to render bank_statement PDF: {type(e).__name__}: {e}",
@@ -1174,3 +1187,100 @@ def change_application_type(
     session.refresh(app)
 
     return _enrich(app, session)
+
+
+
+# ============================================================================
+# Pack 53 — Перевод банковской выписки (отдельный flow от orchestrator)
+# ============================================================================
+
+@router.post("/{app_id}/bank-statement/translate")
+async def translate_bank_statement(
+    app_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+):
+    """
+    Pack 53: переводит банковскую выписку на испанский и сохраняет в R2.
+
+    Каждое нажатие — новый LLM-запрос (~30-60 сек). Результат:
+    - Application.bank_statement_translation_storage_key обновляется на новый key
+    - старый R2-файл (если был) удаляется
+    - последующие /download-file/bank_statement будут отдавать combined PDF (RU+ES)
+
+    Возвращает: {"status": "done", "storage_key": "..."}.
+    При ошибке: 500 с сообщением.
+
+    Endpoint async — translate_docx тоже async, дёргаем напрямую через await.
+    Frontend ждёт ~60 сек на одном fetch().
+    """
+    import time
+
+    app = session.get(Application, app_id)
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    if bool(getattr(app, "bank_template_legacy_v1", True)):
+        raise HTTPException(
+            400,
+            "Перевод доступен только для v2-выписок (bank_template_legacy_v1=False).",
+        )
+
+    # Этап 1: render RU docx без печатей (но с лейблами для перевода)
+    try:
+        from app.templates_engine.docx_renderer import render_bank_statement_for_translation
+        ru_docx_bytes = render_bank_statement_for_translation(app, session)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Pack 53: render_bank_statement_for_translation failed")
+        raise HTTPException(500, f"Render failed: {type(e).__name__}: {e}")
+
+    # Этап 2: build substitutions + translate через LLM
+    try:
+        from app.services.translation import translate_docx, build_substitution_dict
+        from app.models import Applicant as _Applicant, Company as _Company
+
+        applicant = session.get(_Applicant, app.applicant_id) if app.applicant_id else None
+        company = session.get(_Company, app.company_id) if app.company_id else None
+
+        substitutions = None
+        if applicant or company:
+            substitutions = build_substitution_dict(app, applicant, company)
+
+        es_docx_bytes = await translate_docx(ru_docx_bytes, substitutions=substitutions)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Pack 53: translate_docx failed")
+        raise HTTPException(500, f"Translation failed: {type(e).__name__}: {e}")
+
+    # Этап 3: save to R2 (новый key, потом удалим старый)
+    from app.services.storage import get_storage
+    storage = get_storage()
+    old_key = getattr(app, "bank_statement_translation_storage_key", None)
+    new_key = f"translations/bank_statement_{app_id}_{int(time.time())}.docx"
+
+    try:
+        storage.save(
+            new_key,
+            es_docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Pack 53: R2 save failed")
+        raise HTTPException(500, f"Storage save failed: {type(e).__name__}: {e}")
+
+    # Этап 4: update Application + remove old R2 key
+    app.bank_statement_translation_storage_key = new_key
+    session.add(app)
+    session.commit()
+
+    if old_key and old_key != new_key:
+        try:
+            storage.delete(old_key)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Pack 53: failed to delete old key {old_key}: {e}")
+
+    return {"status": "done", "storage_key": new_key}
+

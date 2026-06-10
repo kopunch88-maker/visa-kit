@@ -112,6 +112,10 @@ class Application(TimestampMixin, table=True):
     # Применяется только если у заявки applicant.bank_id указывает на Альфу
     # ИЛИ если bank_id вообще не задан (Alfa = дефолтный fallback).
     bank_template_legacy_v1: bool = Field(default=False, index=False)
+    # Pack 53 — R2-ключ сохранённого перевода выписки (испанский, без печатей).
+    # NULL = перевод не делался; не-NULL = combined PDF (RU+ES) при скачивании.
+    # Инвалидируется на регенерации транзакций (TODO Pack 53.2).
+    bank_statement_translation_storage_key: Optional[str] = Field(default=None, max_length=255)
     eur_rate_override: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)
     monthly_documents_override: Optional[list] = Field(default=None, sa_column=Column(JSON))
     # === Параметры расчётов банковской выписки ===

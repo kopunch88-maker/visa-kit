@@ -696,7 +696,12 @@ def _resolve_bank_statement_template_path(
     return _alfa_default()
 
 
-def render_bank_statement(application: Application, session: Session) -> bytes:
+def render_bank_statement(
+    application: Application,
+    session: Session,
+    *,
+    for_translation: bool = False,  # Pack 53
+) -> bytes:
     """
     Двухфазный рендер:
     1. docxtpl подставляет шапку (период, балансы) через Jinja
@@ -807,7 +812,11 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     # __STAMP_SIGNATURE__ / __STAMP_EMPLOYEE__ / __STAMP_BANK__. Для других
     # шаблонов (включая v1) — no-op, маркеров нет.
     if template_path.name == "bank_statement_template_v2.docx":
-        _insert_v2_signature_images(doc)
+        # Pack 53: при подготовке к переводу — только чистим маркеры, PNG не вставляем
+        _insert_v2_signature_images(
+            doc,
+            mode="markers_only" if for_translation else "full",
+        )
 
     # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
     # OOXML schema требует это; Word иначе ругается "Обнаружено неоднозначное
@@ -896,11 +905,18 @@ def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset
     drawing.append(new_anchor)
 
 
-def _insert_v2_signature_images(doc) -> None:
+def _insert_v2_signature_images(doc, *, mode: str = "full") -> None:
     """
-    Pack 52-fix17: ВСЕ 3 картинки якорятся к параграфу прямоугольной печати (R0C2).
+    Pack 52-fix17 + Pack 53: ВСЕ 3 картинки якорятся к параграфу прямоугольной печати (R0C2).
     Прямоугольная сидит inline на линии — её параграф находится РОВНО на линии,
     что делает её идеальной точкой отсчёта для подписи и круглой печати.
+
+    Pack 53: параметр mode:
+      - "full" (default): вставляем 3 PNG (подпись + штамп + круглая печать).
+      - "markers_only": только чистим текст маркеров __STAMP_*__ из R0,
+        PNG НЕ вставляем. Используется при подготовке docx под перевод
+        (испанская версия выписки идёт без печатей; лейблы R1 переводятся
+        в "(firma del empleado AO «ALFA-BANK»)" / ...).
 
     Стратегия:
       __STAMP_EMPLOYEE__ (R0C2):
@@ -922,6 +938,22 @@ def _insert_v2_signature_images(doc) -> None:
     очищаются — их параграфы остаются пустыми (визуально не мешает).
     """
     from docx.shared import Mm
+
+    # Pack 53: markers_only — чистим только текст маркеров (без PNG).
+    # Используется в render_bank_statement_for_translation: испанская версия
+    # сигнатур-таблицы остаётся, но без печатей.
+    if mode == "markers_only":
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if any(
+                            m in p.text
+                            for m in ("__STAMP_SIGNATURE__", "__STAMP_EMPLOYEE__", "__STAMP_BANK__")
+                        ):
+                            for r in list(p.runs):
+                                r._element.getparent().remove(r._element)
+        return
 
     assets_dir = TEMPLATES_DIR / "assets" / "v2"
 
@@ -1511,3 +1543,107 @@ def _set_keep_next_on_paragraph_between_tables(doc):
             p.insert(0, ppr)
         if ppr.find('w:keepNext', NS) is None:
             etree.SubElement(ppr, f'{W_NS}keepNext')
+
+
+
+# ============================================================================
+# Pack 53 — перевод выписки на испанский (отдельный flow от orchestrator)
+# ============================================================================
+
+def render_bank_statement_for_translation(
+    application: Application,
+    session: Session,
+) -> bytes:
+    """
+    Pack 53: рендерит русскую DOCX-выписку в варианте для перевода.
+
+    Отличие от render_bank_statement: НЕ вставляет PNG-печати (только чистит
+    маркеры __STAMP_*__ из R0). Сигнатур-таблица остаётся, лейблы R1 на месте
+    — переводятся в испанский ("(firma del empleado AO «ALFA-BANK»)" / ...).
+
+    Используется в POST /admin/applications/{id}/bank-statement/translate
+    как источник перед translate_docx().
+    """
+    return render_bank_statement(application, session, for_translation=True)
+
+
+def render_bank_statement_combined_to_pdf(
+    application: Application,
+    session: Session,
+    es_docx_bytes: bytes,
+    timeout_sec: int = 60,
+) -> bytes:
+    """
+    Pack 53: объединяет RU PDF (с печатями) и ES PDF (без печатей) в один PDF.
+
+    Поток:
+      1. render_bank_statement_to_pdf(application, session) → RU PDF
+      2. es_docx_bytes → tempfile → soffice --headless --convert-to pdf → ES PDF
+      3. pypdf merge: RU pages + ES pages → объединённый PDF
+      4. Возврат bytes
+
+    es_docx_bytes — байты переведённой испанской DOCX из R2 (storage.read).
+
+    Используется в /download-file/bank_statement когда у заявки есть
+    Application.bank_statement_translation_storage_key.
+    """
+    import subprocess
+    import tempfile as _tempfile
+    import os as _os
+
+    # Этап 1: русская PDF (с печатями) — текущий путь
+    ru_pdf = render_bank_statement_to_pdf(application, session, timeout_sec=timeout_sec)
+
+    # Этап 2: испанская DOCX → PDF через soffice
+    with _tempfile.TemporaryDirectory(prefix="vk_es_pdf_") as tmpdir:
+        es_docx_path = _os.path.join(tmpdir, "statement_es.docx")
+        with open(es_docx_path, "wb") as f:
+            f.write(es_docx_bytes)
+
+        try:
+            result = subprocess.run(
+                [
+                    "soffice", "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", tmpdir,
+                    es_docx_path,
+                ],
+                capture_output=True,
+                timeout=timeout_sec,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Pack 53: LibreOffice (soffice) не найден в PATH."
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Pack 53: LibreOffice ES конвертация превысила {timeout_sec} сек"
+            )
+
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Pack 53: LibreOffice не смог сконвертировать ES DOCX → PDF: {stderr}"
+            )
+
+        es_pdf_path = _os.path.join(tmpdir, "statement_es.pdf")
+        if not _os.path.exists(es_pdf_path):
+            raise RuntimeError(
+                f"Pack 53: ES PDF не появился в {tmpdir} после конвертации. "
+                f"stdout: {result.stdout.decode(errors='replace')[:500]}"
+            )
+
+        with open(es_pdf_path, "rb") as f:
+            es_pdf = f.read()
+
+    # Этап 3: merge через pypdf
+    from pypdf import PdfReader, PdfWriter
+    writer = PdfWriter()
+    for pdf_bytes in (ru_pdf, es_pdf):
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for page in reader.pages:
+            writer.add_page(page)
+    out_buf = io.BytesIO()
+    writer.write(out_buf)
+    return out_buf.getvalue()
+
