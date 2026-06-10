@@ -91,9 +91,12 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     if (d.selfEmployedOnly && applicationType === "EMPLOYMENT") return false;
     return true;
   }).map((d) => {
-    // Pack 52: bank_statement для v2 → отрисуется как PDF
+    // Pack 52: bank_statement для v2 → имя файла .pdf, но kind остаётся
+    // "docx" чтобы карточка не съезжала из «Русские формы Word» в «Испанские
+    // PDF формы». Иконка ("PDF"/"DOC") выбирается по расширению filename,
+    // см. fix3 ниже в рендере секции docx.
     if (d.id === "bank_statement" && bankIsV2) {
-      return { ...d, filename: "10_Выписка.pdf", kind: "pdf" as const };
+      return { ...d, filename: "10_Выписка.pdf" };
     }
     return d;
   });
@@ -332,8 +335,13 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
               className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
               style={{ background: "var(--color-bg-secondary)", border: !seenKeys.has(doc.id) ? "1.5px solid var(--color-accent)" : "1.5px solid transparent" }}>
               <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
+              {/* Pack 52-fix3: иконка выбирается по расширению — PDF красная (как в испанских формах), DOC синяя */}
               <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
-                style={{ background: "var(--color-bg-info)", color: "var(--color-text-info)" }}>DOC</div>
+                style={
+                  doc.filename.endsWith(".pdf")
+                    ? { background: "var(--color-bg-danger)", color: "var(--color-text-danger)" }
+                    : { background: "var(--color-bg-info)",   color: "var(--color-text-info)" }
+                }>{doc.filename.endsWith(".pdf") ? "PDF" : "DOC"}</div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm text-primary line-clamp-1">{doc.filename}</div>
                 <div className="text-xs text-tertiary">{isDownloading ? "Скачивание..." : "клик для скачивания"}</div>
