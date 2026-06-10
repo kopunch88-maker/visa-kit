@@ -176,9 +176,18 @@ def render_single_document(
             content = render_apostille(application, session)
             filename = "Апостиль.docx"
         elif document_type == "bank_statement":
+            # Pack 52 PDF: для v2-шаблона отдаём PDF, для v1 — DOCX как раньше
             from app.templates_engine import render_bank_statement
-            content = render_bank_statement(application, session)
-            filename = "Выписка_по_счету.docx"
+            _use_v1 = bool(getattr(application, "bank_template_legacy_v1", True))
+            if not _use_v1:
+                from app.templates_engine.docx_renderer import render_bank_statement_to_pdf
+                content = render_bank_statement_to_pdf(application, session)
+                filename = "Выписка_по_счету.pdf"
+                _media_type_override = "application/pdf"
+            else:
+                content = render_bank_statement(application, session)
+                filename = "Выписка_по_счету.docx"
+                _media_type_override = None
         elif document_type == "tech_opinion":
             # Pack 40.0-G — Техническое заключение
             content = render_tech_opinion(application, session)
@@ -196,9 +205,14 @@ def render_single_document(
     import urllib.parse as _urlparse
     _ascii_fallback = _urlparse.quote(filename).encode("ascii", "ignore").decode("ascii") or "document.docx"
     _utf8_quoted = _urlparse.quote(filename, safe="")
+    # Pack 52 PDF: для bank_statement+v2 media_type переопределяется на application/pdf
+    _final_media_type = (
+        locals().get("_media_type_override")
+        or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
     return StreamingResponse(
         io.BytesIO(content),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        media_type=_final_media_type,
         headers={
             "Content-Disposition": f"attachment; filename={_ascii_fallback}; filename*=UTF-8''{_utf8_quoted}",
         },

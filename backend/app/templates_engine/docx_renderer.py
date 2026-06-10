@@ -657,33 +657,43 @@ def _resolve_bank_statement_template_path(
 ) -> "Path":
     """
     Pack 47.0: резолв шаблона выписки по applicant.bank_id.
+    Pack 52:   для Альфы переключение v1 (legacy, Трофимова) ↔ v2 (Ч/Б, Агеева)
+               по application.bank_template_legacy_v1.
 
-    Логика (схема из models/bank.py:8):
-      1. applicant.bank_id != None → достаём Bank → пробуем
-         templates/docx/bank_statement_template_<bik>.docx
-      2. Если файла нет — fallback на bank_statement_template.docx (Альфа).
-
-    Это обратно совместимо: все существующие заявки без bank_id или с
-    bank_id под который нет файла — продолжают рендериться шаблоном Альфы.
+    Логика:
+      1. Если у applicant есть bank_id с собственным шаблоном
+         (templates/docx/bank_statement_template_<bik>.docx) — используем его.
+         У Сбера/ТБанка/ВТБ свои шаблоны и v1/v2 на них не влияет.
+      2. Иначе — Альфа default. Выбор v1 vs v2 по
+         application.bank_template_legacy_v1:
+           False (default для новых) → bank_statement_template_v2.docx (если файл есть)
+           True (миграция выставила для существующих) → bank_statement_template.docx (v1)
     """
-    default_path = TEMPLATES_DIR / "bank_statement_template.docx"
+    def _alfa_default() -> "Path":
+        # Pack 52: v1/v2 переключение для Альфы
+        use_v1 = bool(getattr(application, "bank_template_legacy_v1", True))
+        if not use_v1:
+            v2 = TEMPLATES_DIR / "bank_statement_template_v2.docx"
+            if v2.exists():
+                return v2
+        return TEMPLATES_DIR / "bank_statement_template.docx"
 
     if not application.applicant_id:
-        return default_path
+        return _alfa_default()
 
     applicant = session.get(Applicant, application.applicant_id)
     if applicant is None or not applicant.bank_id:
-        return default_path
+        return _alfa_default()
 
     bank = session.get(Bank, applicant.bank_id)
     if bank is None or not bank.bik:
-        return default_path
+        return _alfa_default()
 
     candidate = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}.docx"
     if candidate.exists():
         return candidate
 
-    return default_path
+    return _alfa_default()
 
 
 def render_bank_statement(application: Application, session: Session) -> bytes:
@@ -744,10 +754,14 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
 
         # Pack 16.5: серый фон у строк дохода (зарплата от компании).
         # Pack 47.3: серая заливка и жирная сумма — стиль эталона Алиева (Альфа).
-        # Применяется ТОЛЬКО для дефолтного шаблона. Сбер и другие банки со
-        # своим шаблоном имеют белый фон строк-доходов (как в их реальных
-        # выписках). Резолв через имя файла: дефолтный = "bank_statement_template.docx".
-        _is_default_template = template_path.name == "bank_statement_template.docx"
+        # Применяется ТОЛЬКО для дефолтного шаблона Альфы (v1 или v2). Сбер и
+        # другие банки со своим шаблоном имеют белый фон строк-доходов.
+        # Pack 52: v2 Ч/Б шаблон тоже считается "default" — gray shading и
+        # bold у поступлений сохраняются как в эталоне.
+        _is_default_template = template_path.name in (
+            "bank_statement_template.docx",
+            "bank_statement_template_v2.docx",
+        )
         amount = tx.get("amount")
         if amount is not None and _is_default_template:
             try:
@@ -788,6 +802,13 @@ def render_bank_statement(application: Application, session: Session) -> bytes:
     # этот маркер). Для Альфы и других шаблонов без маркера — no-op.
     _replace_ep_badge_marker(doc, bank_data)
 
+    # Pack 52: ФАЗА 3.5 — для v2-шаблона Альфы вставляем 3 PNG-печати
+    # (подпись Агеевой + штамп ДО + круглая печать «Альфа-Банк») в маркеры
+    # __STAMP_SIGNATURE__ / __STAMP_EMPLOYEE__ / __STAMP_BANK__. Для других
+    # шаблонов (включая v1) — no-op, маркеров нет.
+    if template_path.name == "bank_statement_template_v2.docx":
+        _insert_v2_signature_images(doc)
+
     # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
     # OOXML schema требует это; Word иначе ругается "Обнаружено неоднозначное
     # сопоставление ячеек". Мои функции _strip_empty_paragraphs_before_tables
@@ -821,6 +842,129 @@ def _ensure_paragraphs_at_tc_end(doc) -> None:
         if last.tag != _qn("w:p"):
             # Последний элемент не параграф — добавляем пустой <w:p/>
             tc.append(_OxmlElement("w:p"))
+
+
+# ============================================================================
+# Pack 52 — v2 шаблон Альфы (Ч/Б + PNG-печати + PDF)
+# ============================================================================
+
+def _insert_v2_signature_images(doc) -> None:
+    """
+    Pack 52: для v2 Ч/Б шаблона Альфы вставляет 3 PNG-изображения
+    (подпись Агеевой / штамп должности / круглая печать банка) на место
+    текстовых маркеров.
+
+    Маркеры в шаблоне (см. tpl_v2.docx, table[1] row 0):
+      __STAMP_SIGNATURE__  → assets/v2/signature.png        (38мм)
+      __STAMP_EMPLOYEE__   → assets/v2/stamp_employee.png   (38мм)
+      __STAMP_BANK__       → assets/v2/stamp_bank.png       (28мм)
+
+    Если PNG отсутствует — маркер остаётся как есть (визуальный сигнал что
+    ассет не подложен; не падаем, чтобы deploy не блокировался).
+    """
+    from docx.shared import Mm
+
+    assets_dir = TEMPLATES_DIR / "assets" / "v2"
+
+    MARKER_ASSETS = {
+        "__STAMP_SIGNATURE__": (assets_dir / "signature.png",      Mm(38)),
+        "__STAMP_EMPLOYEE__":  (assets_dir / "stamp_employee.png", Mm(38)),
+        "__STAMP_BANK__":      (assets_dir / "stamp_bank.png",     Mm(28)),
+    }
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for marker, (png_path, width) in MARKER_ASSETS.items():
+                    if marker not in cell.text:
+                        continue
+                    for p in cell.paragraphs:
+                        if marker not in p.text:
+                            continue
+                        # Чистим параграф (удаляем все runs)
+                        for r in list(p.runs):
+                            r._element.getparent().remove(r._element)
+                        # Вставляем картинку (если файл есть)
+                        if png_path.exists():
+                            run = p.add_run()
+                            try:
+                                run.add_picture(str(png_path), width=width)
+                            except Exception as e:
+                                # Не критично — оставляем пустой параграф,
+                                # на DOCX это просто пустая ячейка
+                                import logging
+                                logging.warning(
+                                    "Pack 52: не удалось вставить %s: %s",
+                                    png_path.name, e,
+                                )
+                        # Один маркер на параграф — стопаем после первого
+                        break
+
+
+def render_bank_statement_to_pdf(
+    application: Application,
+    session: Session,
+    timeout_sec: int = 60,
+) -> bytes:
+    """
+    Pack 52: рендерит банковскую выписку в PDF через LibreOffice headless.
+
+    Поток:
+      1. render_bank_statement(application, session) → DOCX bytes
+      2. сохраняем во временный файл
+      3. soffice --headless --convert-to pdf
+      4. читаем PDF, возвращаем bytes
+
+    ТРЕБОВАНИЕ: на сервере должен быть установлен LibreOffice (soffice в PATH).
+    На Railway добавляется через nixpacks.toml или Aptfile:
+        # nixpacks.toml
+        [phases.setup]
+        aptPkgs = ["libreoffice", "libreoffice-writer"]
+    """
+    import subprocess
+
+    docx_bytes = render_bank_statement(application, session)
+
+    with tempfile.TemporaryDirectory(prefix="vk_pdf_") as tmpdir:
+        docx_path = os.path.join(tmpdir, "statement.docx")
+        with open(docx_path, "wb") as f:
+            f.write(docx_bytes)
+
+        # soffice сохраняет PDF рядом с input, имя = базовое имя input + .pdf
+        try:
+            result = subprocess.run(
+                [
+                    "soffice", "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", tmpdir,
+                    docx_path,
+                ],
+                capture_output=True,
+                timeout=timeout_sec,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Pack 52: LibreOffice (soffice) не найден в PATH. "
+                "Установите libreoffice на сервер (на Railway — через nixpacks.toml)."
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Pack 52: LibreOffice конвертация превысила {timeout_sec} сек"
+            )
+
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(f"Pack 52: LibreOffice не смог сконвертировать DOCX → PDF: {stderr}")
+
+        pdf_path = os.path.join(tmpdir, "statement.pdf")
+        if not os.path.exists(pdf_path):
+            raise RuntimeError(
+                f"Pack 52: PDF не появился в {tmpdir} после конвертации. "
+                f"stdout: {result.stdout.decode(errors='replace')[:500]}"
+            )
+
+        with open(pdf_path, "rb") as f:
+            return f.read()
 
 
 def _replace_ep_badge_marker(doc, bank_data: dict) -> None:

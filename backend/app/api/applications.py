@@ -689,6 +689,28 @@ def download_single_file(
     spec = _DOWNLOAD_FILES[file_id]
     filename = spec["name"]
 
+    # Pack 52 PDF: bank_statement для v2-шаблона (bank_template_legacy_v1=False)
+    # отдаём в PDF — менеджеру удобнее давать клиенту PDF. v1 (legacy) остаётся DOCX.
+    if file_id == "bank_statement" and not bool(getattr(app, "bank_template_legacy_v1", True)):
+        try:
+            from app.templates_engine.docx_renderer import render_bank_statement_to_pdf
+            content = render_bank_statement_to_pdf(app, session)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception("Pack 52: failed to render bank_statement PDF")
+            raise HTTPException(
+                500,
+                f"Failed to render bank_statement PDF: {type(e).__name__}: {e}",
+            )
+        filename = "10_Выписка.pdf"
+        from urllib.parse import quote
+        safe_name = quote(filename)
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"},
+        )
+
     try:
         if spec["kind"] == "docx":
             content = spec["fn"](app, session, *spec["args"])

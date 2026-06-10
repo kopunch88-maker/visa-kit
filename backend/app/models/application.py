@@ -106,6 +106,12 @@ class Application(TimestampMixin, table=True):
     tasa_nrc: Optional[str] = Field(default=None, max_length=64)
     recommendation_snapshot: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     bank_transactions_override: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    # Pack 52 — выбор шаблона выписки Альфы:
+    #   False (default для НОВЫХ заявок) = v2 Ч/Б шаблон с печатями Агеевой
+    #   True (миграция выставит для существующих)  = v1 legacy шаблон с Трофимовой
+    # Применяется только если у заявки applicant.bank_id указывает на Альфу
+    # ИЛИ если bank_id вообще не задан (Alfa = дефолтный fallback).
+    bank_template_legacy_v1: bool = Field(default=False, index=False)
     eur_rate_override: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)
     monthly_documents_override: Optional[list] = Field(default=None, sa_column=Column(JSON))
     # === Параметры расчётов банковской выписки ===
