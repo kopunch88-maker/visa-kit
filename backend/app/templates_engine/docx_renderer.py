@@ -870,7 +870,7 @@ def _ensure_paragraphs_at_tc_end(doc) -> None:
 # ============================================================================
 
 # Pack 52-fix17: helper для floating-якоря.
-def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0, z_order=None):
+def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0, z_order=None, rotation_deg=0):
     """
     Вставляет PNG как floating anchor.
     relativeFrom="column" для X, "paragraph" для Y, layoutInCell=0.
@@ -916,6 +916,12 @@ def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset
         f'</wp:anchor>'
     )
     new_anchor = parse_xml(anchor_xml)
+    # Pack 54.0-fix9: поворот изображения. rot в 60000-ых градуса, положительное
+    # значение = по часовой стрелке. Применяем к pic:spPr/a:xfrm внутри anchor.
+    if rotation_deg:
+        xfrm = new_anchor.find(".//" + qn("a:xfrm"))
+        if xfrm is not None:
+            xfrm.set("rot", str(int(rotation_deg * 60000)))
     drawing.remove(inline)
     drawing.append(new_anchor)
 
@@ -1804,13 +1810,15 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
             # Подпись Кирьянова inline 35мм в R0C3. Центр печати = 140 + 35/2 ≈ 158мм
             # = середина R0C3 = пересекает подпись. y_off=-5 — рабочее значение Альфы
             # Pack 52, мелкое (Правило 72 / Инцидент 50).
-            # Pack 54.0-fix6: x 140->150 (правее, overlap с подписью справа).
-            # y -5->-10 (печать выше на 5мм — по запросу пользователя).
+            # Pack 54.0-fix6: x 140->150, y -5->-10.
+            # Pack 54.0-fix9: rotation_deg=25 — поворот по часовой на 25°
+            # (середина диапазона 20-30° по запросу пользователя).
             _add_floating_picture(
                 target_p, bank_png, 35,
                 x_offset_mm=150,
                 y_offset_mm=-10,
                 z_order=20,   # Pack 54.0-fix5: поверх подписи (z=10)
+                rotation_deg=25,
             )
         except Exception as e:
             import logging
