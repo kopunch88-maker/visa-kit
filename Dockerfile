@@ -6,13 +6,17 @@ FROM python:3.12-slim
 
 # Системные зависимости:
 # - gcc, libpq-dev — для psycopg2
-# - fonts-dejavu — для рендеринга PDF/DOCX с кириллицей
+# - fonts-dejavu, fonts-liberation — для рендеринга PDF/DOCX с кириллицей
 # - unrar-free — для распаковки RAR архивов (Pack 14a — bulk import)
+# - libreoffice + libreoffice-writer — для DOCX → PDF конвертации (Pack 52)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     fonts-dejavu \
+    fonts-liberation \
     unrar-free \
+    libreoffice \
+    libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 
 # Рабочая директория

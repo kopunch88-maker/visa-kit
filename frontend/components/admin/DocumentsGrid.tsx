@@ -66,12 +66,36 @@ const DOCUMENTS: DocItem[] = [
 ];
 
 export function DocumentsGrid({ applicationId, companyId, applicationType }: Props) {
+  // Pack 52: bank_statement — для v2-заявок (bank_template_legacy_v1=false) карточка
+  // отрисуется как «10_Выписка.pdf» с PDF-иконкой; backend тоже отдаёт PDF.
+  // Тянем флаг с бэка асинхронно. До получения ответа считаем legacy (DOCX) —
+  // на v2-заявке после fetch перерисуется в PDF.
+  const [bankIsV2, setBankIsV2] = useState<boolean>(false);
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/admin/applications/${applicationId}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.bank_template_legacy_v1 === false) {
+          setBankIsV2(true);
+        }
+      })
+      .catch(() => {});
+  }, [applicationId]);
+
   // Pack 50.7-C + 50.1-F3 — фильтр карточек по типу заявки.
   // naimOnly: видна только при EMPLOYMENT. selfEmployedOnly: скрыта при EMPLOYMENT.
   const visibleDocs = DOCUMENTS.filter((d) => {
     if (d.naimOnly && applicationType !== "EMPLOYMENT") return false;
     if (d.selfEmployedOnly && applicationType === "EMPLOYMENT") return false;
     return true;
+  }).map((d) => {
+    // Pack 52: bank_statement для v2 → отрисуется как PDF
+    if (d.id === "bank_statement" && bankIsV2) {
+      return { ...d, filename: "10_Выписка.pdf", kind: "pdf" as const };
+    }
+    return d;
   });
   // Pack 50.41 — состояние «просмотрено» (общее на команду)
   const [seenKeys, setSeenKeys] = useState<Set<string>>(new Set());
