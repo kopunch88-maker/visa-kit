@@ -689,6 +689,14 @@ def _resolve_bank_statement_template_path(
     if bank is None or not bank.bik:
         return _alfa_default()
 
+    # Pack 54: для конкретного банка тоже поддерживаем _v2.docx суффикс
+    # (Sber v2 = bank_statement_template_044525225_v2.docx — Ч/Б + подпись Кирьянова + печать)
+    use_v2 = not bool(getattr(application, "bank_template_legacy_v1", True))
+    if use_v2:
+        candidate_v2 = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}_v2.docx"
+        if candidate_v2.exists():
+            return candidate_v2
+
     candidate = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}.docx"
     if candidate.exists():
         return candidate
@@ -811,12 +819,16 @@ def render_bank_statement(
     # (подпись Агеевой + штамп ДО + круглая печать «Альфа-Банк») в маркеры
     # __STAMP_SIGNATURE__ / __STAMP_EMPLOYEE__ / __STAMP_BANK__. Для других
     # шаблонов (включая v1) — no-op, маркеров нет.
-    if template_path.name == "bank_statement_template_v2.docx":
-        # Pack 53: при подготовке к переводу — только чистим маркеры, PNG не вставляем
-        _insert_v2_signature_images(
-            doc,
-            mode="markers_only" if for_translation else "full",
-        )
+    # Pack 52/54: диспетчер по template name — Альфа vs Сбер.
+    # mode="markers_only" при подготовке к переводу (без PNG, только чистка маркеров).
+    _v2_name = template_path.name
+    _v2_mode = "markers_only" if for_translation else "full"
+    if _v2_name == "bank_statement_template_v2.docx":
+        # Pack 52 — Альфа v2
+        _insert_v2_signature_images(doc, mode=_v2_mode)
+    elif _v2_name.endswith("_v2.docx") and "044525225" in _v2_name:
+        # Pack 54 — Sber v2 (BIK 044525225)
+        _insert_v2_sber_signatures(doc, mode=_v2_mode)
 
     # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
     # OOXML schema требует это; Word иначе ругается "Обнаружено неоднозначное
@@ -1646,4 +1658,87 @@ def render_bank_statement_combined_to_pdf(
     out_buf = io.BytesIO()
     writer.write(out_buf)
     return out_buf.getvalue()
+
+
+
+# ============================================================================
+# Pack 54 — Sber v2: подпись + круглая печать
+# ============================================================================
+
+def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
+    """
+    Pack 54: вставка PNG-печатей в Sber v2 шаблон.
+
+    Структура Table[3] в v2-шаблоне:
+      Row 0: «Дата формирования» | {{ statement_date }} | «Подпись» | __STAMP_SIGNATURE__
+             (R0C3 имеет bottom-border = линия подписи)
+      Row 1-4: блок «Сотрудник, ФИО, должность» (слева) + «Структурное, Территориальный,
+               Номер, Адрес» (справа). Все статика — в шаблоне прописана.
+
+    Стратегия (по аналогии с Альфа Pack 52-fix17):
+      __STAMP_SIGNATURE__ → INLINE в R0C3 (подпись Кирьянова, ~35мм, садится на линию).
+      Круглая печать Сбера → FLOATING, якорь = параграф подписи (тот же target_p),
+        чтобы пересекала линию справа сверху.
+
+    Параметры mode:
+      "full"          — вставляем PNG (подпись inline + печать floating)
+      "markers_only"  — только чистим маркеры __STAMP_SIGNATURE__ (для перевода без печатей)
+    """
+    from docx.shared import Mm
+
+    assets_dir = TEMPLATES_DIR / "assets" / "v2_sber"
+
+    # Этап 1. Найти параграф с маркером __STAMP_SIGNATURE__ (R0C3 = signature cell)
+    target_p = None
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if "__STAMP_SIGNATURE__" in p.text:
+                        target_p = p
+                        break
+                if target_p:
+                    break
+            if target_p:
+                break
+        if target_p:
+            break
+
+    if target_p is None:
+        # Маркера нет — не наш шаблон
+        return
+
+    # Pack 53: режим markers_only — только чистим маркер, PNG не вставляем
+    if mode == "markers_only":
+        for r in list(target_p.runs):
+            r._element.getparent().remove(r._element)
+        return
+
+    signature_png = assets_dir / "signature.png"
+    bank_png      = assets_dir / "stamp_bank.png"
+
+    # Этап 2. Чистим target_p и вставляем подпись INLINE
+    for r in list(target_p.runs):
+        r._element.getparent().remove(r._element)
+    if signature_png.exists():
+        try:
+            run = target_p.add_run()
+            run.add_picture(str(signature_png), width=Mm(35))
+        except Exception as e:
+            import logging
+            logging.warning("Pack 54: не удалось inline %s: %s", signature_png.name, e)
+
+    # Этап 3. Круглая печать Сбера floating, якорь = target_p
+    # Pack 52 урок: маленькие y_off (±5..15мм), не доверять локальному превью —
+    # позицию подгонять на проде. Начальные значения консервативные.
+    if bank_png.exists():
+        try:
+            _add_floating_picture(
+                target_p, bank_png, 50,
+                x_offset_mm=-15,   # сдвиг влево чтобы пересечь R0C2 (Подпись label)
+                y_offset_mm=-15,   # сдвиг вверх (печать частично над линией)
+            )
+        except Exception as e:
+            import logging
+            logging.warning("Pack 54: не удалось floating bank: %s", e)
 
