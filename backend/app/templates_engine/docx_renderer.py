@@ -1717,16 +1717,14 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
         # Маркера нет — не наш шаблон
         return
 
-    # Pack 53: режим markers_only — только чистим маркер, PNG не вставляем
-    if mode == "markers_only":
-        for r in list(target_p.runs):
-            r._element.getparent().remove(r._element)
-        return
-
     signature_png = assets_dir / "signature.png"
     bank_png      = assets_dir / "stamp_bank.png"
 
-    # Этап 1.5. Pack 54.0-fix8: убираем линию подписи + spacer.
+    # Этап 1.5. Pack 54.0-fix8/10: убираем линию подписи + spacer.
+    # Pack 54.0-fix10: эти layout-правки теперь применяются И для markers_only
+    # (при подготовке к переводу через LLM), чтобы ES-версия совпадала с RU
+    # по layout (без линии, с spacer'ом перед footer'ом). Иначе combined PDF
+    # получал несимметричную пару RU+ES.
     # • Слово «Подпись» — left-align в C2 (template default), не трогаем.
     # • Линия подписи — убираем bottom-border со всех ячеек Row 0 footer table
     #   (включая C3 из template, где была оригинальная линия): w:val="nil".
@@ -1769,13 +1767,23 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
         import logging
         logging.warning("Pack 54.0-fix8: layout-правки failed: %s", e)
 
-    # Этап 2. Pack 54.0-fix5: подпись INLINE → FLOATING (как Альфа Pack 52).
+    # Pack 54.0-fix10: чистка маркера __STAMP_SIGNATURE__ выполняется ВСЕГДА
+    # (и в full и в markers_only), чтобы текст «__STAMP_SIGNATURE__» не остался
+    # видимым в выписке. Параграф остаётся в C3 пустым — служит якорем для
+    # floating-картинок в full режиме.
+    for r in list(target_p.runs):
+        r._element.getparent().remove(r._element)
+
+    # Pack 54.0-fix10: для markers_only выходим здесь — PNG не вставляем.
+    # Используется при подготовке к переводу через LLM: ES-версия без
+    # подписи/печати, только текстовые лейблы переведены, layout идентичен RU.
+    if mode == "markers_only":
+        return
+
+    # Этап 2. Pack 54.0-fix5: подпись Кирьянова FLOATING (как Альфа Pack 52).
     # INLINE раздувал Row 0 (ячейка растягивалась под высоту картинки ~14мм).
     # FLOATING висит поверх таблицы, не влияет на высоту ячейки → Row 0
     # остаётся компактным (~9мм текстовой высоты).
-    # Чистим маркер __STAMP_SIGNATURE__ из target_p (параграф остаётся, пустой).
-    for r in list(target_p.runs):
-        r._element.getparent().remove(r._element)
     if signature_png.exists():
         try:
             # Подпись Кирьянова FLOATING, якорь = target_p (пустой параграф R0C3).
