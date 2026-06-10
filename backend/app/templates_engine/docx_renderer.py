@@ -1733,12 +1733,20 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
     # позицию подгонять на проде. Начальные значения консервативные.
     if bank_png.exists():
         try:
+            # Pack 54.0-fix2: x_off c -15 на +140, width c 50 на 35, y_off c -15 на -5.
+            # Корень бага: relativeFrom="column" в _add_floating_picture — X отсчитывается
+            # от ЛЕВОГО ПОЛЯ страницы, а не от ячейки якорного параграфа. С x_off=-15
+            # печать оказывалась на 0..50мм от поля = поверх C0-C1 («Дата / ФИО»).
+            # Геометрия Sber v2 (cols 2400/2700/2900/2204 dxa): C3 = 141..180мм от поля.
+            # Подпись Кирьянова inline 35мм в R0C3. Центр печати = 140 + 35/2 ≈ 158мм
+            # = середина R0C3 = пересекает подпись. y_off=-5 — рабочее значение Альфы
+            # Pack 52, мелкое (Правило 72 / Инцидент 50).
             _add_floating_picture(
-                target_p, bank_png, 50,
-                x_offset_mm=-15,   # сдвиг влево чтобы пересечь R0C2 (Подпись label)
-                y_offset_mm=-15,   # сдвиг вверх (печать частично над линией)
+                target_p, bank_png, 35,
+                x_offset_mm=140,
+                y_offset_mm=-5,
             )
         except Exception as e:
             import logging
-            logging.warning("Pack 54: не удалось floating bank: %s", e)
+            logging.warning("Pack 54.0-fix2: не удалось floating bank: %s", e)
 
