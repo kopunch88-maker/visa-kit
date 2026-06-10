@@ -848,14 +848,13 @@ def _ensure_paragraphs_at_tc_end(doc) -> None:
 # Pack 52 — v2 шаблон Альфы (Ч/Б + PNG-печати + PDF)
 # ============================================================================
 
-# Pack 52-final: helper для floating-якоря (картинка вне ячейки).
+# Pack 52-fix17: helper для floating-якоря.
 def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0):
     """
-    Вставляет PNG как floating anchor (вне потока таблицы).
+    Вставляет PNG как floating anchor.
     relativeFrom="column" для X, "paragraph" для Y, layoutInCell=0.
 
-    1мм = 36000 EMU. Используется для подписи и круглой печати, которые
-    должны пересекать линию подписей (что невозможно с inline-картинкой).
+    1мм = 36000 EMU.
     """
     import random
     import lxml.etree as etree
@@ -899,78 +898,92 @@ def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset
 
 def _insert_v2_signature_images(doc) -> None:
     """
-    Pack 52-final: для v2 Ч/Б шаблона Альфы вставляет 3 PNG (подпись/штамп/печать)
-    на место текстовых маркеров. Разные стратегии для разных маркеров:
+    Pack 52-fix17: ВСЕ 3 картинки якорятся к параграфу прямоугольной печати (R0C2).
+    Прямоугольная сидит inline на линии — её параграф находится РОВНО на линии,
+    что делает её идеальной точкой отсчёта для подписи и круглой печати.
 
-      __STAMP_SIGNATURE__  → signature.png  38мм FLOATING (x=20, y=-33)
-                             Пересекает линию подписей снизу (рукописная подпись).
-      __STAMP_EMPLOYEE__   → stamp_employee.png 55мм INLINE
-                             Садится низом на линию подписей (прямоугольный штамп).
-                             Шаблон обеспечивает ячейку C2 шириной 4000dxa чтобы влезло.
-      __STAMP_BANK__       → stamp_bank.png 35мм FLOATING (x=5, y=-214)
-                             Пересекает линию подписей (круглая печать).
+    Стратегия:
+      __STAMP_EMPLOYEE__ (R0C2):
+        → INLINE 55мм, садится на линию (cell vAlign=BOTTOM в шаблоне)
 
-    Семантика MARKER_ASSETS:
-      (path, width_mm, x_off_mm, y_off_mm, is_floating)
-        floating: x/y — смещения anchor
-        inline:   x_off — paragraph left_indent в мм (negative = сдвиг влево)
-                  y_off — игнорируется
+      __STAMP_SIGNATURE__ (был в R0C0):
+        → FLOATING 38мм, якорится к R0C2 параграфу
+        → x_off=-60 column-relative (R0C2 column ~79мм → ~19мм от страничного
+          левого края = на левой стороне страницы, как в эталоне)
+        → y_off=-5 (5мм выше линии = пересекает её снизу)
 
-    Если PNG отсутствует — маркер заменяется пустым параграфом (не падаем).
+      __STAMP_BANK__ (был в R0C3):
+        → FLOATING 35мм, якорится к R0C2 параграфу
+        → x_off=+80 column-relative (R0C2 column ~79мм + 80 = ~159мм от
+          левого края = на правой стороне страницы)
+        → y_off=-5 (5мм выше линии)
+
+    Старые маркеры __STAMP_SIGNATURE__ (R0C0) и __STAMP_BANK__ (R0C3) просто
+    очищаются — их параграфы остаются пустыми (визуально не мешает).
     """
     from docx.shared import Mm
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
 
     assets_dir = TEMPLATES_DIR / "assets" / "v2"
 
-    # (path, width_mm, x_off_mm, y_off_mm, is_floating)
-    MARKER_ASSETS = {
-        "__STAMP_SIGNATURE__": (assets_dir / "signature.png",      38, 20,  -33, True),
-        "__STAMP_EMPLOYEE__":  (assets_dir / "stamp_employee.png", 55,  0,    0, False),
-        "__STAMP_BANK__":      (assets_dir / "stamp_bank.png",     35,  5, -214, True),
-    }
+    employee_png  = assets_dir / "stamp_employee.png"
+    signature_png = assets_dir / "signature.png"
+    bank_png      = assets_dir / "stamp_bank.png"
 
+    # Этап 1. Найти параграф с маркером __STAMP_EMPLOYEE__ (= точка отсчёта)
+    target_p = None
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for marker, (png_path, width_mm, x_off, y_off, is_floating) in MARKER_ASSETS.items():
-                    if marker not in cell.text:
-                        continue
-                    for p in cell.paragraphs:
-                        if marker not in p.text:
-                            continue
-                        # Чистим параграф (удаляем все runs)
+                for p in cell.paragraphs:
+                    if "__STAMP_EMPLOYEE__" in p.text:
+                        target_p = p
+                        break
+                if target_p:
+                    break
+            if target_p:
+                break
+        if target_p:
+            break
+
+    if target_p is None:
+        # Шаблон без маркеров — no-op (другие шаблоны)
+        return
+
+    # Этап 2. Чистим target_p и вставляем прямоугольную INLINE
+    for r in list(target_p.runs):
+        r._element.getparent().remove(r._element)
+    if employee_png.exists():
+        try:
+            run = target_p.add_run()
+            run.add_picture(str(employee_png), width=Mm(55))
+        except Exception as e:
+            import logging
+            logging.warning("Pack 52-fix17: не удалось inline %s: %s", employee_png.name, e)
+
+    # Этап 3. Подпись floating, якорь = target_p (= линия), x_off=-60, y_off=-5
+    if signature_png.exists():
+        try:
+            _add_floating_picture(target_p, signature_png, 38, x_offset_mm=-60, y_offset_mm=-5)
+        except Exception as e:
+            import logging
+            logging.warning("Pack 52-fix17: не удалось floating signature: %s", e)
+
+    # Этап 4. Круглая печать floating, якорь = target_p, x_off=+80, y_off=-5
+    if bank_png.exists():
+        try:
+            _add_floating_picture(target_p, bank_png, 35, x_offset_mm=80, y_offset_mm=-5)
+        except Exception as e:
+            import logging
+            logging.warning("Pack 52-fix17: не удалось floating bank: %s", e)
+
+    # Этап 5. Чистим маркеры __STAMP_SIGNATURE__ и __STAMP_BANK__ (R0C0, R0C3)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if "__STAMP_SIGNATURE__" in p.text or "__STAMP_BANK__" in p.text:
                         for r in list(p.runs):
                             r._element.getparent().remove(r._element)
-                        if not png_path.exists():
-                            break
-                        try:
-                            if is_floating:
-                                _add_floating_picture(p, png_path, width_mm, x_off, y_off)
-                            else:
-                                # Inline: x_off — paragraph left_indent (мм)
-                                # 1мм ≈ 56.7 dxa (twips)
-                                if x_off != 0:
-                                    pPr = p._element.find(qn("w:pPr"))
-                                    if pPr is None:
-                                        pPr = OxmlElement("w:pPr")
-                                        p._element.insert(0, pPr)
-                                    ind = pPr.find(qn("w:ind"))
-                                    if ind is None:
-                                        ind = OxmlElement("w:ind")
-                                        pPr.append(ind)
-                                    ind.set(qn("w:left"), str(int(x_off * 56.7)))
-                                run = p.add_run()
-                                run.add_picture(str(png_path), width=Mm(width_mm))
-                        except Exception as e:
-                            import logging
-                            logging.warning(
-                                "Pack 52-final: не удалось вставить %s: %s",
-                                png_path.name, e,
-                            )
-                        # Один маркер на параграф — стопаем после первого
-                        break
 
 
 def render_bank_statement_to_pdf(
