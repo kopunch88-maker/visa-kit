@@ -1720,58 +1720,37 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
     signature_png = assets_dir / "signature.png"
     bank_png      = assets_dir / "stamp_bank.png"
 
-    # Этап 1.5. Pack 54.0-fix7: продление линии подписи на C2 + spacer.
-    # 1) Снимаем jc=right с «Подпись» (от fix6) → слово возвращается к left-align.
-    # 2) К C2 добавляем bottom-border (sz=8, color=auto как в C3) → линия теперь
-    #    идёт от 90мм (C2.left) до 180мм (C3.right) = выравнивание по левому
-    #    краю с нижними строчками «Структурное подразделение / Территориальный
-    #    банк / Номер / Адрес», которые тоже стартуют в C2.
-    # 3) Spacer ~30мм перед footer table (без изменений от fix6).
+    # Этап 1.5. Pack 54.0-fix8: убираем линию подписи + spacer.
+    # • Слово «Подпись» — left-align в C2 (template default), не трогаем.
+    # • Линия подписи — убираем bottom-border со всех ячеек Row 0 footer table
+    #   (включая C3 из template, где была оригинальная линия): w:val="nil".
+    # • Spacer ~30мм перед footer table — оставляем от fix6.
     try:
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
 
         footer_tbl_el = target_p._element.getparent().getparent().getparent()  # tc -> tr -> tbl
 
+        # Снять bottom-border с ВСЕХ ячеек Row 0 (включая C3 из template)
         rows = footer_tbl_el.findall(qn("w:tr"))
         if rows:
-            cells = rows[0].findall(qn("w:tc"))
-            if len(cells) >= 3:
-                c2 = cells[2]
-
-                # (1) Снять jc=right с «Подпись» в C2 (от fix6)
-                for p_el in c2.findall(qn("w:p")):
-                    ts = p_el.findall(".//" + qn("w:t"))
-                    if any((t.text or "").strip() == "Подпись" for t in ts):
-                        pPr = p_el.find(qn("w:pPr"))
-                        if pPr is not None:
-                            for jc_old in list(pPr.findall(qn("w:jc"))):
-                                pPr.remove(jc_old)
-                        break
-
-                # (2) Добавить bottom-border к C2 → продление линии подписи
-                tcPr = c2.find(qn("w:tcPr"))
+            for c_el in rows[0].findall(qn("w:tc")):
+                tcPr = c_el.find(qn("w:tcPr"))
                 if tcPr is None:
-                    tcPr = OxmlElement("w:tcPr")
-                    c2.insert(0, tcPr)
+                    continue
                 tcBorders = tcPr.find(qn("w:tcBorders"))
                 if tcBorders is None:
-                    tcBorders = OxmlElement("w:tcBorders")
-                    tcMar = tcPr.find(qn("w:tcMar"))
-                    if tcMar is not None:
-                        tcMar.addnext(tcBorders)
-                    else:
-                        tcPr.append(tcBorders)
+                    continue
                 bottom = tcBorders.find(qn("w:bottom"))
-                if bottom is None:
-                    bottom = OxmlElement("w:bottom")
-                    tcBorders.append(bottom)
-                bottom.set(qn("w:val"), "single")
-                bottom.set(qn("w:sz"), "8")
-                bottom.set(qn("w:space"), "0")
-                bottom.set(qn("w:color"), "auto")
+                if bottom is not None:
+                    bottom.set(qn("w:val"), "nil")
+                    # чистим атрибуты чтобы рендерер не пытался отрисовать
+                    for attr_name in ("sz", "space", "color"):
+                        attr_qn = qn(f"w:{attr_name}")
+                        if attr_qn in bottom.attrib:
+                            del bottom.attrib[attr_qn]
 
-        # (3) Spacer ~30мм перед footer table — без изменений от fix6
+        # Spacer ~30мм перед footer table (от fix6, оставляем)
         spacer = OxmlElement("w:p")
         sp_pPr = OxmlElement("w:pPr")
         sp_spacing = OxmlElement("w:spacing")
@@ -1782,7 +1761,7 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
         footer_tbl_el.addprevious(spacer)
     except Exception as e:
         import logging
-        logging.warning("Pack 54.0-fix7: layout-правки failed: %s", e)
+        logging.warning("Pack 54.0-fix8: layout-правки failed: %s", e)
 
     # Этап 2. Pack 54.0-fix5: подпись INLINE → FLOATING (как Альфа Pack 52).
     # INLINE раздувал Row 0 (ячейка растягивалась под высоту картинки ~14мм).
@@ -1798,14 +1777,14 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
             # подпись видна слева от печати, печать перекрывает справа.
             # y=+2 — рабочее значение Альфы Pack 52 для signature (низ крестится
             # с линией подписи). z_order=10 — рисуется ПОД печатью (z=20).
-            # Pack 54.0-fix7: x 141->90 (= левый край C2 = выравнивание с нижними
-            # строчками «Структурное подразделение / Территориальный банк»).
-            # y -3->+5 (подпись опускается к низу ячейки, на линию — слово
-            # «Подпись» сверху C2, подпись внизу на линии, не пересекаются).
+            # Pack 54.0-fix8: x 90->112 (справа от слова «Подпись» — слово
+            # left-aligned в C2 при indent 7мм = 97-109мм, signature начинается
+            # на 112мм с зазором 3мм). y +5->-3 (подпись поднята к верху ячейки,
+            # на тот же визуальный уровень что и слово, справа от него).
             _add_floating_picture(
                 target_p, signature_png, 25,
-                x_offset_mm=90,
-                y_offset_mm=5,
+                x_offset_mm=112,
+                y_offset_mm=-3,
                 z_order=10,
             )
         except Exception as e:
