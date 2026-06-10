@@ -960,13 +960,15 @@ def _insert_v2_signature_images(doc) -> None:
             import logging
             logging.warning("Pack 52-fix17: не удалось inline %s: %s", employee_png.name, e)
 
-    # Этап 3. Подпись floating, якорь = target_p (= линия), x_off=-60, y_off=-5
+    # Этап 3. Подпись floating, якорь = target_p, x_off=-60, y_off=+10
+    # Pack 52-fix18: y_off с -5 на +10 чтобы подпись пересекала линию
+    # (положительное Y = ниже параграфа = ниже линии)
     if signature_png.exists():
         try:
-            _add_floating_picture(target_p, signature_png, 38, x_offset_mm=-60, y_offset_mm=-5)
+            _add_floating_picture(target_p, signature_png, 38, x_offset_mm=-60, y_offset_mm=10)
         except Exception as e:
             import logging
-            logging.warning("Pack 52-fix17: не удалось floating signature: %s", e)
+            logging.warning("Pack 52-fix18: не удалось floating signature: %s", e)
 
     # Этап 4. Круглая печать floating, якорь = target_p, x_off=+80, y_off=-5
     if bank_png.exists():
