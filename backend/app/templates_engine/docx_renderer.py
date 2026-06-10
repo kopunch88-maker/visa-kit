@@ -922,6 +922,8 @@ def render_bank_statement_to_pdf(
         aptPkgs = ["libreoffice", "libreoffice-writer"]
     """
     import subprocess
+    import tempfile  # Pack 52-fix1
+    import os         # Pack 52-fix1
 
     docx_bytes = render_bank_statement(application, session)
 
