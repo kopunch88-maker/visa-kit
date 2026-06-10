@@ -848,34 +848,93 @@ def _ensure_paragraphs_at_tc_end(doc) -> None:
 # Pack 52 — v2 шаблон Альфы (Ч/Б + PNG-печати + PDF)
 # ============================================================================
 
+# Pack 52-final: helper для floating-якоря (картинка вне ячейки).
+def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset_mm=0):
+    """
+    Вставляет PNG как floating anchor (вне потока таблицы).
+    relativeFrom="column" для X, "paragraph" для Y, layoutInCell=0.
+
+    1мм = 36000 EMU. Используется для подписи и круглой печати, которые
+    должны пересекать линию подписей (что невозможно с inline-картинкой).
+    """
+    import random
+    import lxml.etree as etree
+    from docx.shared import Mm
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import qn
+
+    run = paragraph.add_run()
+    run.add_picture(str(png_path), width=Mm(width_mm))
+    drawing = run._element.find(qn("w:drawing"))
+    inline = drawing.find(qn("wp:inline"))
+    ext = inline.find(qn("wp:extent"))
+    cx, cy = ext.get("cx"), ext.get("cy")
+    graphic_el = inline.find(qn("a:graphic"))
+    graphic_xml_str = etree.tostring(graphic_el, encoding="unicode")
+    x_emu = int(x_offset_mm * 36000)
+    y_emu = int(y_offset_mm * 36000)
+    rid = random.randint(10000, 99999)
+    anchor_xml = (
+        f'<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        f'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        f'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        f'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+        f'distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{rid}" '
+        f'behindDoc="0" locked="0" layoutInCell="0" allowOverlap="1">'
+        f'<wp:simplePos x="0" y="0"/>'
+        f'<wp:positionH relativeFrom="column"><wp:posOffset>{x_emu}</wp:posOffset></wp:positionH>'
+        f'<wp:positionV relativeFrom="paragraph"><wp:posOffset>{y_emu}</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/>'
+        f'<wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:wrapNone/>'
+        f'<wp:docPr id="{rid}" name="Floating {rid}"/>'
+        f'<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+        f'{graphic_xml_str}'
+        f'</wp:anchor>'
+    )
+    new_anchor = parse_xml(anchor_xml)
+    drawing.remove(inline)
+    drawing.append(new_anchor)
+
+
 def _insert_v2_signature_images(doc) -> None:
     """
-    Pack 52: для v2 Ч/Б шаблона Альфы вставляет 3 PNG-изображения
-    (подпись Агеевой / штамп должности / круглая печать банка) на место
-    текстовых маркеров.
+    Pack 52-final: для v2 Ч/Б шаблона Альфы вставляет 3 PNG (подпись/штамп/печать)
+    на место текстовых маркеров. Разные стратегии для разных маркеров:
 
-    Маркеры в шаблоне (см. tpl_v2.docx, table[1] row 0):
-      __STAMP_SIGNATURE__  → assets/v2/signature.png        (38мм)
-      __STAMP_EMPLOYEE__   → assets/v2/stamp_employee.png   (38мм)
-      __STAMP_BANK__       → assets/v2/stamp_bank.png       (28мм)
+      __STAMP_SIGNATURE__  → signature.png  38мм FLOATING (x=20, y=-33)
+                             Пересекает линию подписей снизу (рукописная подпись).
+      __STAMP_EMPLOYEE__   → stamp_employee.png 55мм INLINE
+                             Садится низом на линию подписей (прямоугольный штамп).
+                             Шаблон обеспечивает ячейку C2 шириной 4000dxa чтобы влезло.
+      __STAMP_BANK__       → stamp_bank.png 35мм FLOATING (x=5, y=-214)
+                             Пересекает линию подписей (круглая печать).
 
-    Если PNG отсутствует — маркер остаётся как есть (визуальный сигнал что
-    ассет не подложен; не падаем, чтобы deploy не блокировался).
+    Семантика MARKER_ASSETS:
+      (path, width_mm, x_off_mm, y_off_mm, is_floating)
+        floating: x/y — смещения anchor
+        inline:   x_off — paragraph left_indent в мм (negative = сдвиг влево)
+                  y_off — игнорируется
+
+    Если PNG отсутствует — маркер заменяется пустым параграфом (не падаем).
     """
     from docx.shared import Mm
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
 
     assets_dir = TEMPLATES_DIR / "assets" / "v2"
 
+    # (path, width_mm, x_off_mm, y_off_mm, is_floating)
     MARKER_ASSETS = {
-        "__STAMP_SIGNATURE__": (assets_dir / "signature.png",      Mm(38)),
-        "__STAMP_EMPLOYEE__":  (assets_dir / "stamp_employee.png", Mm(38)),
-        "__STAMP_BANK__":      (assets_dir / "stamp_bank.png",     Mm(28)),
+        "__STAMP_SIGNATURE__": (assets_dir / "signature.png",      38, 20,  -33, True),
+        "__STAMP_EMPLOYEE__":  (assets_dir / "stamp_employee.png", 55,  0,    0, False),
+        "__STAMP_BANK__":      (assets_dir / "stamp_bank.png",     35,  5, -214, True),
     }
 
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for marker, (png_path, width) in MARKER_ASSETS.items():
+                for marker, (png_path, width_mm, x_off, y_off, is_floating) in MARKER_ASSETS.items():
                     if marker not in cell.text:
                         continue
                     for p in cell.paragraphs:
@@ -884,19 +943,32 @@ def _insert_v2_signature_images(doc) -> None:
                         # Чистим параграф (удаляем все runs)
                         for r in list(p.runs):
                             r._element.getparent().remove(r._element)
-                        # Вставляем картинку (если файл есть)
-                        if png_path.exists():
-                            run = p.add_run()
-                            try:
-                                run.add_picture(str(png_path), width=width)
-                            except Exception as e:
-                                # Не критично — оставляем пустой параграф,
-                                # на DOCX это просто пустая ячейка
-                                import logging
-                                logging.warning(
-                                    "Pack 52: не удалось вставить %s: %s",
-                                    png_path.name, e,
-                                )
+                        if not png_path.exists():
+                            break
+                        try:
+                            if is_floating:
+                                _add_floating_picture(p, png_path, width_mm, x_off, y_off)
+                            else:
+                                # Inline: x_off — paragraph left_indent (мм)
+                                # 1мм ≈ 56.7 dxa (twips)
+                                if x_off != 0:
+                                    pPr = p._element.find(qn("w:pPr"))
+                                    if pPr is None:
+                                        pPr = OxmlElement("w:pPr")
+                                        p._element.insert(0, pPr)
+                                    ind = pPr.find(qn("w:ind"))
+                                    if ind is None:
+                                        ind = OxmlElement("w:ind")
+                                        pPr.append(ind)
+                                    ind.set(qn("w:left"), str(int(x_off * 56.7)))
+                                run = p.add_run()
+                                run.add_picture(str(png_path), width=Mm(width_mm))
+                        except Exception as e:
+                            import logging
+                            logging.warning(
+                                "Pack 52-final: не удалось вставить %s: %s",
+                                png_path.name, e,
+                            )
                         # Один маркер на параграф — стопаем после первого
                         break
 
