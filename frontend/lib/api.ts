@@ -2540,6 +2540,34 @@ export async function appendBankTransactions(
 }
 
 /**
+ * Pack 53 — перевод банковской выписки на испанский (long-running ~30-60 сек).
+ * Backend: POST /bank-statement/translate
+ *
+ * Переводит RU выписку v2 (без печатей) → ES через LLM, сохраняет в R2,
+ * обновляет Application.bank_statement_translation_storage_key.
+ * После этого /download-file/bank_statement возвращает combined PDF (RU+ES).
+ *
+ * Каждое нажатие = новый LLM-запрос (~$0.05). Старый ключ перетирается.
+ * Доступно только для v2-выписок (bank_template_legacy_v1=false).
+ */
+export async function translateBankStatement(
+  appId: number
+): Promise<{ status: string; storage_key: string }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${appId}/bank-statement/translate`,
+    {
+      method: "POST",
+      headers: jsonHeaders(),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Failed to translate bank statement: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
  * Получить текущие банковские транзакции заявки (если override установлен).
  * Возвращает null если override пустой.
  */

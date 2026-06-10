@@ -30,6 +30,7 @@ import {
   patchApplication,
   regenerateBankTransactions,
   appendBankTransactions, // Pack 51
+  translateBankStatement, // Pack 53 — перевод выписки на испанский
   // Pack 34.0 — единый список стран (~195) для Гражданство/Страна рождения/Страна жительства
   COUNTRY_OPTIONS as ALL_COUNTRIES,
 } from "@/lib/api";
@@ -181,6 +182,12 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [appendEnabled, setAppendEnabled] = useState(false);
   const [appendFrom, setAppendFrom] = useState("");
   const [appendTo, setAppendTo] = useState("");
+
+  // Pack 53 — перевод выписки на испанский (LLM ~30-60 сек)
+  const [bankTranslating, setBankTranslating] = useState(false);
+  const [bankJustTranslated, setBankJustTranslated] = useState(false);
+  const isV2Bank = !(application as any)?.bank_template_legacy_v1;
+  const hasBankTranslation = !!(application as any)?.bank_statement_translation_storage_key;
 
   // Pack 18.9: подписант апостиля (опционально, если пусто — backend подставит дефолт Байрамова)
   const [apostille_signer_short, setApostilleSignerShort] = useState(
@@ -468,6 +475,32 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
       setError(`Не удалось перегенерировать выписку: ${(e as Error).message}`);
     } finally {
       setBankRegenerating(false);
+    }
+  }
+
+  // Pack 53 — перевести банковскую выписку на испанский (LLM ~30-60 сек)
+  async function handleTranslateBankStatement() {
+    if (!application) return;
+    if (hasBankTranslation) {
+      const ok = window.confirm(
+        "У этой выписки уже есть перевод. Перевести заново? " +
+        "Новый запрос к LLM стоит ~$0.05 и занимает 30-60 секунд."
+      );
+      if (!ok) return;
+    }
+    setBankTranslating(true);
+    setBankJustTranslated(false);
+    setError(null);
+    try {
+      await translateBankStatement(application.id);
+      setBankJustTranslated(true);
+      if (onApplicationSaved) onApplicationSaved();
+      // Возвращаем «✨ Перевести» через 5 секунд
+      setTimeout(() => setBankJustTranslated(false), 5000);
+    } catch (e) {
+      setError(`Не удалось перевести выписку: ${(e as Error).message}`);
+    } finally {
+      setBankTranslating(false);
     }
   }
 
@@ -1213,6 +1246,46 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   </div>
                 )}
               </div>
+
+              {/* Pack 53 — перевод выписки на испанский (только для v2 шаблона) */}
+              {isV2Bank && (
+                <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--color-border-tertiary)" }}>
+                  <button
+                    type="button"
+                    onClick={handleTranslateBankStatement}
+                    disabled={bankTranslating || bankRegenerating}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm w-full justify-center"
+                    style={{
+                      background: "var(--color-bg-secondary)",
+                      border: "1px solid var(--color-border-tertiary)",
+                      color: "var(--color-text-primary)",
+                      opacity: bankTranslating || bankRegenerating ? 0.6 : 1,
+                    }}
+                  >
+                    {bankTranslating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Переводится... (~30-60 сек)
+                      </>
+                    ) : bankJustTranslated ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" style={{ color: "var(--color-success, #10b981)" }} />
+                        Готово
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        {hasBankTranslation ? "Перевести заново" : "Перевести выписку"}
+                      </>
+                    )}
+                  </button>
+                  <p className="text-[11px] text-tertiary mt-2">
+                    {hasBankTranslation
+                      ? "Выписка уже переведена. Новый запрос к LLM перезапишет существующий перевод (~$0.05)."
+                      : "Добавит испанскую версию (без печатей) к PDF — страницы 3-4 после русской. Каждое нажатие = новый запрос к LLM (~$0.05)."}
+                  </p>
+                </div>
+              )}
             </Section>
           )}
 
