@@ -1720,6 +1720,47 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
     signature_png = assets_dir / "signature.png"
     bank_png      = assets_dir / "stamp_bank.png"
 
+    # Этап 1.5. Pack 54.0-fix6: layout-правки footer (right-align + spacer).
+    # 1) «Подпись» в C2 right-align → слово к правому краю = вплотную к началу
+    #    линии в C3 (был gap ~30мм между словом и линией).
+    # 2) Перед footer table вставляем spacer ~30мм → таблица опускается вниз
+    #    страницы (была сразу после транзакций, теперь как в эталоне).
+    try:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        # footer table = таблица, в которой лежит target_p
+        footer_tbl_el = target_p._element.getparent().getparent().getparent()  # tc -> tr -> tbl
+
+        # (1) Right-align первый параграф с текстом «Подпись» в footer table
+        for p_el in footer_tbl_el.iter(qn("w:p")):
+            ts = p_el.findall(".//" + qn("w:t"))
+            if any((t.text or "").strip() == "Подпись" for t in ts):
+                pPr = p_el.find(qn("w:pPr"))
+                if pPr is None:
+                    pPr = OxmlElement("w:pPr")
+                    p_el.insert(0, pPr)
+                for jc_old in list(pPr.findall(qn("w:jc"))):
+                    pPr.remove(jc_old)
+                jc = OxmlElement("w:jc")
+                jc.set(qn("w:val"), "right")
+                pPr.append(jc)
+                break
+
+        # (2) Spacer ~30мм перед footer table. line=1700 twips ≈ 30мм
+        #     (1мм = 56.7 twips). lineRule=exact фиксирует высоту параграфа.
+        spacer = OxmlElement("w:p")
+        sp_pPr = OxmlElement("w:pPr")
+        sp_spacing = OxmlElement("w:spacing")
+        sp_spacing.set(qn("w:line"), "1700")
+        sp_spacing.set(qn("w:lineRule"), "exact")
+        sp_pPr.append(sp_spacing)
+        spacer.append(sp_pPr)
+        footer_tbl_el.addprevious(spacer)
+    except Exception as e:
+        import logging
+        logging.warning("Pack 54.0-fix6: layout-правки failed: %s", e)
+
     # Этап 2. Pack 54.0-fix5: подпись INLINE → FLOATING (как Альфа Pack 52).
     # INLINE раздувал Row 0 (ячейка растягивалась под высоту картинки ~14мм).
     # FLOATING висит поверх таблицы, не влияет на высоту ячейки → Row 0
@@ -1734,10 +1775,13 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
             # подпись видна слева от печати, печать перекрывает справа.
             # y=+2 — рабочее значение Альфы Pack 52 для signature (низ крестится
             # с линией подписи). z_order=10 — рисуется ПОД печатью (z=20).
+            # Pack 54.0-fix6: x 130->141 (= начало линии в C3, вплотную после
+            # right-aligned «Подпись»). y +2->-3 (подпись поднята, чтобы быть на
+            # линии, а не ниже её).
             _add_floating_picture(
                 target_p, signature_png, 25,
-                x_offset_mm=130,
-                y_offset_mm=2,
+                x_offset_mm=141,
+                y_offset_mm=-3,
                 z_order=10,
             )
         except Exception as e:
@@ -1757,10 +1801,12 @@ def _insert_v2_sber_signatures(doc, *, mode: str = "full") -> None:
             # Подпись Кирьянова inline 35мм в R0C3. Центр печати = 140 + 35/2 ≈ 158мм
             # = середина R0C3 = пересекает подпись. y_off=-5 — рабочее значение Альфы
             # Pack 52, мелкое (Правило 72 / Инцидент 50).
+            # Pack 54.0-fix6: x 140->150 (правее, overlap с подписью справа).
+            # y -5->-10 (печать выше на 5мм — по запросу пользователя).
             _add_floating_picture(
                 target_p, bank_png, 35,
-                x_offset_mm=140,
-                y_offset_mm=-5,
+                x_offset_mm=150,
+                y_offset_mm=-10,
                 z_order=20,   # Pack 54.0-fix5: поверх подписи (z=10)
             )
         except Exception as e:
