@@ -25,7 +25,7 @@ router = APIRouter(prefix="/admin/applications", tags=["render"])
 
 
 @router.post("/{app_id}/render-package-docx")
-def render_package_docx(
+async def render_package_docx(  # Pack 57.2: def → async (для await _ensure_...)
     app_id: int,
     db: Session = Depends(get_session),
     _: str = Depends(require_manager),
@@ -33,9 +33,54 @@ def render_package_docx(
     application = db.get(Application, app_id)
     if not application:
         raise HTTPException(status_code=404, detail="Not found")
+
+    # Pack 57.2 — для v2 банков заранее гарантируем перевод (если ещё не было)
+    # ПЕРЕД сборкой ZIP. Helpers переиспользуем из applications.py через lazy
+    # import (избегаем circular deps на module-level).
+    is_v2 = not bool(getattr(application, "bank_template_legacy_v1", True))
+    es_docx_bytes = None
+    if is_v2:
+        try:
+            from app.api.applications import _ensure_bank_statement_translation
+            es_docx_bytes = await _ensure_bank_statement_translation(application, db)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Pack 57.2: docx-ZIP auto-translate failed: %s", e
+            )
+            # degraded: ZIP уйдёт с RU only
+
     zip_bytes, status = build_full_package(application, db, kind="docx")
     if not zip_bytes:
         raise HTTPException(status_code=500, detail="DOCX package empty")
+
+    # Pack 57.2 — для v2 банков заменяем DOCX выписки на (combined) PDF в архиве.
+    # build_full_package кладёт «10_Выписка_по_счету.docx» — для v2 нам нужен
+    # «10_Выписка.pdf» (combined RU+ES если есть перевод, иначе RU only).
+    if is_v2:
+        try:
+            from app.api.applications import _replace_in_zip
+            from app.templates_engine.docx_renderer import (
+                render_bank_statement_to_pdf,
+                render_bank_statement_combined_to_pdf,
+            )
+            if es_docx_bytes:
+                pdf_bytes = render_bank_statement_combined_to_pdf(application, db, es_docx_bytes)
+            else:
+                pdf_bytes = render_bank_statement_to_pdf(application, db)
+            zip_bytes = _replace_in_zip(
+                zip_bytes,
+                old_filename="10_Выписка_по_счету.docx",
+                new_filename="10_Выписка.pdf",
+                new_content=pdf_bytes,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Pack 57.2: failed to replace bank_statement DOCX → PDF in docx ZIP: %s", e
+            )
+            # ZIP уйдёт с DOCX выпиской — degraded-safe
+
     download_name = f"docx_package_{application.reference}.zip"
     return StreamingResponse(
         io.BytesIO(zip_bytes),
