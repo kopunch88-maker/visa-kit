@@ -24,7 +24,10 @@ WORKDIR /app
 
 # Сначала requirements (кешируется лучше)
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Pack 56.2 — --default-timeout=120 (вместо 15с) + --retries=10 (вместо 5) для
+# устойчивости к flaky PyPI/Railway-worker network. Pack 56.1 build упал на
+# ReadTimeoutError при /simple/httpcore/ — таймаут 15с, 5 ретраев, не успело.
+RUN pip install --no-cache-dir --default-timeout=120 --retries=10 -r requirements.txt
 
 # Копируем код backend
 COPY backend/ ./backend/
