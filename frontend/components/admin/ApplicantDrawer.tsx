@@ -267,6 +267,11 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
     setDiplomaError(null);
     setDiplomaOpening(i);
     try {
+      // Pack 46.0 / fix3 — diploma.pdf рендерится из БД (applicant.education[idx]),
+      // не из state. Ручные правки (protocol_number и т.д.) персистим ПЕРЕД рендером,
+      // иначе PDF покажет старое/сгенерированное значение. (Инцидент 47, расширение fix1.)
+      await updateApplicant(applicant.id, { education });
+      onSaved();
       await openDiplomaPdf(applicant.id, i);
     } catch (e) {
       setDiplomaError(
