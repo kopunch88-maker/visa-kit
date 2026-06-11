@@ -829,6 +829,9 @@ def render_bank_statement(
     elif _v2_name.endswith("_v2.docx") and "044525225" in _v2_name:
         # Pack 54 — Sber v2 (BIK 044525225)
         _insert_v2_sber_signatures(doc, mode=_v2_mode)
+    elif _v2_name.endswith("_v2.docx") and "044525974" in _v2_name:
+        # Pack 57.4 — ТБанк v2 (BIK 044525974), восстановлено после неудачного Pack 56.0
+        _insert_v2_tbank_signatures(doc, mode=_v2_mode)
 
     # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
     # OOXML schema требует это; Word иначе ругается "Обнаружено неоднозначное
@@ -924,6 +927,51 @@ def _add_floating_picture(paragraph, png_path, width_mm, x_offset_mm=0, y_offset
             xfrm.set("rot", str(int(rotation_deg * 60000)))
     drawing.remove(inline)
     drawing.append(new_anchor)
+
+
+def _insert_v2_tbank_signatures(doc, *, mode: str = "full") -> None:
+    """
+    Pack 57.4 — ТБанк v2 (BIK 044525974).
+
+    full mode (рендер выписки): no-op. У ТБанка подпись+печать УЖЕ INLINE
+    в шаблоне как единый PNG (tbank_signature.png 160×30мм, увеличен до 184×34мм
+    в Pack 57.3, в финальной строке документа). Никаких PNG-ассетов для
+    runtime-вставки нет.
+
+    markers_only mode (для перевода Pack 53, render_bank_statement_for_translation):
+    удаляем параграф с inline tbank_signature.png — чтобы в ES-части combined PDF
+    не дублировались русская подпись и круглая печать ТБанка.
+
+    NOTE: эта функция должна была быть добавлена Pack 56.0 (10.06.2026), но
+    patch не применился (sentinel не нашёлся). Восстановлено в Pack 57.4 вместе
+    с правильной markers_only логикой.
+    """
+    if mode != "markers_only":
+        return
+    # Обход через doc.element.iter() — надёжнее doc.paragraphs (последний
+    # возвращает только top-level параграфы, не recursive в таблицы). От
+    # pic:cNvPr с name='tbank_signature.png' идём к ближайшему ancestor <w:p>,
+    # удаляем параграф целиком. Параграф содержит ТОЛЬКО drawing — безопасно.
+    import logging as _logging
+    _pic_cnvpr = '{http://schemas.openxmlformats.org/drawingml/2006/picture}cNvPr'
+    _w_p = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p'
+    _found = False
+    for _elem in list(doc.element.iter(_pic_cnvpr)):
+        if 'tbank_signature' in (_elem.get('name') or ''):
+            _anc = _elem
+            while _anc is not None and _anc.tag != _w_p:
+                _anc = _anc.getparent()
+            if _anc is not None and _anc.getparent() is not None:
+                _anc.getparent().remove(_anc)
+                _found = True
+                _logging.getLogger(__name__).info(
+                    "Pack 57.4: removed tbank_signature paragraph (markers_only mode for translation)"
+                )
+                break
+    if not _found:
+        _logging.getLogger(__name__).warning(
+            "Pack 57.4: tbank_signature.png not found in document (template changed?)"
+        )
 
 
 def _insert_v2_signature_images(doc, *, mode: str = "full") -> None:
