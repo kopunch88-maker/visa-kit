@@ -1,7 +1,7 @@
 "use client";
 
 import { User, Pencil, Loader2 } from "lucide-react";
-import { ApplicantResponse, ApplicationResponse } from "@/lib/api";
+import { ApplicantResponse, ApplicationResponse, COUNTRY_OPTIONS } from "@/lib/api";
 
 interface Props {
   applicant: ApplicantResponse | null;
@@ -11,39 +11,12 @@ interface Props {
   editLoading?: boolean;
 }
 
-// ISO 3166-1 alpha-3 → русское название (топ-страны для DN-визы и СНГ)
-const COUNTRY_LABELS: Record<string, string> = {
-  RUS: "Россия",
-  UKR: "Украина",
-  BLR: "Беларусь",
-  KAZ: "Казахстан",
-  AZE: "Азербайджан",
-  ARM: "Армения",
-  GEO: "Грузия",
-  TJK: "Таджикистан",
-  UZB: "Узбекистан",
-  KGZ: "Кыргызстан",
-  TKM: "Туркменистан",
-  MDA: "Молдова",
-  TUR: "Турция",
-  ISR: "Израиль",
-  POL: "Польша",
-  DEU: "Германия",
-  CZE: "Чехия",
-  ESP: "Испания",
-  ITA: "Италия",
-  HUN: "Венгрия",
-  PRT: "Португалия",
-  GRC: "Греция",
-  FRA: "Франция",
-  GBR: "Великобритания",
-  USA: "США",
-  CAN: "Канада",
-  SRB: "Сербия",
-  MNE: "Черногория",
-  THA: "Таиланд",
-  ARE: "ОАЭ",
-};
+// Pack 36.3 — полный справочник стран из COUNTRY_OPTIONS (~195 стран, вкл. XKX->Косово).
+// Раньше тут был усечённый локальный список -> карточка показывала сырой ISO-код
+// для редких гражданств. Источник один с дропдауном Гражданство/Страна.
+const COUNTRY_LABELS: Record<string, string> = Object.fromEntries(
+  COUNTRY_OPTIONS.map((o) => [o.value, o.label])
+);
 
 function formatCountry(code: string | null | undefined): string {
   if (!code) return "—";
