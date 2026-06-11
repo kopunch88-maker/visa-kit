@@ -71,14 +71,22 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   // Тянем флаг с бэка асинхронно. До получения ответа считаем legacy (DOCX) —
   // на v2-заявке после fetch перерисуется в PDF.
   const [bankIsV2, setBankIsV2] = useState<boolean>(false);
+  // Pack 57.1 — есть ли уже перевод выписки. Если нет — при скачивании
+  // backend сделает auto-translate (~30-60 сек), показываем модалку.
+  const [hasBankTranslation, setHasBankTranslation] = useState<boolean>(false);
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/admin/applications/${applicationId}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data && data.bank_template_legacy_v1 === false) {
-          setBankIsV2(true);
+        if (data) {
+          if (data.bank_template_legacy_v1 === false) {
+            setBankIsV2(true);
+          }
+          if (data.bank_statement_translation_storage_key) {
+            setHasBankTranslation(true);
+          }
         }
       })
       .catch(() => {});
@@ -124,6 +132,9 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   const [pdfZipDownloaded, setPdfZipDownloaded] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Pack 57.1 — флаг модалки «Переводим выписку, ~1 минута...» при первом
+  // скачивании v2-выписки без существующего перевода
+  const [translatingForDownload, setTranslatingForDownload] = useState<boolean>(false);
 
   // Pack 29.4 + 50.1-G — состояние модалки выбора шаблона при 409.
   // kind: "contract" — самозанятый, "employment" — трудовой договор.
@@ -166,6 +177,10 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   async function handleDownloadZip() {
     setDownloadingZip(true);
     setError(null);
+    // Pack 57.1 — ZIP включает выписку. Если v2 без перевода — backend
+    // сделает auto-translate (~60 сек), показываем модалку.
+    const willTriggerTranslate = bankIsV2 && !hasBankTranslation;
+    if (willTriggerTranslate) setTranslatingForDownload(true);
     try {
       const token = getToken();
       const res = await fetch(
@@ -181,6 +196,8 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `package_${applicationId}.zip`);
       _applySeen(visibleDocs.map((d) => d.id)); // Pack 50.41
+      // Pack 57.1 — backend сохранил translation_storage_key, обновляем локально
+      if (willTriggerTranslate) setHasBankTranslation(true);
 
       setZipDownloaded(true);
       setTimeout(() => setZipDownloaded(false), 3000);
@@ -188,12 +205,16 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       setError((e as Error).message);
     } finally {
       setDownloadingZip(false);
+      if (willTriggerTranslate) setTranslatingForDownload(false);
     }
   }
 
   async function handleDownloadDocxZip() {
     setDownloadingDocxZip(true);
     setError(null);
+    // Pack 57.1 — docx ZIP тоже включает выписку
+    const willTriggerTranslate = bankIsV2 && !hasBankTranslation;
+    if (willTriggerTranslate) setTranslatingForDownload(true);
     try {
       const token = getToken();
       const res = await fetch(
@@ -204,12 +225,14 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       const blob = await res.blob();
       _triggerBrowserDownload(blob, `docx_package_${applicationId}.zip`);
       _applySeen(visibleDocs.filter((d) => d.kind === "docx").map((d) => d.id)); // Pack 50.41
+      if (willTriggerTranslate) setHasBankTranslation(true);
       setDocxZipDownloaded(true);
       setTimeout(() => setDocxZipDownloaded(false), 3000);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setDownloadingDocxZip(false);
+      if (willTriggerTranslate) setTranslatingForDownload(false);
     }
   }
 
@@ -238,6 +261,10 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   async function handleDownloadOne(doc: DocItem) {
     setDownloadingId(doc.id);
     setError(null);
+    // Pack 57.1 — клик на bank_statement v2 без перевода → backend auto-translate
+    const willTriggerTranslate =
+      doc.id === "bank_statement" && bankIsV2 && !hasBankTranslation;
+    if (willTriggerTranslate) setTranslatingForDownload(true);
     try {
       const token = getToken();
       const res = await fetch(
@@ -253,10 +280,12 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       const blob = await res.blob();
       _triggerBrowserDownload(blob, doc.filename);
       _applySeen([doc.id]); // Pack 50.41
+      if (willTriggerTranslate) setHasBankTranslation(true);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setDownloadingId(null);
+      if (willTriggerTranslate) setTranslatingForDownload(false);
     }
   }
 
@@ -402,6 +431,34 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
             setTimeout(() => retry(), 100);
           }}
         />
+      )}
+
+      {/* Pack 57.1 — модалка «Переводим выписку, ~1 минута...» при скачивании
+          v2-выписки без существующего перевода. Backend (Pack 57.0) ждёт LLM
+          ~30-60 сек, потом отдаёт файл; модалка показывается всё это время. */}
+      {translatingForDownload && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="rounded-lg p-6 max-w-md mx-4 shadow-xl"
+            style={{
+              background: "var(--color-bg-primary)",
+              border: "1px solid var(--color-border-tertiary)",
+            }}
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <Loader2 className="w-5 h-5 animate-spin text-tertiary" />
+              <span className="text-base font-medium text-primary">
+                Переводим выписку
+              </span>
+            </div>
+            <p className="text-sm text-secondary">
+              Это займёт около минуты. Не закрывайте страницу — файл скачается автоматически по готовности.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );
