@@ -12,6 +12,7 @@ Pack 20.0 (04.05.2026):
   endpoints. Position теперь не имеет company_id (отвязан от Company).
 """
 
+import asyncio  # Pack 57.0 — lock per app_id для auto-translate
 import io
 import secrets
 from datetime import date, datetime, timedelta, datetime
@@ -580,8 +581,121 @@ def update_status(
 # Document generation
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# Pack 57.0 — helpers для auto-translate выписки на download
+# ----------------------------------------------------------------------------
+
+# Locks per app_id, чтобы параллельные download'ы одной заявки не запускали
+# два независимых LLM-перевода. Module-level dict; OK для single-worker Railway.
+_BANK_TRANSLATE_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+async def _ensure_bank_statement_translation(app, session) -> bytes | None:
+    """
+    Pack 57.0 — гарантирует наличие перевода выписки для v2 заявки.
+
+    Возвращает:
+      None — если v1 (legacy), перевод не нужен/невозможен.
+      bytes (ES docx из R2) — если есть существующий перевод ИЛИ только что сделан.
+
+    Кеш: если Application.bank_statement_translation_storage_key уже стоит —
+    читаем R2 БЕЗ LLM-вызова. Если нет — выполняем полный pipeline
+    (render_bank_statement_for_translation → translate_docx → save R2 → update DB).
+
+    Параллельные вызовы для одного app_id сериализуются через asyncio.Lock.
+    Второй и последующие клиенты ждут первого и получают тот же кешированный
+    результат — без повторных LLM-запросов.
+
+    Перегенерация (свежий LLM при существующем переводе) — ТОЛЬКО через
+    отдельный endpoint /bank-statement/translate (кнопка «Перевести выписку»).
+    """
+    if bool(getattr(app, "bank_template_legacy_v1", True)):
+        return None
+
+    app_id = app.id
+    lock = _BANK_TRANSLATE_LOCKS.setdefault(app_id, asyncio.Lock())
+
+    async with lock:
+        # Re-check после захвата лока: за время ожидания другой вызов мог
+        # успешно завершить перевод и обновить translation_storage_key.
+        session.refresh(app)
+        existing_key = getattr(app, "bank_statement_translation_storage_key", None)
+
+        from app.services.storage import get_storage
+        storage = get_storage()
+
+        if existing_key:
+            try:
+                return storage.read(existing_key)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Pack 57.0: translation_storage_key=%s missing in R2, will re-translate: %s",
+                    existing_key, e,
+                )
+                # fallthrough → перевод заново
+
+        # Нет перевода (или R2-файл потерян) — выполняем полный pipeline
+        import time
+        from app.templates_engine.docx_renderer import render_bank_statement_for_translation
+        from app.services.translation import translate_docx, build_substitution_dict
+        from app.models import Applicant as _Applicant, Company as _Company
+
+        ru_docx_bytes = render_bank_statement_for_translation(app, session)
+
+        applicant = session.get(_Applicant, app.applicant_id) if app.applicant_id else None
+        company = session.get(_Company, app.company_id) if app.company_id else None
+        substitutions = None
+        if applicant or company:
+            substitutions = build_substitution_dict(app, applicant, company)
+
+        es_docx_bytes = await translate_docx(ru_docx_bytes, substitutions=substitutions)
+
+        new_key = f"translations/bank_statement_{app_id}_{int(time.time())}.docx"
+        storage.save(
+            new_key,
+            es_docx_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        old_key = existing_key
+        app.bank_statement_translation_storage_key = new_key
+        session.add(app)
+        session.commit()
+
+        if old_key and old_key != new_key:
+            try:
+                storage.delete(old_key)
+            except Exception:
+                pass
+
+        return es_docx_bytes
+
+
+def _replace_in_zip(
+    zip_bytes: bytes, *, old_filename: str, new_filename: str, new_content: bytes
+) -> bytes:
+    """
+    Pack 57.0 — заменяет файл в ZIP-архиве (для замены DOCX выписки на PDF
+    для v2 банков в render_package). Если old_filename отсутствует — просто
+    добавляет new_filename с новым content (degraded-safe).
+    """
+    import zipfile
+    src = io.BytesIO(zip_bytes)
+    dst = io.BytesIO()
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name in zin.namelist():
+            if name == old_filename:
+                continue
+            zout.writestr(name, zin.read(name))
+        zout.writestr(new_filename, new_content)
+    return dst.getvalue()
+
+
+# ----------------------------------------------------------------------------
+
 @router.post("/{app_id}/render-package")
-def render_package(
+async def render_package(  # Pack 57.0: def → async (для await _ensure_...)
     app_id: int,
     session: Session = Depends(get_session),
     user_id: int = Depends(current_user_id),
@@ -593,7 +707,51 @@ def render_package(
     if problems:
         raise HTTPException(422, detail={"problems": problems})
 
+    # Pack 57.0: для v2 банков заранее гарантируем перевод (если ещё не было)
+    # ПЕРЕД сборкой ZIP. Это может занять ~30-60 сек на свежем LLM-запросе.
+    # Если перевод уже есть — мгновенно вернётся cached bytes.
+    is_v2 = not bool(getattr(app, "bank_template_legacy_v1", True))
+    es_docx_bytes = None
+    if is_v2:
+        try:
+            es_docx_bytes = await _ensure_bank_statement_translation(app, session)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Pack 57.0: bank statement auto-translate for ZIP failed: %s", e
+            )
+            # degraded: ZIP уйдёт с RU only, не падаем
+
     zip_bytes, status = build_full_package(app, session, include_bank_statement=True)
+
+    # Pack 57.0: для v2 банков заменяем DOCX выписки на PDF в архиве.
+    # build_full_package кладёт «10_Выписка_по_счету.docx» — для v2 нам нужен
+    # «10_Выписка.pdf» (combined RU+ES если есть перевод, иначе RU only).
+    if is_v2:
+        try:
+            from app.templates_engine.docx_renderer import (
+                render_bank_statement_to_pdf,
+                render_bank_statement_combined_to_pdf,
+            )
+            if es_docx_bytes:
+                pdf_bytes = render_bank_statement_combined_to_pdf(app, session, es_docx_bytes)
+                status["bank_statement"] = "ok (PDF combined)"
+            else:
+                pdf_bytes = render_bank_statement_to_pdf(app, session)
+                status["bank_statement"] = "ok (PDF RU only)"
+            zip_bytes = _replace_in_zip(
+                zip_bytes,
+                old_filename="10_Выписка_по_счету.docx",
+                new_filename="10_Выписка.pdf",
+                new_content=pdf_bytes,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Pack 57.0: failed to replace bank_statement DOCX → PDF in ZIP: %s", e
+            )
+            # ZIP уйдёт с DOCX выпиской — degraded-safe
+
     # Pack 42.0 — авто-выставление статуса DRAFTS_GENERATED убрано.
     # Менеджер вручную через dropdown выставляет "Документы готовы"
     # после того как САМ проверил все документы.
@@ -667,7 +825,7 @@ _DOWNLOAD_FILES = {
 
 
 @router.get("/{app_id}/download-file/{file_id}")
-def download_single_file(
+async def download_single_file(  # Pack 57.0: def → async (для await _ensure_...)
     app_id: int,
     file_id: str,
     session: Session = Depends(get_session),
@@ -678,6 +836,10 @@ def download_single_file(
 
     Используется в DocumentsGrid — клик по карточке скачивает файл.
     Не сохраняет файл на диск — генерирует и стримит.
+
+    Pack 57.0: для bank_statement v2 без существующего перевода — автоматически
+    запускает LLM-перевод (~30-60 сек) и возвращает combined PDF одним response-ом.
+    Если перевод уже есть (translation_storage_key) — отдаёт без LLM-вызова.
     """
     app = session.get(Application, app_id)
     if not app:
@@ -689,28 +851,27 @@ def download_single_file(
     spec = _DOWNLOAD_FILES[file_id]
     filename = spec["name"]
 
-    # Pack 52 PDF: bank_statement для v2-шаблона (bank_template_legacy_v1=False)
-    # отдаём в PDF — менеджеру удобнее давать клиенту PDF. v1 (legacy) остаётся DOCX.
-    # Pack 53: если у заявки есть bank_statement_translation_storage_key —
-    # отдаём combined PDF (RU с печатями + ES без печатей).
+    # Pack 52 PDF: bank_statement для v2 → PDF (v1 legacy → DOCX через старый путь ниже).
+    # Pack 53: если есть перевод → combined PDF (RU + ES).
+    # Pack 57.0: если v2 + нет перевода → автоматически переводим перед отдачей.
     if file_id == "bank_statement" and not bool(getattr(app, "bank_template_legacy_v1", True)):
         try:
             from app.templates_engine.docx_renderer import (
                 render_bank_statement_to_pdf,
                 render_bank_statement_combined_to_pdf,
             )
-            translation_key = getattr(app, "bank_statement_translation_storage_key", None)
-            if translation_key:
-                # Pack 53: combined PDF (RU + ES)
-                from app.services.storage import get_storage
-                es_docx_bytes = get_storage().read(translation_key)
+            # Pack 57.0: auto-translate если ещё не было; cached если уже было.
+            # Параллельные клики сериализуются через asyncio.Lock per app_id.
+            es_docx_bytes = await _ensure_bank_statement_translation(app, session)
+            if es_docx_bytes is not None:
                 content = render_bank_statement_combined_to_pdf(app, session, es_docx_bytes)
             else:
-                # Pack 52: только RU PDF
+                # Safety net — для v2 не должно срабатывать (ensure возвращает None
+                # только для v1). На всякий случай оставляем fallback на RU only.
                 content = render_bank_statement_to_pdf(app, session)
         except Exception as e:
             import logging
-            logging.getLogger(__name__).exception("Pack 52/53: failed to render bank_statement PDF")
+            logging.getLogger(__name__).exception("Pack 52/53/57: failed to render bank_statement PDF")
             raise HTTPException(
                 500,
                 f"Failed to render bank_statement PDF: {type(e).__name__}: {e}",
