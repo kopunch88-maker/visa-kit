@@ -775,16 +775,24 @@ def render_bank_statement(
             "bank_statement_template.docx",
             "bank_statement_template_v2.docx",
         )
+        # Pack 58: для Сбера красим приходы серым ТОЛЬКО в переводе
+        # (for_translation=True) — серое попадает в ES-версию, а штатная
+        # RU-выписка Сбера остаётся белой. Болд для Сбера не применяем:
+        # последняя ячейка у Сбера это «Остаток», а не сумма.
+        _is_sber_template = "044525225" in template_path.name
+        _sber_translation_shading = _is_sber_template and for_translation
         amount = tx.get("amount")
-        if amount is not None and _is_default_template:
+        if amount is not None and (_is_default_template or _sber_translation_shading):
             try:
                 amount_val = float(amount)
             except (TypeError, ValueError):
                 amount_val = 0
             if amount_val > 0:
                 _apply_gray_shading_to_row(new_tr)
-                # Pack 25.0: жирная сумма у поступлений (как в эталонной выписке Алиева)
-                _apply_bold_to_amount_cell(new_tr)
+                # Pack 25.0: жирная сумма у поступлений (как в эталонной выписке Алиева).
+                # Для Сбера болд НЕ применяем (Pack 58) — см. коммент выше.
+                if _is_default_template:
+                    _apply_bold_to_amount_cell(new_tr)
                 # Pack 25.3: НЕ применяем tcMar — у Алиева его нет.
                 # Воздух в серых ячейках обеспечивается через spacing
                 # последнего параграфа описания (before=40 after=40),
