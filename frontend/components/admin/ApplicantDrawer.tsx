@@ -38,6 +38,8 @@ import { InnSuggestionModal } from "./InnSuggestionModal";
 // Pack 41.0-D — секция управления passports[]
 import { PassportsSection } from "./PassportsSection";
 import { RefineInnDateModal } from "./RefineInnDateModal";
+// Pack 56 — калькулятор примерного номера апостиля
+import { ApostilleEstimator } from "./ApostilleEstimator";
 
 interface Props {
   applicant: ApplicantResponse;
@@ -1800,6 +1802,11 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 Добавить вручную
               </button>
             </div>
+          </Section>
+
+          {/* Pack 56 — оценка номера апостиля по дате */}
+          <Section title="Номер апостиля (оценка)">
+            <ApostilleEstimator />
           </Section>
 
           {/* Pack 19.1 — Опыт работы с кнопкой ✨ автогенерации */}
