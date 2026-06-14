@@ -326,6 +326,9 @@ class ApplicationPatch(BaseModel):
     submission_province: Optional[str] = None
     payments_period_months: Optional[int] = None
     internal_notes: Optional[str] = None
+    # Pack 59 — дата формирования банковской выписки (statement_date_override).
+    # Без этого поля PATCH из дровера молча терял дату → перегенерация шла со старой.
+    bank_statement_date: Optional[date] = None
     # Pack 9: NRC квитанции пошлины (для PDF-форм MI-T)
     tasa_nrc: Optional[str] = None
     # Pack 26.0: реквизиты письма от компании (Исх. № и дата)
