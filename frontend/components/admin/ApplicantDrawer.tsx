@@ -127,6 +127,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [citaCertOwner, setCitaCertOwner] = useState((applicant as any).cita_cert_owner || "");
   const [citaEmail, setCitaEmail] = useState((applicant as any).cita_email || "");
   const [citaPhone, setCitaPhone] = useState((applicant as any).cita_phone || "");
+  const [citaLocation, setCitaLocation] = useState((applicant as any).cita_location || "");  // Pack 56.1
   const [inn, setInn] = useState(applicant.inn || "");
   // Pack 17.3 — модал генерации ИНН + дата регистрации НПД
   const [innModalOpen, setInnModalOpen] = useState(false);
@@ -606,6 +607,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         cita_cert_owner: citaFillType === "with_cert" ? (citaCertOwner.trim() || null) : null,
         cita_email: citaEmail.trim() || null,
         cita_phone: citaPhone.trim() || null,
+        cita_location: citaLocation || null,  // Pack 56.1
         inn: inn.trim(),
         inn_registration_date: inn_registration_date || null,
         inn_kladr_code: inn_kladr_code || null,
@@ -1361,6 +1363,16 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 ]}
               />
             )}
+            <FieldSelect
+              label="Локация ситы"
+              value={citaLocation}
+              onChange={setCitaLocation}
+              options={[
+                { value: "", label: "— не выбрана —" },
+                { value: "Madrid", label: "Madrid" },
+                { value: "Barcelona", label: "Barcelona" },
+              ]}
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Email (для ситы)" value={citaEmail} onChange={setCitaEmail} placeholder="user@example.com" />
               <Field label="Телефон (для ситы)" value={citaPhone} onChange={setCitaPhone} placeholder="+34 ... / +7 ..." />

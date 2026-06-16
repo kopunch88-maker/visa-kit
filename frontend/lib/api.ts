@@ -1136,6 +1136,7 @@ export async function updateApplicant(
     cita_cert_owner?: string | null;
     cita_email?: string | null;
     cita_phone?: string | null;
+    cita_location?: string | null;  // Pack 56.1
   }>,
 ): Promise<ApplicantResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, {

@@ -263,6 +263,11 @@ class Applicant(TimestampMixin, table=True):
         default=None, max_length=32,
         description="Телефон для кода при оформлении ситы (может отличаться от phone клиента).",
     )
+    # Pack 56.1 — локация ситы (город записи на приём)
+    cita_location: Optional[str] = Field(
+        default=None, max_length=16,
+        description="Локация ситы: 'Madrid' / 'Barcelona'.",
+    )
     phone_ru: Optional[str] = Field(
         default=None, max_length=32,
         description="Русский телефон для русских документов. Пусто → используется phone.",
@@ -359,6 +364,7 @@ class ApplicantCreate(SQLModel):
     cita_cert_owner: Optional[str] = None
     cita_email: Optional[str] = None
     cita_phone: Optional[str] = None
+    cita_location: Optional[str] = None  # Pack 56.1
     education: List[EducationRecord] = Field(default_factory=list)
     work_history: List[WorkRecord] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
@@ -425,6 +431,7 @@ class ApplicantUpdate(SQLModel):
     cita_cert_owner: Optional[str] = None
     cita_email: Optional[str] = None
     cita_phone: Optional[str] = None
+    cita_location: Optional[str] = None  # Pack 56.1
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None

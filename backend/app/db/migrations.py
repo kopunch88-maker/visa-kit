@@ -1706,3 +1706,22 @@ def apply_pack56_0_migration() -> None:
         ))
 
     print("[migration] Pack 56.0: applicant.cita_* ready")
+
+
+# ============================================================================
+# Pack 56.1 — Локация ситы (applicant.cita_location)
+# ============================================================================
+def apply_pack56_2_migration() -> None:
+    """Pack 56.1 — applicant.cita_location VARCHAR(16) ('Madrid' / 'Barcelona').
+
+    Идемпотентна (ADD COLUMN IF NOT EXISTS).
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_location VARCHAR(16)"
+        ))
+
+    print("[migration] Pack 56.1: applicant.cita_location ready")

@@ -31,6 +31,7 @@ import { CandidateCard } from "./cards/CandidateCard";
 import { CompanyCard } from "./cards/CompanyCard";
 import { SubmissionCard } from "./cards/SubmissionCard";
 import { TieCard } from "./cards/TieCard";  // Pack 36.1
+import { CitaCard } from "./cards/CitaCard";  // Pack 56.1
 // Pack 32.1 — блок заметок по клиенту
 import { NotesCard } from "./cards/NotesCard";
 import { BusinessChecksBlock } from "./BusinessChecksBlock";
@@ -521,6 +522,14 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           onEdit={() => setShowTieDrawer(true)}
         />
       </div>
+
+      {/* Pack 56.1 — плашка «Ситы» (перед чек-листом) */}
+      {applicant && (
+        <CitaCard
+          applicant={applicant}
+          onEdit={() => setShowApplicantDrawer(true)}
+        />
+      )}
 
       <BusinessChecksBlock
         application={application}
