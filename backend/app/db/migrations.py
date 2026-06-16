@@ -1725,3 +1725,22 @@ def apply_pack56_2_migration() -> None:
         ))
 
     print("[migration] Pack 56.1: applicant.cita_location ready")
+
+
+# ============================================================================
+# Pack 56.4 — Флаг отлова сит (applicant.cita_catching)
+# ============================================================================
+def apply_pack56_3_migration() -> None:
+    """Pack 56.4 — applicant.cita_catching BOOLEAN DEFAULT FALSE.
+
+    Идемпотентна (ADD COLUMN IF NOT EXISTS).
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_catching BOOLEAN DEFAULT FALSE"
+        ))
+
+    print("[migration] Pack 56.4: applicant.cita_catching ready")

@@ -131,7 +131,8 @@ _PATCHABLE_FIELDS = {
     "home_country",
     "email", "phone", "phone_ru",  # Pack 50.15-A
     # Pack 56.0 — поля окна «Ситы» (отдельные от контактов клиента)
-    "cita_fill_type", "cita_cert_owner", "cita_email", "cita_phone", "cita_location",  # Pack 56.1
+    "cita_fill_type", "cita_cert_owner", "cita_email", "cita_phone", "cita_location",  # Pack 56.1
+    "cita_catching",  # Pack 56.4
     # Pack 16.1 — банковские поля
     "bank_id",
     "bank_account",

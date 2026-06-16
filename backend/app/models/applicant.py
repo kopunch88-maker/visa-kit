@@ -268,6 +268,11 @@ class Applicant(TimestampMixin, table=True):
         default=None, max_length=16,
         description="Локация ситы: 'Madrid' / 'Barcelona'.",
     )
+    # Pack 56.4 — флаг «ловля сит запущена» (заглушка алгоритма отлова)
+    cita_catching: Optional[bool] = Field(
+        default=False,
+        description="Запущен ли отлов сит для клиента (Start/Stop из карточки).",
+    )
     phone_ru: Optional[str] = Field(
         default=None, max_length=32,
         description="Русский телефон для русских документов. Пусто → используется phone.",
@@ -365,6 +370,7 @@ class ApplicantCreate(SQLModel):
     cita_email: Optional[str] = None
     cita_phone: Optional[str] = None
     cita_location: Optional[str] = None  # Pack 56.1
+    cita_catching: Optional[bool] = None  # Pack 56.4
     education: List[EducationRecord] = Field(default_factory=list)
     work_history: List[WorkRecord] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
@@ -432,6 +438,7 @@ class ApplicantUpdate(SQLModel):
     cita_email: Optional[str] = None
     cita_phone: Optional[str] = None
     cita_location: Optional[str] = None  # Pack 56.1
+    cita_catching: Optional[bool] = None  # Pack 56.4
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None

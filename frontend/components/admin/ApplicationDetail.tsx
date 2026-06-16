@@ -529,7 +529,9 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       {applicant && (
         <CitaCard
           applicant={applicant}
+          application={application}
           onEdit={() => setShowCitaDrawer(true)}
+          onChanged={loadAll}
         />
       )}
 
