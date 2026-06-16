@@ -8,6 +8,7 @@ import {
   ApplicationResponse,
   STATUS_TABS,
 } from "@/lib/api";
+import { matchesSearch } from "@/lib/searchNormalize";
 import { ApplicationsList, type SortMode } from "@/components/admin/ApplicationsList";
 import { ApplicationDetail } from "@/components/admin/ApplicationDetail";
 import { ImportPackageDialog } from "@/components/admin/ImportPackageDialog";
@@ -84,11 +85,14 @@ function AdminPageContent() {
       filtered = filtered.filter((a) => tab.statuses.includes(a.status));
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      filtered = filtered.filter(
-        (a) =>
-          a.reference.toLowerCase().includes(q) ||
-          (a.internal_notes || "").toLowerCase().includes(q),
+      filtered = filtered.filter((a) =>
+        matchesSearch(
+          searchQuery,
+          a.reference,
+          a.internal_notes,
+          a.applicant_name_native,
+          a.applicant_name_latin,
+        ),
       );
     }
     return filtered;

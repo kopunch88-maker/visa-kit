@@ -10,6 +10,7 @@ import {
   STATUS_LABELS,
   getToken,
 } from "@/lib/api";
+import { matchesSearch } from "@/lib/searchNormalize";
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   approved: { bg: "var(--color-bg-success)", text: "var(--color-text-success)" },
@@ -65,13 +66,14 @@ export default function ArchivePage() {
       filtered = filtered.filter((a) => a.status === statusFilter);
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      filtered = filtered.filter(
-        (a) =>
-          a.reference.toLowerCase().includes(q) ||
-          (a.internal_notes || "").toLowerCase().includes(q) ||
-          (a.applicant_name_native || "").toLowerCase().includes(q) ||
-          (a.applicant_name_latin || "").toLowerCase().includes(q),
+      filtered = filtered.filter((a) =>
+        matchesSearch(
+          searchQuery,
+          a.reference,
+          a.internal_notes,
+          a.applicant_name_native,
+          a.applicant_name_latin,
+        ),
       );
     }
     return filtered;

@@ -11,6 +11,7 @@ import {
   STATUS_LABELS,
   getToken,
 } from "@/lib/api";
+import { matchesSearch } from "@/lib/searchNormalize";
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   draft: { bg: "var(--color-bg-secondary)", text: "var(--color-text-tertiary)" },
@@ -73,13 +74,14 @@ export default function TrashPage() {
 
   const filteredItems = useMemo(() => {
     if (!searchQuery.trim()) return items;
-    const q = searchQuery.trim().toLowerCase();
-    return items.filter(
-      (a) =>
-        a.reference.toLowerCase().includes(q) ||
-        (a.internal_notes || "").toLowerCase().includes(q) ||
-        (a.applicant_name_native || "").toLowerCase().includes(q) ||
-        (a.applicant_name_latin || "").toLowerCase().includes(q),
+    return items.filter((a) =>
+      matchesSearch(
+        searchQuery,
+        a.reference,
+        a.internal_notes,
+        a.applicant_name_native,
+        a.applicant_name_latin,
+      ),
     );
   }, [items, searchQuery]);
 
