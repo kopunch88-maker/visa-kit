@@ -898,6 +898,12 @@ async def download_single_file(  # Pack 57.0: def → async (для await _ensur
             pdf_forms = build_pdf_forms(app, session, templates_root)
             content = pdf_forms.get(spec["pdf_key"])
             if content is None:
+                # Pack 54-B — EX-17/MI-TIE формируются только при заполненных NIE + fingerprint_date
+                if file_id in ("ex17", "mi_tie") and (not app.nie or not app.fingerprint_date):
+                    raise HTTPException(
+                        422,
+                        "Для EX-17 и MI-TIE заполните NIE и дату дактилоскопии (fingerprint_date) в карточке заявки.",
+                    )
                 raise HTTPException(500, f"Failed to generate PDF: {file_id}")
             media_type = "application/pdf"
         else:

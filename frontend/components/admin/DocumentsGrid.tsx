@@ -23,6 +23,8 @@ type DocItem = {
   naimOnly?: boolean;
   // Pack 50.1-F3 — карточка видна только для SELF_EMPLOYED-заявок
   selfEmployedOnly?: boolean;
+  // Pack 54-B — требует заполненных NIE + fingerprint_date (TIE-формы)
+  requiresTie?: boolean;
 };
 
 const DOCUMENTS: DocItem[] = [
@@ -41,8 +43,8 @@ const DOCUMENTS: DocItem[] = [
   { id: "compromiso",          filename: "13_Compromiso_RETA.pdf",                                kind: "pdf", selfEmployedOnly: true },  // Pack 50.19
   { id: "declaracion",         filename: "14_Declaracion_antecedentes.pdf",                       kind: "pdf"  },
   // Pack 36.1 — TIE формы (только если у заявки заполнены NIE и fingerprint_date)
-  { id: "mi_tie",              filename: "15_MI-TIE.pdf",                                         kind: "pdf"  },
-  { id: "ex17",                filename: "16_EX-17.pdf",                                          kind: "pdf"  },
+  { id: "mi_tie",              filename: "15_MI-TIE.pdf",                                         kind: "pdf", requiresTie: true  },
+  { id: "ex17",                filename: "16_EX-17.pdf",                                          kind: "pdf", requiresTie: true  },
   { id: "npd_certificate",     filename: "15_Справка_НПД.docx",       kind: "docx", selfEmployedOnly: true },
   { id: "npd_certificate_lkn", filename: "15b_Справка_НПД_ЛКН.docx",   kind: "docx", selfEmployedOnly: true },
   { id: "apostille",           filename: "16_Апостиль.docx",         kind: "docx", selfEmployedOnly: true },
@@ -71,6 +73,8 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   // Тянем флаг с бэка асинхронно. До получения ответа считаем legacy (DOCX) —
   // на v2-заявке после fetch перерисуется в PDF.
   const [bankIsV2, setBankIsV2] = useState<boolean>(false);
+  // Pack 54-B — готовы ли TIE-формы (заполнены NIE + fingerprint_date)
+  const [tieReady, setTieReady] = useState<boolean>(false);
   // Pack 57.1 — есть ли уже перевод выписки. Если нет — при скачивании
   // backend сделает auto-translate (~30-60 сек), показываем модалку.
   const [hasBankTranslation, setHasBankTranslation] = useState<boolean>(false);
@@ -87,6 +91,8 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
           if (data.bank_statement_translation_storage_key) {
             setHasBankTranslation(true);
           }
+          // Pack 54-B — TIE-формы (EX-17, MI-TIE) только при NIE + fingerprint_date
+          setTieReady(Boolean(data.nie) && Boolean(data.fingerprint_date));
         }
       })
       .catch(() => {});
@@ -399,16 +405,24 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {visibleDocs.filter(d => d.kind === "pdf").map((doc) => {
             const isDownloading = downloadingId === doc.id;
+            // Pack 54-B — TIE-формы недоступны без NIE + fingerprint_date
+            const tieBlocked = Boolean(doc.requiresTie) && !tieReady;
+            const pdfSubtitle = tieBlocked
+              ? "Заполните NIE и дату дактилоскопии"
+              : isDownloading
+              ? "Скачивание..."
+              : "клик для скачивания";
             return (
-              <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-wait"
+              <button key={doc.id} onClick={() => handleDownloadOne(doc)} disabled={isDownloading || tieBlocked}
+                title={tieBlocked ? "Для EX-17 и MI-TIE нужно заполнить NIE и дату дактилоскопии в карточке заявки" : undefined}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left transition-colors hover:opacity-80 disabled:opacity-60 disabled:cursor-not-allowed"
                 style={{ background: "var(--color-bg-secondary)", border: !seenKeys.has(doc.id) ? "1.5px solid var(--color-accent)" : "1.5px solid transparent" }}>
                 <NewDot seen={seenKeys.has(doc.id)} onToggle={() => toggleSeen(doc.id)} />
                 <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-semibold"
                   style={{ background: "var(--color-bg-danger)", color: "var(--color-text-danger)" }}>PDF</div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-primary line-clamp-1">{doc.filename}</div>
-                  <div className="text-xs text-tertiary">{isDownloading ? "Скачивание..." : "клик для скачивания"}</div>
+                  <div className="text-xs text-tertiary">{pdfSubtitle}</div>
                 </div>
                 {isDownloading ? <Loader2 className="w-4 h-4 animate-spin text-tertiary flex-shrink-0" /> : <Download className="w-4 h-4 text-tertiary flex-shrink-0 opacity-50" />}
               </button>
