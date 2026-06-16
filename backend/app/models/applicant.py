@@ -273,6 +273,12 @@ class Applicant(TimestampMixin, table=True):
         default=False,
         description="Запущен ли отлов сит для клиента (Start/Stop из карточки).",
     )
+    # Pack 56.5 — статус/результат отлова сит (пишет воркер, не менеджер)
+    cita_status: Optional[str] = Field(default=None, max_length=24)
+    cita_status_at: Optional[str] = Field(default=None, max_length=32)
+    cita_appointment_at: Optional[str] = Field(default=None, max_length=64)
+    cita_office: Optional[str] = Field(default=None, max_length=128)
+    cita_result_note: Optional[str] = Field(default=None, max_length=512)
     phone_ru: Optional[str] = Field(
         default=None, max_length=32,
         description="Русский телефон для русских документов. Пусто → используется phone.",
@@ -371,6 +377,11 @@ class ApplicantCreate(SQLModel):
     cita_phone: Optional[str] = None
     cita_location: Optional[str] = None  # Pack 56.1
     cita_catching: Optional[bool] = None  # Pack 56.4
+    cita_status: Optional[str] = None  # Pack 56.5
+    cita_status_at: Optional[str] = None
+    cita_appointment_at: Optional[str] = None
+    cita_office: Optional[str] = None
+    cita_result_note: Optional[str] = None
     education: List[EducationRecord] = Field(default_factory=list)
     work_history: List[WorkRecord] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
@@ -439,6 +450,11 @@ class ApplicantUpdate(SQLModel):
     cita_phone: Optional[str] = None
     cita_location: Optional[str] = None  # Pack 56.1
     cita_catching: Optional[bool] = None  # Pack 56.4
+    cita_status: Optional[str] = None  # Pack 56.5
+    cita_status_at: Optional[str] = None
+    cita_appointment_at: Optional[str] = None
+    cita_office: Optional[str] = None
+    cita_result_note: Optional[str] = None
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None

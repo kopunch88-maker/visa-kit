@@ -30,6 +30,21 @@ export function CitaCard({ applicant, application, onEdit, onChanged }: Props) {
   const approved = application.status === "approved";
   const allFilled = Boolean(location && email && phone && nie);
   const canStart = approved && allFilled && !catching;
+  // Pack 56.6 — статус/результат отлова (пишет воркер)
+  const citaStatus: string = a.cita_status || "";
+  const citaStatusAt: string = a.cita_status_at || "";
+  const citaOffice: string = a.cita_office || "";
+  const citaAppt: string = a.cita_appointment_at || "";
+  const citaNote: string = a.cita_result_note || "";
+  const STATUS_RU: Record<string, string> = {
+    running: "ловим",
+    slot_found: "слот найден",
+    office_picked: "офис выбран",
+    booked: "забронировано",
+    other_offices: "слоты в других офисах",
+    error: "ошибка",
+  };
+  const statusLabel = STATUS_RU[citaStatus] || citaStatus;
   const [busy, setBusy] = useState(false);
   const [catchErr, setCatchErr] = useState<string | null>(null);
 
@@ -144,6 +159,17 @@ export function CitaCard({ applicant, application, onEdit, onChanged }: Props) {
             Остановить
           </button>
         </div>
+        {citaStatus && (
+          <div className="mt-2 text-xs text-secondary space-y-0.5">
+            <div>
+              Статус ловли: <span className="text-primary">{statusLabel}</span>
+              {citaStatusAt ? <span className="text-tertiary"> · {citaStatusAt}</span> : null}
+            </div>
+            {citaOffice && <div>Офис: {citaOffice}</div>}
+            {citaAppt && <div>Время ситы: {citaAppt}</div>}
+            {citaNote && <div className="text-tertiary">{citaNote}</div>}
+          </div>
+        )}
         {catchErr && <div className="text-xs text-danger mt-2">{catchErr}</div>}
       </div>
     </div>

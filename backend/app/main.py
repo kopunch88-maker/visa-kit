@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db import init_db
+from app.db import init_db
+from app.api import cita_worker  # Pack 56.5 — внутренний API ловца сит
 from app.db.migrations import (
     apply_pack10_migration,
     apply_pack11_migration,
@@ -48,7 +49,8 @@ from app.db.migrations import (
     apply_pack50_15_migration,  # Pack 50.15-A русский телефон (applicant.phone_ru)
     apply_pack56_0_migration,  # Pack 56.0 поля окна «Ситы» (applicant.cita_*)
     apply_pack56_2_migration,  # Pack 56.1 локация ситы (applicant.cita_location)
-    apply_pack56_3_migration,  # Pack 56.4 флаг отлова сит (applicant.cita_catching)
+    apply_pack56_3_migration,  # Pack 56.4 флаг отлова сит (applicant.cita_catching)
+    apply_pack56_5_migration,  # Pack 56.5 статус отлова (applicant.cita_status и др.)
 )
 
 
@@ -95,7 +97,8 @@ async def lifespan(app: FastAPI):
     apply_pack50_15_migration()  # Pack 50.15-A русский телефон
     apply_pack56_0_migration()  # Pack 56.0 поля окна «Ситы» (applicant.cita_*)
     apply_pack56_2_migration()  # Pack 56.1 локация ситы (applicant.cita_location)
-    apply_pack56_3_migration()  # Pack 56.4 флаг отлова сит
+    apply_pack56_3_migration()  # Pack 56.4 флаг отлова сит
+    apply_pack56_5_migration()  # Pack 56.5 статус отлова
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")
@@ -153,7 +156,8 @@ app.include_router(representatives.router, prefix="/api")
 app.include_router(spain_addresses.router, prefix="/api")
 app.include_router(applications.router, prefix="/api")
 app.include_router(render_endpoints.router, prefix="/api")
-app.include_router(applicants.router, prefix="/api")
+app.include_router(applicants.router, prefix="/api")
+app.include_router(cita_worker.router, prefix="/api")  # Pack 56.5
 app.include_router(client_portal.router, prefix="/api")
 app.include_router(client_documents_admin.router, prefix="/api")
 app.include_router(import_package.router, prefix="/api")

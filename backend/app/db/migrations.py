@@ -1744,3 +1744,28 @@ def apply_pack56_3_migration() -> None:
         ))
 
     print("[migration] Pack 56.4: applicant.cita_catching ready")
+
+
+# ============================================================================
+# Pack 56.5 — Статус/результат отлова сит (applicant.cita_status и др.)
+# ============================================================================
+def apply_pack56_5_migration() -> None:
+    """Pack 56.5 — поля статуса отлова на applicant (пишет воркер).
+
+    Идемпотентна (ADD COLUMN IF NOT EXISTS).
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    cols = [
+        "cita_status VARCHAR(24)",
+        "cita_status_at VARCHAR(32)",
+        "cita_appointment_at VARCHAR(64)",
+        "cita_office VARCHAR(128)",
+        "cita_result_note VARCHAR(512)",
+    ]
+    with engine.begin() as conn:
+        for col in cols:
+            conn.execute(text(f"ALTER TABLE applicant ADD COLUMN IF NOT EXISTS {col}"))
+
+    print("[migration] Pack 56.5: applicant cita status fields ready")
