@@ -77,15 +77,10 @@ function AdminPageContent() {
   }, [applications]);
 
   const filteredApplications = useMemo(() => {
-    let filtered = mainTab === "filed"
-      ? applications.filter((a) => a.is_filed)
-      : applications.filter((a) => !a.is_filed);
-    const tab = STATUS_TABS.find((t) => t.id === activeTab);
-    if (tab && tab.statuses.length > 0) {
-      filtered = filtered.filter((a) => tab.statuses.includes(a.status));
-    }
+    // Pack 54-A-fix1 — при активном поиске ищем по ВСЕМ клиентам сразу
+    // (и «Заявки», и «Поданы», без фильтра по статус-вкладке).
     if (searchQuery.trim()) {
-      filtered = filtered.filter((a) =>
+      return applications.filter((a) =>
         matchesSearch(
           searchQuery,
           a.reference,
@@ -94,6 +89,13 @@ function AdminPageContent() {
           a.applicant_name_latin,
         ),
       );
+    }
+    let filtered = mainTab === "filed"
+      ? applications.filter((a) => a.is_filed)
+      : applications.filter((a) => !a.is_filed);
+    const tab = STATUS_TABS.find((t) => t.id === activeTab);
+    if (tab && tab.statuses.length > 0) {
+      filtered = filtered.filter((a) => tab.statuses.includes(a.status));
     }
     return filtered;
   }, [applications, activeTab, searchQuery, mainTab]);
