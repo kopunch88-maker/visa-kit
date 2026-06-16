@@ -1131,6 +1131,11 @@ export async function updateApplicant(
     bank_name: string | null;
     bank_bic: string | null;
     bank_correspondent_account: string | null;
+    // Pack 56.0 — поля окна «Ситы» (cita_*)
+    cita_fill_type?: string | null;
+    cita_cert_owner?: string | null;
+    cita_email?: string | null;
+    cita_phone?: string | null;
   }>,
 ): Promise<ApplicantResponse> {
   const res = await fetch(`${API_BASE_URL}/api/admin/applicants/${id}`, {

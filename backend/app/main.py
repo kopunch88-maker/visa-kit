@@ -45,7 +45,8 @@ from app.db.migrations import (
     apply_pack50_9_migration,  # Pack 50.9-A СТД-Р fields (stdr_* + company.sfr_registration_number + position.okz_code)
     apply_pack50_10_migration,  # Pack 50.10-A Расчётный листок (company.accountant_short_ru)
     apply_pack50_12_migration,  # Pack 50.12-A СОО (application.soo_number + soo_date)
-    apply_pack50_15_migration,  # Pack 50.15-A русский телефон (applicant.phone_ru)
+    apply_pack50_15_migration,  # Pack 50.15-A русский телефон (applicant.phone_ru)
+    apply_pack56_0_migration,  # Pack 56.0 поля окна «Ситы» (applicant.cita_*)
 )
 
 
@@ -89,7 +90,8 @@ async def lifespan(app: FastAPI):
     apply_pack50_9_migration()  # Pack 50.9-A СТД-Р fields
     apply_pack50_10_migration()  # Pack 50.10-A Расчётный листок
     apply_pack50_12_migration()  # Pack 50.12-A СОО
-    apply_pack50_15_migration()  # Pack 50.15-A русский телефон
+    apply_pack50_15_migration()  # Pack 50.15-A русский телефон
+    apply_pack56_0_migration()  # Pack 56.0 поля окна «Ситы» (applicant.cita_*)
     if settings.storage_backend == "local":
         settings.storage_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 Local file storage: {settings.storage_path}")

@@ -1674,3 +1674,35 @@ def apply_pack50_15_migration() -> None:
         ))
 
     print("[migration] Pack 50.15-A: applicant.phone_ru ready")
+
+
+# ============================================================================
+# Pack 56.0 — Поля окна «Ситы» (applicant.cita_*)
+# ============================================================================
+def apply_pack56_0_migration() -> None:
+    """Pack 56.0 — поля cita_* на applicant (окно «Ситы» в карточке клиента).
+
+    cita_fill_type  VARCHAR(16)   — тип заполнения: 'no_cert' / 'with_cert'
+    cita_cert_owner VARCHAR(128)  — чей сертификат (заглушка, заполнится позже)
+    cita_email      VARCHAR(128)  — почта для подтверждения ситы (!= email клиента)
+    cita_phone      VARCHAR(32)   — телефон для кода при оформлении ситы (!= phone клиента)
+    Идемпотентна (ADD COLUMN IF NOT EXISTS).
+    """
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_fill_type VARCHAR(16)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_cert_owner VARCHAR(128)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_email VARCHAR(128)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE applicant ADD COLUMN IF NOT EXISTS cita_phone VARCHAR(32)"
+        ))
+
+    print("[migration] Pack 56.0: applicant.cita_* ready")

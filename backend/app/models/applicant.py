@@ -245,6 +245,24 @@ class Applicant(TimestampMixin, table=True):
         description="With country code, e.g. '+7 999 ...' or '+34 ...'",
     )
     # Pack 50.15-A — русский телефон (для русских документов; fallback на phone)
+    # Pack 56.0 — окно «Ситы» (запись на приём). Поля независимы от контактов
+    # клиента: на портале записи могут использоваться другие телефон/почта.
+    cita_fill_type: Optional[str] = Field(
+        default=None, max_length=16,
+        description="Тип заполнения ситы: 'no_cert' (без сертификата) / 'with_cert' (с сертификатом).",
+    )
+    cita_cert_owner: Optional[str] = Field(
+        default=None, max_length=128,
+        description="Чей сертификат (используется при with_cert). Заглушка — заполнится после загрузки сертификатов.",
+    )
+    cita_email: Optional[str] = Field(
+        default=None, max_length=128,
+        description="Почта для подтверждения ситы (может отличаться от email клиента).",
+    )
+    cita_phone: Optional[str] = Field(
+        default=None, max_length=32,
+        description="Телефон для кода при оформлении ситы (может отличаться от phone клиента).",
+    )
     phone_ru: Optional[str] = Field(
         default=None, max_length=32,
         description="Русский телефон для русских документов. Пусто → используется phone.",
@@ -336,6 +354,11 @@ class ApplicantCreate(SQLModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     phone_ru: Optional[str] = None  # Pack 50.15-A
+    # Pack 56.0 — окно «Ситы»
+    cita_fill_type: Optional[str] = None
+    cita_cert_owner: Optional[str] = None
+    cita_email: Optional[str] = None
+    cita_phone: Optional[str] = None
     education: List[EducationRecord] = Field(default_factory=list)
     work_history: List[WorkRecord] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
@@ -397,6 +420,11 @@ class ApplicantUpdate(SQLModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     phone_ru: Optional[str] = None  # Pack 50.15-A
+    # Pack 56.0 — окно «Ситы»
+    cita_fill_type: Optional[str] = None
+    cita_cert_owner: Optional[str] = None
+    cita_email: Optional[str] = None
+    cita_phone: Optional[str] = None
     education: Optional[List[EducationRecord]] = None
     work_history: Optional[List[WorkRecord]] = None
     languages: Optional[List[str]] = None
