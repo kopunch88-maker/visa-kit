@@ -122,12 +122,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [phone, setPhone] = useState(applicant.phone || "");
   // Pack 50.15-B — русский телефон (для русских документов)
   const [phone_ru, setPhoneRu] = useState((applicant as any).phone_ru || "");
-  // Pack 56.0 — окно «Ситы» (поля независимы от контактов клиента)
-  const [citaFillType, setCitaFillType] = useState((applicant as any).cita_fill_type || "no_cert");
-  const [citaCertOwner, setCitaCertOwner] = useState((applicant as any).cita_cert_owner || "");
-  const [citaEmail, setCitaEmail] = useState((applicant as any).cita_email || "");
-  const [citaPhone, setCitaPhone] = useState((applicant as any).cita_phone || "");
-  const [citaLocation, setCitaLocation] = useState((applicant as any).cita_location || "");  // Pack 56.1
   const [inn, setInn] = useState(applicant.inn || "");
   // Pack 17.3 — модал генерации ИНН + дата регистрации НПД
   const [innModalOpen, setInnModalOpen] = useState(false);
@@ -602,12 +596,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         email: email.trim(),
         phone: phone.trim(),
         phone_ru: phone_ru.trim() || null,  // Pack 50.15-B
-        // Pack 56.0 — окно «Ситы»
-        cita_fill_type: citaFillType || null,
-        cita_cert_owner: citaFillType === "with_cert" ? (citaCertOwner.trim() || null) : null,
-        cita_email: citaEmail.trim() || null,
-        cita_phone: citaPhone.trim() || null,
-        cita_location: citaLocation || null,  // Pack 56.1
         inn: inn.trim(),
         inn_registration_date: inn_registration_date || null,
         inn_kladr_code: inn_kladr_code || null,
@@ -1338,47 +1326,6 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
           </Section>
 
           {/* Pack 19.0 — Образование с кнопкой ? автогенерации */}
-          {/* Pack 56.0 — Ситы (запись на приём): телефон и почта отдельные от контактов клиента */}
-          <Section title="Ситы">
-            <p className="text-xs text-tertiary mb-3">
-              Телефон и почта для оформления ситы (запись на приём). На них приходят
-              код и подтверждение записи — могут отличаться от контактов клиента.
-            </p>
-            <FieldSelect
-              label="Тип заполнения"
-              value={citaFillType}
-              onChange={setCitaFillType}
-              options={[
-                { value: "no_cert", label: "Без сертификата" },
-                { value: "with_cert", label: "С сертификатом" },
-              ]}
-            />
-            {citaFillType === "with_cert" && (
-              <FieldSelect
-                label="Чей сертификат"
-                value={citaCertOwner}
-                onChange={setCitaCertOwner}
-                options={[
-                  { value: "", label: "— сертификаты появятся позже —" },
-                ]}
-              />
-            )}
-            <FieldSelect
-              label="Локация ситы"
-              value={citaLocation}
-              onChange={setCitaLocation}
-              options={[
-                { value: "", label: "— не выбрана —" },
-                { value: "Madrid", label: "Madrid" },
-                { value: "Barcelona", label: "Barcelona" },
-              ]}
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Email (для ситы)" value={citaEmail} onChange={setCitaEmail} placeholder="user@example.com" />
-              <Field label="Телефон (для ситы)" value={citaPhone} onChange={setCitaPhone} placeholder="+34 ... / +7 ..." />
-            </div>
-          </Section>
-
           <Section title="Образование">
             <p className="text-xs text-tertiary mb-3">
               Если клиент не указал ВУЗ — кнопка ? подберёт вуз по региону

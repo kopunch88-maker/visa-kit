@@ -39,6 +39,7 @@ import { DocumentsGrid } from "./DocumentsGrid";
 import { CompanyContractDrawer } from "./CompanyContractDrawer";
 import { SubmissionDrawer } from "./SubmissionDrawer";
 import { TieDrawer } from "./TieDrawer";  // Pack 36.1
+import { CitaDrawer } from "./CitaDrawer";  // Pack 56.2
 import { ApplicantDrawer } from "./ApplicantDrawer";
 import { StatusDropdown } from "./StatusDropdown";
 import { ArchiveButton, ArchiveBanner } from "./ArchiveButton";
@@ -101,6 +102,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const [showSubmissionDrawer, setShowSubmissionDrawer] = useState(false);
   const [showTieDrawer, setShowTieDrawer] = useState(false);  // Pack 36.1
   const [showApplicantDrawer, setShowApplicantDrawer] = useState(false);
+  const [showCitaDrawer, setShowCitaDrawer] = useState(false);  // Pack 56.2
   // Pack 32.0 — спиннер пока создаём пустого кандидата
   const [creatingApplicant, setCreatingApplicant] = useState(false);
 
@@ -527,7 +529,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       {applicant && (
         <CitaCard
           applicant={applicant}
-          onEdit={() => setShowApplicantDrawer(true)}
+          onEdit={() => setShowCitaDrawer(true)}
         />
       )}
 
@@ -600,6 +602,19 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           onClose={() => setShowSubmissionDrawer(false)}
           onSaved={() => {
             setShowSubmissionDrawer(false);
+            loadAll();
+            onUpdated();
+          }}
+        />
+      )}
+
+      {/* Pack 56.2 — отдельный дровер «Ситы» */}
+      {showCitaDrawer && applicant && (
+        <CitaDrawer
+          applicant={applicant}
+          onClose={() => setShowCitaDrawer(false)}
+          onSaved={() => {
+            setShowCitaDrawer(false);
             loadAll();
             onUpdated();
           }}
