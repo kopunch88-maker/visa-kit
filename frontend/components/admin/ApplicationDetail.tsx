@@ -612,6 +612,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
       {showCitaDrawer && applicant && (
         <CitaDrawer
           applicant={applicant}
+          application={application}
           onClose={() => setShowCitaDrawer(false)}
           onSaved={() => {
             setShowCitaDrawer(false);

@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { CalendarCheck, X, Save, Loader2, AlertCircle } from "lucide-react";
-import { ApplicantResponse, updateApplicant } from "@/lib/api";
+import { ApplicantResponse, ApplicationResponse, updateApplicant, patchApplication } from "@/lib/api";
 
 interface Props {
   applicant: ApplicantResponse;
+  application: ApplicationResponse;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -14,19 +15,28 @@ interface Props {
  * Pack 56.2 — отдельный дровер «Ситы» (запись на приём).
  * Редактирует cita_* поля applicant'а независимо от дровера кандидата.
  */
-export function CitaDrawer({ applicant, onClose, onSaved }: Props) {
+export function CitaDrawer({ applicant, application, onClose, onSaved }: Props) {
   const a = applicant as any;
   const [fillType, setFillType] = useState<string>(a.cita_fill_type || "no_cert");
   const [certOwner, setCertOwner] = useState<string>(a.cita_cert_owner || "");
   const [location, setLocation] = useState<string>(a.cita_location || "");
   const [email, setEmail] = useState<string>(a.cita_email || "");
   const [phone, setPhone] = useState<string>(a.cita_phone || "");
+  const [nie, setNie] = useState<string>(application.nie || "");  // Pack 56.3 — тот же NIE, что в «Карта TIE»
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Pack 56.3 — валидация NIE (как в TieDrawer)
+  const nieClean = nie.replace(/[\s-]/g, "").toUpperCase();
+  const nieValid = nieClean === "" || /^[XYZ]?\d{6,8}[A-Z]$/.test(nieClean);
+
   async function handleSave() {
-    setSaving(true);
     setError(null);
+    if (!nieValid) {
+      setError("NIE некорректный. Формат: Z3751311Q (буква + цифры + буква).");
+      return;
+    }
+    setSaving(true);
     try {
       await updateApplicant(applicant.id, {
         cita_fill_type: fillType || null,
@@ -35,6 +45,9 @@ export function CitaDrawer({ applicant, onClose, onSaved }: Props) {
         cita_email: email.trim() || null,
         cita_phone: phone.trim() || null,
       });
+      await patchApplication(application.id, {
+        nie: nieClean || undefined,
+      } as any);
       onSaved();
     } catch (e) {
       setError((e as Error).message || "Ошибка сохранения");
@@ -123,6 +136,27 @@ export function CitaDrawer({ applicant, onClose, onSaved }: Props) {
             ]}
           />
 
+          {/* Pack 56.3 — N.I.E (то же значение, что в «Карта TIE») */}
+          <div>
+            <label className="block text-xs text-tertiary mb-1">N.I.E</label>
+            <input
+              type="text"
+              value={nie}
+              onChange={(e) => setNie(e.target.value.toUpperCase())}
+              placeholder="Z3751311Q"
+              className="w-full px-2 py-1.5 rounded-md text-sm border font-mono"
+              style={{
+                borderColor: nieValid ? "var(--color-border-tertiary)" : "var(--color-danger)",
+                borderWidth: 0.5,
+                background: "var(--color-bg-primary)",
+                color: "var(--color-text-primary)",
+              }}
+            />
+            <p className="text-[11px] text-tertiary mt-1">
+              Формат: буква + 6-8 цифр + буква (напр. Z3751311Q). Попадёт в «Карта TIE».
+            </p>
+          </div>
+
           <DField label="Email (для ситы)" value={email} onChange={setEmail} placeholder="user@example.com" />
           <DField label="Телефон (для ситы)" value={phone} onChange={setPhone} placeholder="+34 ... / +7 ..." />
         </div>
@@ -142,7 +176,7 @@ export function CitaDrawer({ applicant, onClose, onSaved }: Props) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !nieValid}
             className="px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50 transition-colors flex items-center gap-2"
             style={{ background: "var(--color-accent)" }}
           >
