@@ -14,11 +14,15 @@ const CYR2LAT: Record<string, string> = {
 // ЙЦУКЕН -> QWERTY (на случай "печатал не на той раскладке": фквше -> ardit)
 const RU_KEYS = "йцукенгшщзхъфывапролджэячсмитьбю";
 const EN_KEYS = "qwertyuiop[]asdfghjkl;'zxcvbnm,.";
-const LAYOUT: Record<string, string> = {};
+const LAYOUT: Record<string, string> = {}; // ru-клавиша -> en-буква
+const EN2RU: Record<string, string> = {}; // en-клавиша -> ru-буква
 for (let i = 0; i < RU_KEYS.length; i++) {
   const r = RU_KEYS[i];
   const e = EN_KEYS[i];
-  if (r && e) LAYOUT[r] = e;
+  if (r && e) {
+    LAYOUT[r] = e;
+    EN2RU[e] = r;
+  }
 }
 
 export function normalizeForSearch(text: string | null | undefined): string {
@@ -37,10 +41,10 @@ export function normalizeForSearch(text: string | null | undefined): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-function layoutSwapped(text: string): string {
+function swapWith(text: string, map: Record<string, string>): string {
   let out = "";
   for (const ch of text.toLowerCase()) {
-    const m = LAYOUT[ch];
+    const m = map[ch];
     out += m !== undefined ? m : ch;
   }
   return out;
@@ -62,7 +66,11 @@ export function matchesSearch(
   );
   if (!haystack) return false;
   if (haystack.includes(nq)) return true;
-  // fallback: запрос мог быть набран в русской раскладке вместо английской
-  const swapped = normalizeForSearch(layoutSwapped(query));
-  return swapped.length > 0 && haystack.includes(swapped);
+  // fallback: запрос набран не в той раскладке — пробуем оба направления
+  // (фквше -> ardit, и fhlbn -> ардит -> ardit)
+  for (const map of [LAYOUT, EN2RU]) {
+    const swapped = normalizeForSearch(swapWith(query, map));
+    if (swapped.length > 0 && haystack.includes(swapped)) return true;
+  }
+  return false;
 }
