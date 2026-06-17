@@ -591,7 +591,8 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           onClose={() => setShowTieDrawer(false)}
           onSaved={() => {
             setShowTieDrawer(false);
-            onChanged();
+            loadAll();
+            onUpdated();
           }}
         />
       )}
