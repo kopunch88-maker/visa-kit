@@ -1243,9 +1243,7 @@ def _replace_markers_in_tr(tr_element, tx: dict):
     """
     marker_to_value = {
         "__TX_DATE__": tx.get("date_formatted", ""),
-        # Pack 59.2: пробел в кодах (SBP …, RECUR …, MOSH 19…) -> неразрывный,
-        # иначе на узкой колонке ЧБ-шаблона (v2) Word переносит цифры на 2-ю строку.
-        "__TX_CODE__": (tx.get("code", "") or "").replace(" ", "\u00a0"),
+        "__TX_CODE__": tx.get("code", ""),
         "__TX_DESCRIPTION__": tx.get("description", "") or "",
         "__TX_AMOUNT__": tx.get("amount_formatted", ""),
         # Pack 47.2: мульти-банк маркеры. Шаблоны без них (Альфа) — игнорят:
