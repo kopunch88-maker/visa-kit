@@ -194,8 +194,26 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
         return []
 
     full_latin = _safe(getattr(company, "director_full_name_latin", None))
+
+    # Anti-stale guard (инцидент "Морозов -> Nikitin"): если latin-поле
+    # указывает на ДРУГОГО человека (фамилия не совпадает с транслитом ru) —
+    # не доверяем ему, транслитерируем ru на лету. Иначе подпись в ES молча
+    # подменяется. См. _gost_director_full ниже.
+    gost_latin = _gost_director_full(full_ru)
+    if full_latin and gost_latin:
+        ru_init = gost_latin.split()[0][:1].upper() if gost_latin.split() else ""
+        lat_init = full_latin.split()[0][:1].upper() if full_latin.split() else ""
+        if ru_init and lat_init and ru_init != lat_init:
+            log.warning(
+                "[name_sub] Company %s: director_full_name_latin (%r) ne sovpadaet "
+                "po familii s director_full_name_ru (%r) — ignoriruyu latin, beru GOST. "
+                "Proverte kartochku kompanii.",
+                getattr(company, "id", "?"), full_latin, full_ru,
+            )
+            full_latin = ""
+
     if not full_latin:
-        full_latin = _gost_director_full(full_ru)
+        full_latin = gost_latin
 
     if not full_latin:
         return []
