@@ -105,12 +105,6 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
         )
         return []
 
-    # Pack 59: отчество на загранпаспорте отсутствует -> middle_name_latin обычно
-    # пуст, тогда отчество романизирует LLM (SERGEYEVICH).
-    # Берём детерминированный GOST-транслит (UPPER, как в паспорте).
-    if not middle_latin and middle_native:
-        middle_latin = transliterate_name(middle_native).upper()
-
     # Латинские формы
     full_latin_parts = [last_latin, first_latin]
     if middle_latin:
@@ -176,15 +170,6 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
     if last_native and first_native and last_latin and first_latin:
         pairs.append((f"{first_native} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
         pairs.append((f"{first_latin} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
-
-    # Pack 59: UPPER-варианты пар имени (листки рендерят ФИО ЗАГЛАВНЫМИ кириллицей,
-    # а apply() регистрозависим). Латиница тоже UPPER, как в паспорте.
-    upper_pairs: list[tuple[str, str]] = []
-    for _ru, _lat in pairs:
-        _ru_up, _lat_up = _ru.upper(), _lat.upper()
-        if _ru_up != _ru:
-            upper_pairs.append((_ru_up, _lat_up))
-    pairs.extend(upper_pairs)
 
     return pairs
 
