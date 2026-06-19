@@ -110,10 +110,8 @@ def _gen_credit_code() -> str:
 
 
 def _gen_payment_code() -> str:
-    # Кириллическая С — как в реальных выписках Альфы.
-    # Pack 59.3: 16 символов (12 цифр), иначе 17-символьный код переносится
-    # на 2-ю строку в узкой колонке ЧБ-шаблона.
-    return "С011" + "".join(random.choices(string.digits, k=12))
+    # Кириллическая С — как в реальных выписках Альфы
+    return "С011" + "".join(random.choices(string.digits, k=13))
 
 
 def _gen_fee_code() -> str:
