@@ -463,7 +463,7 @@ def generate_default_transactions(
                 f"Назначение платежа: Оплата за оказание услуг по Договору №{contract_number} "
                 f"от {contract_sign_date.strftime('%d.%m.%y')}г. за период "
                 f"01.{month:02d}.{year}-{last_day:02d}.{month:02d}.{year}г., "
-                f"Акт №{idx + 1}/{year % 100:02d} от {last_day:02d}.{month:02d}.{year}г., без НДС."
+                f"Акт №{month:02d}/{year % 100:02d} от {last_day:02d}.{month:02d}.{year}г., без НДС."
             )
             transactions.append({
                 "transaction_date": income_date,
