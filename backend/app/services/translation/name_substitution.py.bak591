@@ -243,15 +243,6 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
     if short_ru:
         pairs.append((short_ru, short_latin))
 
-    # Pack 59.1: UPPER-варианты пар директора (если ФИО рендерится ЗАГЛАВНЫМИ
-    # кириллицей — как в листках). Латиница тоже UPPER.
-    upper_pairs: list[tuple[str, str]] = []
-    for _ru, _lat in pairs:
-        _ru_up, _lat_up = _ru.upper(), _lat.upper()
-        if _ru_up != _ru:
-            upper_pairs.append((_ru_up, _lat_up))
-    pairs.extend(upper_pairs)
-
     return pairs
 
 
