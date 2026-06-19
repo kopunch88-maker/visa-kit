@@ -283,6 +283,7 @@ def generate_default_transactions(
     salary_rub: Decimal,
     contract_number: str,
     contract_sign_date: date,
+    contract_end_date: Optional[date] = None,  # Pack 57.5
     company_full_name: str,
     company_inn: str,
     company_bank_account: str,
@@ -405,6 +406,36 @@ def generate_default_transactions(
             _company_display = _shorten_opf(company_full_name)
             _cn = contract_number or ""
             _csd = contract_sign_date.strftime("%d.%m.%Y") if contract_sign_date else ""
+            # Pack 57.5: гросс месяца с пропорцией неполного месяца приёма/увольнения.
+            from app.services.prod_calendar import monthly_gross as _monthly_gross
+            _m_gross = _monthly_gross(salary_rub, year, month, contract_sign_date, contract_end_date)
+            if _m_gross <= 0:
+                continue  # месяц вне срока трудоустройства — выплат нет
+            _full_gross = _monthly_gross(salary_rub, year, month, None, None)
+            if _m_gross < _full_gross:
+                # Неполный месяц приёма/увольнения: одна выплата зарплатой (без аванса),
+                # на руки = гросс * 0.87 (минус 13% НДФЛ).
+                _net_partial = (_m_gross * Decimal("0.87")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP)
+                _zp_day = random.randint(5, 9)
+                try:
+                    _zp_date = _adjust_to_business_day(date(next_y, next_m, _zp_day))
+                except ValueError:
+                    _zp_date = None
+                if _zp_date and period_start <= _zp_date <= period_end:
+                    transactions.append({
+                        "transaction_date": _zp_date,
+                        "code": _gen_credit_code(),
+                        "description": (
+                            f"{_company_display}, ИНН {company_inn}  Заработная плата за "
+                            f"{month_name_nominative} {year}г. по Трудовому договору "
+                            f"№{_cn} от {_csd}"
+                        ),
+                        "amount": _net_partial,
+                        "currency": "RUR",
+                        "category": "Прочие операции",
+                    })
+                continue
             _avans, _zarplata = _split_salary_employment(salary_rub)
             # Аванс — 20-25 число ТЕКУЩЕГО месяца (year, month)
             _av_day = random.randint(20, 25)
@@ -446,6 +477,24 @@ def generate_default_transactions(
                 })
             continue  # найм: пропускаем KWIKPAY/НПД/комиссию
 
+        # Pack 57.5 — самозанятый: доход месяца с пропорцией неполного первого/
+        # последнего месяца договора по КАЛЕНДАРНЫМ дням; НПД и KWIKPAY за месяц
+        # считаются от фактического дохода месяца.
+        from app.services.prod_calendar import prorate_calendar as _prorate_cal
+        _m_income = _prorate_cal(salary_rub, year, month, contract_sign_date, contract_end_date)
+        if _m_income <= 0:
+            continue  # месяц вне срока договора
+        _per_from = 1
+        if (contract_sign_date and contract_sign_date.year == year
+                and contract_sign_date.month == month and contract_sign_date.day > 1):
+            _per_from = contract_sign_date.day
+        _per_to = last_day
+        if (contract_end_date and contract_end_date.year == year
+                and contract_end_date.month == month and contract_end_date.day < last_day):
+            _per_to = contract_end_date.day
+        _m_tax = (_m_income * npd_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        _m_kwikpay = (_m_income - _m_tax - DEFAULT_KWIKPAY_RESERVE).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP)
         # 1. Поступление от Заказчика (~6 числа следующего месяца)
         income_day = random.randint(5, 8)
         try:
@@ -462,14 +511,14 @@ def generate_default_transactions(
                 f"Счет плательщика: {company_bank_account}, БИК {company_bank_bic}\n"
                 f"Назначение платежа: Оплата за оказание услуг по Договору №{contract_number} "
                 f"от {contract_sign_date.strftime('%d.%m.%y')}г. за период "
-                f"01.{month:02d}.{year}-{last_day:02d}.{month:02d}.{year}г., "
+                f"{_per_from:02d}.{month:02d}.{year}-{_per_to:02d}.{month:02d}.{year}г., "
                 f"Акт №{month:02d}/{year % 100:02d} от {last_day:02d}.{month:02d}.{year}г., без НДС."
             )
             transactions.append({
                 "transaction_date": income_date,
                 "code": _gen_credit_code(),
                 "description": income_desc,
-                "amount": Decimal(salary_rub).quantize(Decimal("0.01")),
+                "amount": _m_income.quantize(Decimal("0.01")),
                 "currency": "RUR",
                 "category": "Прочие операции",
             })
@@ -483,7 +532,7 @@ def generate_default_transactions(
         if kwikpay_date and period_start <= kwikpay_date <= period_end:
             # ±10% вариация
             kwikpay_variation = Decimal(random.randint(-10000, 10000))
-            kwikpay_amount = (kwikpay_default + kwikpay_variation).quantize(
+            kwikpay_amount = (_m_kwikpay + kwikpay_variation).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
             transactions.append({
@@ -511,7 +560,7 @@ def generate_default_transactions(
                 "transaction_date": npd_date,
                 "code": _gen_payment_code(),
                 "description": npd_desc,
-                "amount": -tax_amount,
+                "amount": -_m_tax,
                 "currency": "RUR",
                 "category": "Прочие операции",
             })

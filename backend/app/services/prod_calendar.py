@@ -87,3 +87,22 @@ def monthly_gross(salary, year, month, hire_date=None, termination_date=None):
     if worked >= total:
         return salary.quantize(Decimal("0.01"))
     return (salary * Decimal(worked) / Decimal(total)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def prorate_calendar(amount, year, month, start_date=None, end_date=None):
+    """Pack 57.5: пропорция суммы по КАЛЕНДАРНЫМ дням месяца (услуги самозанятого).
+    Полный месяц -> полная сумма; неполный первый/последний -> сумма * дни / дни_мес."""
+    if amount is None:
+        return Decimal("0.00")
+    amount = Decimal(str(amount))
+    last = calendar.monthrange(year, month)[1]
+    m_start, m_end = date(year, month, 1), date(year, month, last)
+    s = max(m_start, start_date) if start_date else m_start
+    e = min(m_end, end_date) if end_date else m_end
+    if e < s:
+        return Decimal("0.00")
+    days = (e - s).days + 1
+    if days >= last:
+        return amount.quantize(Decimal("0.01"))
+    return (amount * Decimal(days) / Decimal(last)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP)
