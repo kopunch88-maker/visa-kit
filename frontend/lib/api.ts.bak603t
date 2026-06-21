@@ -1998,10 +1998,9 @@ export async function cancelStuckTranslations(applicationId: number): Promise<{ 
 }
 
 /** Скачать ZIP всех успешно переведённых документов. */
-export async function downloadTranslationsZip(applicationId: number, format: string = "native"): Promise<Blob> {
-  const _qs = format && format !== "native" ? `?format=${format}` : "";
+export async function downloadTranslationsZip(applicationId: number): Promise<Blob> {
   const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/zip${_qs}`,
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/zip`,
     { headers: authHeaders() },
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
@@ -2012,11 +2011,9 @@ export async function downloadTranslationsZip(applicationId: number, format: str
 export async function downloadTranslationFile(
   applicationId: number,
   kind: TranslationKind,
-  format: string = "native",
 ): Promise<Blob> {
-  const _qs = format && format !== "native" ? `?format=${format}` : "";
   const res = await fetch(
-    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/${kind}/download${_qs}`,
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/translations/${kind}/download`,
     { headers: authHeaders() },
   );
   if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);

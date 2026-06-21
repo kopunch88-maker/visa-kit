@@ -27,7 +27,6 @@ router = APIRouter(prefix="/admin/applications", tags=["render"])
 @router.post("/{app_id}/render-package-docx")
 async def render_package_docx(  # Pack 57.2: def → async (для await _ensure_...)
     app_id: int,
-    format: str = Query("native", description="native|docx|pdf|jpeg"),  # Pack 60.3
     db: Session = Depends(get_session),
     _: str = Depends(require_manager),
 ):
@@ -82,13 +81,6 @@ async def render_package_docx(  # Pack 57.2: def → async (для await _ensure
             )
             # ZIP уйдёт с DOCX выпиской — degraded-safe
 
-    _pfmt = (format or "native").lower()
-    if _pfmt not in ("", "native"):
-        from app.services.doc_convert import convert_package_zip
-        try:
-            zip_bytes = convert_package_zip(zip_bytes, _pfmt)
-        except Exception as e:
-            raise HTTPException(500, f"Не удалось сконвертировать архив в {_pfmt}: {type(e).__name__}: {e}")
     download_name = f"docx_package_{application.reference}.zip"
     return StreamingResponse(
         io.BytesIO(zip_bytes),
@@ -100,7 +92,6 @@ async def render_package_docx(  # Pack 57.2: def → async (для await _ensure
 @router.post("/{app_id}/render-package-pdf")
 def render_package_pdf(
     app_id: int,
-    format: str = Query("native", description="native|jpeg"),  # Pack 60.3
     db: Session = Depends(get_session),
     _: str = Depends(require_manager),
 ):
@@ -110,13 +101,6 @@ def render_package_pdf(
     zip_bytes, status = build_full_package(application, db, kind="pdf")
     if not zip_bytes:
         raise HTTPException(status_code=500, detail="PDF package empty")
-    _pfmt = (format or "native").lower()
-    if _pfmt not in ("", "native"):
-        from app.services.doc_convert import convert_package_zip
-        try:
-            zip_bytes = convert_package_zip(zip_bytes, _pfmt)
-        except Exception as e:
-            raise HTTPException(500, f"Не удалось сконвертировать архив в {_pfmt}: {type(e).__name__}: {e}")
     download_name = f"pdf_forms_{application.reference}.zip"
     return StreamingResponse(
         io.BytesIO(zip_bytes),

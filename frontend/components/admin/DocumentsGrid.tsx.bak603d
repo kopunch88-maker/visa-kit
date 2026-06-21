@@ -137,8 +137,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
   const [docxZipDownloaded, setDocxZipDownloaded] = useState(false);
   const [downloadingPdfZip, setDownloadingPdfZip] = useState(false);
   const [pdfZipDownloaded, setPdfZipDownloaded] = useState(false);
-  const [docxArchiveFormat, setDocxArchiveFormat] = useState<string>("native");  // Pack 60.3
-  const [pdfArchiveFormat, setPdfArchiveFormat] = useState<string>("native");  // Pack 60.3
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Pack 57.1 — флаг модалки «Переводим выписку, ~1 минута...» при первом
@@ -227,14 +225,13 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     if (willTriggerTranslate) setTranslatingForDownload(true);
     try {
       const token = getToken();
-      const dqs = docxArchiveFormat && docxArchiveFormat !== "native" ? `?format=${docxArchiveFormat}` : "";
       const res = await fetch(
-        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-docx${dqs}`,
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-docx`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
       const blob = await res.blob();
-      _triggerBrowserDownload(blob, `docx_package_${applicationId}${_pkgSuffix(docxArchiveFormat)}.zip`);
+      _triggerBrowserDownload(blob, `docx_package_${applicationId}.zip`);
       _applySeen(visibleDocs.filter((d) => d.kind === "docx").map((d) => d.id)); // Pack 50.41
       if (willTriggerTranslate) setHasBankTranslation(true);
       setDocxZipDownloaded(true);
@@ -252,14 +249,13 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     setError(null);
     try {
       const token = getToken();
-      const pqs = pdfArchiveFormat && pdfArchiveFormat !== "native" ? `?format=${pdfArchiveFormat}` : "";
       const res = await fetch(
-        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-pdf${pqs}`,
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package-pdf`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) throw new Error(`Ошибка ${res.status}: ${await res.text()}`);
       const blob = await res.blob();
-      _triggerBrowserDownload(blob, `pdf_forms_${applicationId}${_pkgSuffix(pdfArchiveFormat)}.zip`);
+      _triggerBrowserDownload(blob, `pdf_forms_${applicationId}.zip`);
       _applySeen(visibleDocs.filter((d) => d.kind === "pdf").map((d) => d.id)); // Pack 50.41
       setPdfZipDownloaded(true);
       setTimeout(() => setPdfZipDownloaded(false), 3000);
@@ -365,14 +361,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
         <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
           Русские формы Word ({visibleDocs.filter(d => d.kind === "docx").length})
         </h3>
-        <div className="flex items-center gap-2">
-        <select value={docxArchiveFormat} onChange={(e) => setDocxArchiveFormat(e.target.value)} disabled={downloadingDocxZip}
-          className="px-2 py-1.5 rounded-md text-sm border text-secondary bg-transparent disabled:opacity-50"
-          style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }} title="Формат документов в архиве">
-          <option value="native">Как есть</option>
-          <option value="pdf">Всё в PDF</option>
-          <option value="jpeg">Всё в картинках</option>
-        </select>
         <button onClick={handleDownloadDocxZip} disabled={downloadingDocxZip}
           className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
           style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
@@ -382,7 +370,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
             ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
             : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
         </button>
-        </div>
       </div>
 
       {error && (
@@ -421,13 +408,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
           <h3 className="text-xs font-semibold uppercase tracking-wide text-tertiary">
             Испанские PDF формы ({visibleDocs.filter(d => d.kind === "pdf").length})
           </h3>
-          <div className="flex items-center gap-2">
-          <select value={pdfArchiveFormat} onChange={(e) => setPdfArchiveFormat(e.target.value)} disabled={downloadingPdfZip}
-            className="px-2 py-1.5 rounded-md text-sm border text-secondary bg-transparent disabled:opacity-50"
-            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }} title="Формат форм в архиве">
-            <option value="native">Как есть</option>
-            <option value="jpeg">В картинках</option>
-          </select>
           <button onClick={handleDownloadPdfZip} disabled={downloadingPdfZip}
             className="px-3 py-1.5 rounded-md text-sm border text-secondary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1.5"
             style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}>
@@ -437,7 +417,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
               ? <><Check className="w-3.5 h-3.5" /><span>Скачано</span></>
               : <><Download className="w-3.5 h-3.5" /><span>Скачать ZIP</span></>}
           </button>
-          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {visibleDocs.filter(d => d.kind === "pdf").map((doc) => {
