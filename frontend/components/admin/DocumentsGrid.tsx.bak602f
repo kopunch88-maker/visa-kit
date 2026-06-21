@@ -131,7 +131,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     if (seenKeys.has(id)) _applyUnseen([id]); else _applySeen([id]);
   }
   const [downloadingZip, setDownloadingZip] = useState(false);
-  const [archiveFormat, setArchiveFormat] = useState<string>("native");  // Pack 60.2
   const [zipDownloaded, setZipDownloaded] = useState(false);
   const [downloadingDocxZip, setDownloadingDocxZip] = useState(false);
   const [docxZipDownloaded, setDocxZipDownloaded] = useState(false);
@@ -190,9 +189,8 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
     if (willTriggerTranslate) setTranslatingForDownload(true);
     try {
       const token = getToken();
-      const aqs = archiveFormat && archiveFormat !== "native" ? `?format=${archiveFormat}` : "";
       const res = await fetch(
-        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package${aqs}`,
+        `${API_BASE_URL}/api/admin/applications/${applicationId}/render-package`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } },
       );
       // Pack 29.4 тАФ ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨░ 409 NEEDS_CONTRACT_TEMPLATE
@@ -202,7 +200,7 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
       if (!res.ok) throw new Error(`╨Ю╤И╨╕╨▒╨║╨░ ${res.status}: ${await res.text()}`);
 
       const blob = await res.blob();
-      _triggerBrowserDownload(blob, `package_${applicationId}${_pkgSuffix(archiveFormat)}.zip`);
+      _triggerBrowserDownload(blob, `package_${applicationId}.zip`);
       _applySeen(visibleDocs.map((d) => d.id)); // Pack 50.41
       // Pack 57.1 — backend сохранил translation_storage_key, обновляем локально
       if (willTriggerTranslate) setHasBankTranslation(true);
@@ -318,19 +316,6 @@ export function DocumentsGrid({ applicationId, companyId, applicationType }: Pro
             <RefreshCw className={`w-3.5 h-3.5 ${downloadingZip ? "animate-spin" : ""}`} />
             Перегенерировать
           </button>
-          <select
-            value={archiveFormat}
-            onChange={(e) => setArchiveFormat(e.target.value)}
-            disabled={downloadingZip}
-            className="px-2 py-1.5 rounded-md text-sm border text-secondary bg-transparent disabled:opacity-50"
-            style={{ borderColor: "var(--color-border-tertiary)", borderWidth: 0.5 }}
-            title="Формат документов в архиве"
-          >
-            <option value="native">Как есть</option>
-            <option value="pdf">Всё в PDF</option>
-            <option value="jpeg">Всё в картинках</option>
-            <option value="docx">Word (где есть)</option>
-          </select>
           <button
             onClick={handleDownloadZip}
             disabled={downloadingZip}
@@ -541,13 +526,6 @@ function FormatButtons({ doc, downloading, onPick }: { doc: DocItem; downloading
       ))}
     </div>
   );
-}
-
-function _pkgSuffix(fmt: string): string {
-  if (fmt === "pdf") return "_pdf";
-  if (fmt === "docx") return "_word";
-  if (fmt === "jpeg" || fmt === "jpg") return "_images";
-  return "";
 }
 
 function _triggerBrowserDownload(blob: Blob, filename: string) {
