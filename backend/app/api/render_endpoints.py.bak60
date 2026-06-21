@@ -169,7 +169,6 @@ def render_full_package(
 def render_single_document(
     app_id: int,
     document_type: str,
-    format: str = Query("native", description="native|docx|pdf|jpeg"),  # Pack 60.0
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ):
@@ -248,27 +247,6 @@ def render_single_document(
     # Pack 40.0-G fix3: RFC 5987 для кириллических filename (latin-1 codec
     # в HTTP-хедерах не может закодировать русские буквы → 500 UnicodeEncodeError).
     # filename=<ASCII fallback> + filename*=UTF-8''<percent-encoded> — стандарт.
-    # Pack 60.0 — конвертация в запрошенный формат (native|docx|pdf|jpeg).
-    _fmt = (format or "native").lower()
-    if _fmt not in ("", "native"):
-        _src_fmt = "pdf" if filename.lower().endswith(".pdf") else "docx"
-        # bank_statement v2 отдаётся PDF, но имеет DOCX-исходник:
-        # для Word/изображений берём DOCX.
-        if document_type == "bank_statement" and _src_fmt == "pdf" and _fmt in ("docx", "jpeg", "jpg", "image", "images"):
-            from app.templates_engine import render_bank_statement
-            content = render_bank_statement(application, session)
-            _src_fmt = "docx"
-            filename = "Выписка_по_счету.docx"
-        if _fmt != _src_fmt:
-            from app.services.doc_convert import convert as _convert_doc
-            try:
-                _base = filename.rsplit(".", 1)[0]
-                content, filename, _media_type_override = _convert_doc(content, _src_fmt, _fmt, _base)
-            except ValueError as e:
-                raise HTTPException(422, str(e))
-            except RuntimeError as e:
-                raise HTTPException(500, str(e))
-
     import urllib.parse as _urlparse
     _ascii_fallback = _urlparse.quote(filename).encode("ascii", "ignore").decode("ascii") or "document.docx"
     _utf8_quoted = _urlparse.quote(filename, safe="")
