@@ -831,7 +831,6 @@ _DOWNLOAD_FILES = {
 async def download_single_file(  # Pack 57.0: def → async (для await _ensure_...)
     app_id: int,
     file_id: str,
-    format: str = Query("native", description="native|docx|pdf|jpeg"),  # Pack 60.0
     session: Session = Depends(get_session),
     _user=Depends(require_manager),
 ):
@@ -881,20 +880,11 @@ async def download_single_file(  # Pack 57.0: def → async (для await _ensur
                 f"Failed to render bank_statement PDF: {type(e).__name__}: {e}",
             )
         filename = "10_Выписка.pdf"
-        _bmedia = "application/pdf"
-        # Pack 60.0 — формат для выписки v2 (combined PDF по умолчанию)
-        _bfmt = (format or "native").lower()
-        if _bfmt == "docx":
-            content = render_bank_statement(app, session)
-            filename, _bmedia = "10_Выписка.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif _bfmt in ("jpeg", "jpg", "image", "images"):
-            from app.services.doc_convert import convert as _convert_doc
-            content, filename, _bmedia = _convert_doc(content, "pdf", "jpeg", "10_Выписка")
         from urllib.parse import quote
         safe_name = quote(filename)
         return StreamingResponse(
             io.BytesIO(content),
-            media_type=_bmedia,
+            media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"},
         )
 
@@ -925,18 +915,6 @@ async def download_single_file(  # Pack 57.0: def → async (для await _ensur
         import logging
         logging.getLogger(__name__).exception(f"Failed to render {file_id}")
         raise HTTPException(500, f"Failed to render {file_id}: {type(e).__name__}: {e}")
-
-    # Pack 60.0 — конвертация в запрошенный формат (native|docx|pdf|jpeg)
-    _fmt = (format or "native").lower()
-    if _fmt not in ("", "native", spec["kind"]):
-        from app.services.doc_convert import convert as _convert_doc
-        try:
-            _base = filename.rsplit(".", 1)[0]
-            content, filename, media_type = _convert_doc(content, spec["kind"], _fmt, _base)
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-        except RuntimeError as e:
-            raise HTTPException(500, str(e))
 
     # encode имя файла для Content-Disposition (русские буквы)
     from urllib.parse import quote
