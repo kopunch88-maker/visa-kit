@@ -177,16 +177,6 @@ def _build_applicant_subs(applicant: Optional[Applicant]) -> list[tuple[str, str
         pairs.append((f"{first_native} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
         pairs.append((f"{first_latin} {last_native[0]}.", f"{first_latin} {last_latin[0]}."))
 
-    # Pack 59.4: подпись/инициалы рендерятся с НЕРАЗРЫВНЫМ пробелом (U+00A0: _initials_native /
-    # _nbsp_initials), а пары выше — с обычным. Без NBSP-вариантов «Кот Ю.А.» не матчит
-    # «Кот<NBSP>Ю.А.» → инициалы романизирует LLM (GOST «IU» вместо паспортного «Y»).
-    _NBSP = "\u00a0"
-    nbsp_pairs: list[tuple[str, str]] = []
-    for _ru, _lat in pairs:
-        if " " in _ru:
-            nbsp_pairs.append((_ru.replace(" ", _NBSP), _lat.replace(" ", _NBSP)))
-    pairs.extend(nbsp_pairs)
-
     # Pack 59: UPPER-варианты пар имени (листки рендерят ФИО ЗАГЛАВНЫМИ кириллицей,
     # а apply() регистрозависим). Латиница тоже UPPER, как в паспорте.
     upper_pairs: list[tuple[str, str]] = []
@@ -252,16 +242,6 @@ def _build_director_subs(company: Optional[Company]) -> list[tuple[str, str]]:
         pairs.append((genitive_ru, full_latin))
     if short_ru:
         pairs.append((short_ru, short_latin))
-
-    # Pack 59.4: подпись/инициалы рендерятся с НЕРАЗРЫВНЫМ пробелом (U+00A0: _initials_native /
-    # _nbsp_initials), а пары выше — с обычным. Без NBSP-вариантов «Кот Ю.А.» не матчит
-    # «Кот<NBSP>Ю.А.» → инициалы романизирует LLM (GOST «IU» вместо паспортного «Y»).
-    _NBSP = "\u00a0"
-    nbsp_pairs: list[tuple[str, str]] = []
-    for _ru, _lat in pairs:
-        if " " in _ru:
-            nbsp_pairs.append((_ru.replace(" ", _NBSP), _lat.replace(" ", _NBSP)))
-    pairs.extend(nbsp_pairs)
 
     # Pack 59.1: UPPER-варианты пар директора (если ФИО рендерится ЗАГЛАВНЫМИ
     # кириллицей — как в листках). Латиница тоже UPPER.
