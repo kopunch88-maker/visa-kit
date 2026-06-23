@@ -45,6 +45,13 @@ class _Step(BaseModel):
     body: str
 
 
+class _Certificate(BaseModel):
+    """Pack CV-AUTO — один сертификат/курс из пула должности."""
+    name: str = Field(..., min_length=4)
+    issuer: str = Field(..., min_length=2)
+    year_offset: int = Field(..., ge=0, le=5)
+
+
 class _GeneratedFields(BaseModel):
     duties: List[str] = Field(..., min_length=5)
     tags: List[str] = Field(..., min_length=3)
@@ -57,6 +64,10 @@ class _GeneratedFields(BaseModel):
     international_analog_ru: str = Field(..., min_length=3)
     # Pack 50.22 — код ОКЗ (Optional: если LLM не уверена, пусто)
     okz_code: Optional[str] = Field(default="")
+    # Pack CV-AUTO — поля для блоков CV
+    cv_skills_summary_ru: str = Field(..., min_length=40)
+    cv_hobbies_pool_ru: List[str] = Field(..., min_length=6, max_length=6)
+    cv_certificates_pool: List["_Certificate"] = Field(..., min_length=6, max_length=6)
 
 
 # ============================================================== Input schema
@@ -111,6 +122,17 @@ _SYSTEM_PROMPT = """Ты — эксперт по составлению долж
 
 9. **international_analog_ru** (строка 20-80 символов) — английский эталон должности (через «или» если несколько вариантов), пример: «data analyst или business intelligence analyst». Используется во фразе «должность аналогична позиции ___ в международной практике».
 
+11. **cv_skills_summary_ru** (строка 80-220 символов) — короткое описание ключевых навыков и инструментов специалиста для блока «Дополнительная информация» в CV. 1-3 предложения, разделённых точкой с запятой или точкой. КОНКРЕТНО упоминай технологии/методологии/инструменты, без воды. Пример для PM в IT: «Навыки координации проектов с использованием цифровых платформ и систем управления задачами. Опыт работы по методологиям Agile и Scrum, владение Jira, Confluence, BPMN, UML, SQL и инструментами бизнес-анализа.» Пример для геодезиста: «Уверенное владение AutoCAD, MicroStation, Credo Топоплан, обработка данных лазерного сканирования. Опыт работы с ортофотопланами и кадастровым программным обеспечением.»
+
+12. **cv_hobbies_pool_ru** (массив РОВНО 6 строк) — пул правдоподобных хобби, подходящих под профиль должности и под нарратив digital-nomad (готовность к жизни в новой стране). Должны быть РАЗНЫМИ по характеру: смесь интеллектуальных, активных, культурных и социальных интересов. Каждая строка 2-6 слов. Запрещены клише («чтение книг» без уточнения, «прогулки»). Хорошие примеры: «путешествия по Европе», «изучение испанского языка», «фотография архитектуры», «велотуризм», «современная литература», «приготовление национальной кухни», «настольный теннис», «йога и медитация», «волонтёрские IT-проекты», «коллекционирование винила». Хобби должны быть РЕАЛИСТИЧНЫМИ для специалиста этой профессии и уровня.
+
+13. **cv_certificates_pool** (массив РОВНО 6 объектов {name, issuer, year_offset}) — пул правдоподобных профильных сертификатов/курсов:
+    - name: название сертификата/курса, 4-12 слов на русском (название самого сертификата может содержать английские термины — «PMI Project Management Professional», «AWS Certified Solutions Architect» и т.п.)
+    - issuer: организация-эмитент (Coursera, Stepik, Skillbox, PMI, Microsoft, локальный учебный центр, профильный вуз)
+    - year_offset: целое 0..5 — на сколько лет ПОСЛЕ окончания вуза получен сертификат. 0 = в год выпуска, 3 = через 3 года. Распределяй разные offset для разных сертификатов, чтобы видна была карьерная динамика.
+    
+    Сертификаты должны быть СПЕЦИФИЧНЫ для должности и реалистичны для уровня. Не назначай Senior-сертификаты Junior'у. Эмитенты должны существовать в реальности.
+
 10. **okz_code** (строка, формат «NNNN.N») — код по Общероссийскому классификатору занятий (ОКЗ ОК 010-2014) для этой профессии. ВАЖНО: это юридически значимый код для справки СФР (СТД-Р), указывай НАИБОЛЕЕ ТОЧНЫЙ 4-значный код базовой группы с подгруппой через точку. Примеры: бизнес-аналитик — «2421.9», инженер-проектировщик — «2142.9», разработчик ПО — «2512.1», врач-терапевт — «2211.1». Если профессия не вписывается точно — выбери ближайшую группу ОКЗ. НЕ выдумывай несуществующие коды.
 
 ВАЖНЫЕ ПРАВИЛА:
@@ -132,7 +154,17 @@ _SYSTEM_PROMPT = """Ты — эксперт по составлению долж
   "tech_opinion_grounds_ru": ["...", "..."],
   "tech_opinion_contract_clause_ru": "...",
   "international_analog_ru": "...",
-  "okz_code": "2421.9"
+  "okz_code": "2421.9",
+  "cv_skills_summary_ru": "Навыки... Опыт работы по методологиям...",
+  "cv_hobbies_pool_ru": ["путешествия по Европе", "изучение испанского", "фотография архитектуры", "велотуризм", "современная литература", "йога"],
+  "cv_certificates_pool": [
+    {"name": "PMI Project Management Professional", "issuer": "PMI", "year_offset": 2},
+    {"name": "Certified Scrum Master (CSM)", "issuer": "Scrum Alliance", "year_offset": 1},
+    {"name": "Системный анализ и моделирование", "issuer": "Coursera", "year_offset": 0},
+    {"name": "SQL для аналитиков данных", "issuer": "Stepik", "year_offset": 0},
+    {"name": "Agile-практики в IT-проектах", "issuer": "Skillbox", "year_offset": 1},
+    {"name": "Управление продуктом", "issuer": "Yandex Practicum", "year_offset": 3}
+  ]
 }
 """
 
@@ -199,7 +231,7 @@ async def generate_position_fields(inp: PositionGenerateInput) -> Dict[str, Any]
     raw = await client.complete(
         system=_SYSTEM_PROMPT,
         user=user_payload,
-        max_tokens=6144,
+        max_tokens=8192,  # Pack CV-AUTO: +3 поля в выводе
         temperature=0.3,
     )
 
@@ -227,6 +259,10 @@ async def generate_position_fields(inp: PositionGenerateInput) -> Dict[str, Any]
         "tech_opinion_contract_clause_ru": validated.tech_opinion_contract_clause_ru,
         "international_analog_ru": validated.international_analog_ru,
         "okz_code": validated.okz_code or "",  # Pack 50.22
+        # Pack CV-AUTO
+        "cv_skills_summary_ru": validated.cv_skills_summary_ru,
+        "cv_hobbies_pool_ru": validated.cv_hobbies_pool_ru,
+        "cv_certificates_pool": [c.model_dump() for c in validated.cv_certificates_pool],
     }
 
     log.info(

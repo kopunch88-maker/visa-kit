@@ -2316,6 +2316,65 @@ def build_business_trip_context(application, applicant, company, position, spain
     }
 
 
+# ══════════════════════════ Pack CV-AUTO ══════════════════════════
+# Детерминированный выбор N элементов из пула по seed (applicant.id),
+# чтобы при повторной генерации CV для одного человека хобби/сертификаты
+# не менялись, но у разных заявителей с одной позицией набор был разный.
+
+import hashlib as _cv_hashlib
+from datetime import date as _cv_date
+
+
+def _cv_pick_n_deterministic(items, n, seed):
+    """Возвращает n РАЗНЫХ элементов из items, выбор детерминирован по seed."""
+    if not items:
+        return []
+    items_list = list(items)
+    n = min(n, len(items_list))
+    # Стабильный псевдослучайный индекс через sha1(seed + index)
+    indexed = []
+    for i, item in enumerate(items_list):
+        h = _cv_hashlib.sha1(f"{seed}:{i}".encode("utf-8")).hexdigest()
+        indexed.append((h, item))
+    indexed.sort(key=lambda x: x[0])
+    return [item for _, item in indexed[:n]]
+
+
+def _cv_pick_certificates(pool, applicant_id, edu_year, n=2):
+    """Из пула сертификатов берёт n штук + считает реальный год.
+    year = edu_year + year_offset, не больше текущего года."""
+    if not pool:
+        return []
+    picked = _cv_pick_n_deterministic(pool, n, seed=f"certs-{applicant_id}")
+    this_year = _cv_date.today().year
+    result = []
+    for cert in picked:
+        offset = int(cert.get("year_offset", 0)) if isinstance(cert, dict) else 0
+        base = edu_year or (this_year - 3)
+        year = base + offset
+        if year > this_year:
+            year = this_year
+        result.append({
+            "name": cert.get("name", "") if isinstance(cert, dict) else str(cert),
+            "issuer": cert.get("issuer", "") if isinstance(cert, dict) else "",
+            "year": year,
+        })
+    return result
+
+
+def _cv_latest_education_year(applicant):
+    """Берёт максимальный graduation_year из applicant.education, либо None."""
+    edu = getattr(applicant, "education", None) or []
+    years = []
+    for e in edu:
+        y = e.get("graduation_year") if isinstance(e, dict) else getattr(e, "graduation_year", None)
+        try:
+            years.append(int(y))
+        except (TypeError, ValueError):
+            continue
+    return max(years) if years else None
+
+
 def build_context(application: Application, session: Session) -> dict[str, Any]:
     applicant = session.get(Applicant, application.applicant_id) if application.applicant_id else None
     company = session.get(Company, application.company_id) if application.company_id else None
@@ -2525,6 +2584,22 @@ def build_context(application: Application, session: Session) -> dict[str, Any]:
             "tech_opinion_grounds_es": position.tech_opinion_grounds_es or [],
             "tech_opinion_contract_clause_ru": position.tech_opinion_contract_clause_ru or "",
             "tech_opinion_contract_clause_es": position.tech_opinion_contract_clause_es or "",
+            # ─── Pack CV-AUTO: вычисленные на лету CV-блоки ───
+            # skills_summary — статичная фраза из БД для всех заявителей этой позиции
+            "cv_skills_summary": getattr(position, "cv_skills_summary_ru", None) or "",
+            # hobbies — 3 элемента из пула, детерминированно по applicant.id
+            "cv_hobbies": _cv_pick_n_deterministic(
+                getattr(position, "cv_hobbies_pool_ru", None) or [],
+                n=3,
+                seed=f"hobbies-{applicant.id}",
+            ),
+            # certificates — 2 элемента, год = edu_year + year_offset
+            "cv_certificates": _cv_pick_certificates(
+                getattr(position, "cv_certificates_pool", None) or [],
+                applicant_id=applicant.id,
+                edu_year=_cv_latest_education_year(applicant),
+                n=2,
+            ),
         },
 
         "contract": {

@@ -133,6 +133,32 @@ class Position(TimestampMixin, table=True):
         description="§4 — цитата из договора (ES)",
     )
 
+    # Pack CV-AUTO — поля для генерации блоков «Дополнительная информация»,
+    # «Сертификаты» и «Интересы» в CV. Заполняются LLM при создании позиции,
+    # выбираются в шаблон детерминированно по applicant.id.
+    cv_skills_summary_ru: Optional[str] = Field(
+        default=None,
+        description="CV-AUTO: 1-3 предложения о ключевых навыках и инструментах "
+                    "должности (Agile/Scrum, Jira, SQL и т.п.). Вставляется в "
+                    "«Дополнительную информацию» CV для всех заявителей с этой "
+                    "позицией.",
+    )
+    cv_hobbies_pool_ru: Optional[List[str]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="CV-AUTO: пул из 6 хобби, подходящих для DN-нарратива "
+                    "(путешествия, языки, спорт, культура). В каждое CV "
+                    "выбираются 3 элемента детерминированно по applicant.id.",
+    )
+    cv_certificates_pool: Optional[List[dict]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="CV-AUTO: пул из 6 правдоподобных сертификатов: "
+                    "[{name, issuer, year_offset}, ...]. year_offset — "
+                    "смещение от года выпуска вуза (0..3). В CV "
+                    "выбираются 2 сертификата детерминированно по applicant.id.",
+    )
+
     # Pack 50.7-A — цель командировки для Приказа Т-9 (найм)
     # Текст для блока "с целью..." в приказе. Генерируется LLM при создании
     # должности, может правиться вручную в админке.
@@ -178,6 +204,10 @@ class PositionCreate(SQLModel):
     business_trip_purpose: Optional[str] = None
     # Pack 50.9-A — код ОКЗ для СТД-Р
     okz_code: Optional[str] = None
+    # Pack CV-AUTO — поля для CV
+    cv_skills_summary_ru: Optional[str] = None
+    cv_hobbies_pool_ru: Optional[List[str]] = None
+    cv_certificates_pool: Optional[List[dict]] = None
 
 
 class PositionUpdate(SQLModel):
