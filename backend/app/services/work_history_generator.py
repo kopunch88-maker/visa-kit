@@ -309,29 +309,129 @@ def _pick_companies_for_track(
 
 
 # ============================================================================
-# === Picking title + duties (Pack 20.3) ===
+# === Picking title + duties (Pack 20.3 / Pack 61: alignment with current position hint) ===
 # ============================================================================
+
+# Pack 61: токены, отбрасываемые при токенизации hint и кандидатов.
+# Это служебные слова, грейды и общие профессиональные термины, которые
+# создают ложные пересечения (например «специалист»/«инженер»/«менеджер»
+# встречаются почти в каждом title).
+# Стопы применяются ДО стемминга. Длинные слова можно перечислять
+# в нескольких падежных формах для надёжности — стемминг сделает то же,
+# но прямой матч короче.
+_HINT_STOP_WORDS = frozenset({
+    # служебные
+    "и", "в", "на", "с", "со", "о", "об", "по", "для", "при", "от", "до",
+    "из", "под", "над", "за", "к", "у", "не", "ни", "же", "ли", "бы", "или",
+    # обобщающие профессиональные (одной формы достаточно: длинные стемятся
+    # одинаково, фильтр сработает уже после, но прямой матч экономит цикл).
+    "специалист", "специалиста",
+    "инженер", "инженера",
+    "менеджер", "менеджера",
+    "руководитель", "руководителя",
+    "сотрудник", "сотрудника",
+    "работник", "работника",
+    "консультант", "консультанта",
+    # грейды
+    "ведущий", "ведущего",
+    "главный", "главного",
+    "старший", "старшего",
+    "младший", "младшего",
+    "помощник", "помощника",
+    "i", "ii", "iii", "iv",
+    "категории", "категория", "уровня", "уровень",
+    # общие "процессные"
+    "работы", "работа", "работ",
+    "отдела", "отдел",
+    "группы", "группа",
+    "проекта", "проекту", "проектами", "проектов", "проектная", "проекты",
+})
+
+
+# Pack 61: длина стема для нормализации морфологии русского.
+# Берём первые _STEM_LEN символов токена (длина >= _STEM_LEN). Короткие
+# токены (BIM, SQL, ГИП, ОКЗ) оставляем как есть. Это лёгкий fallback вместо
+# pymorphy3 — достаточно для alignment внутри одной специальности.
+_STEM_LEN = 5
+
+
+def _stem(tok: str) -> str:
+    return tok[:_STEM_LEN] if len(tok) > _STEM_LEN else tok
+
+
+def _tokenize_hint(text: str) -> frozenset[str]:
+    """
+    Pack 61: разбивает строку должности в множество значимых СТЕМОВ.
+
+    - lower-case;
+    - сплит по non-alphanumeric (пробелы, дефисы, скобки, точки, слэш);
+    - длина токена >= 3;
+    - не входит в _HINT_STOP_WORDS (стопы проверяются ДО стемминга, чтобы
+      «специалист»/«проектами»/«категории» не превратились в значимые стемы);
+    - не чисто цифровой;
+    - после фильтрации — стем (token[:5]). Это сводит падежные формы к
+      одной канонической: «строительными»/«строительные» → «строи»,
+      «управлению»/«управление» → «управ», «цифровому»/«цифровое» → «цифро».
+
+    Возвращает frozenset для дешёвого пересечения.
+    """
+    if not text:
+        return frozenset()
+    s = text.lower()
+    # Заменяем не-alphanumeric (учитывая кириллицу) на пробел.
+    buf = []
+    for ch in s:
+        if ch.isalnum():
+            buf.append(ch)
+        else:
+            buf.append(" ")
+    raw_tokens = "".join(buf).split()
+    out = set()
+    for tok in raw_tokens:
+        if len(tok) < 3:
+            continue
+        if tok in _HINT_STOP_WORDS:
+            continue
+        if tok.isdigit():
+            continue
+        out.add(_stem(tok))
+    return frozenset(out)
+
+
+# Pack 61: узкоспециализированные ключевые слова — де-приоритезируем такие
+# Position только когда hint их НЕ содержит. Если у клиента в договоре стоит
+# «инженер-геодезист» — токен «геодезист» окажется в hint_tokens и геодезист
+# попадёт в strong/weak pool вместо специфического fallback.
+_NARROW_SPECIFIC_KEYWORDS = (
+    "геодезист", "геодезия", "камеральщик", "топограф",
+    "сметчик", "крановщик",
+)
+
 
 def _pick_position_for_level(
     specialty: Specialty,
     level: int,
     session: Session,
     rng: random.Random,
+    hint_tokens: Optional[frozenset[str]] = None,  # Pack 61
 ) -> Optional[Position]:
     """
-    Pack 20.3: ищет Position в справочнике по (specialty_id, level).
+    Pack 20.3 + Pack 61: ищет Position в справочнике по (specialty_id, level)
+    с alignment по текущей должности заявителя.
 
-    Tie-breaker для дубликатов уровня (например 08.03.01 L2 имеет id=13
-    "Инженер-проектировщик II категории" + id=2 "инженер-геодезист (камеральщик)"):
-      - Сортируем кандидаты по числу duties DESC. Наши новые Pack 20.2 Position
-        имеют 9-11 duties, старые legacy типа геодезиста — 11 (ровно).
-        В ничейных случаях это всё ещё может выбрать геодезиста.
-      - Внутри группы equal duties — rng.choice (разнообразие)
-      - В качестве sanity-check: если кандидатов несколько и у одного есть
-        тэг "геодезия"/"камеральщик" — он считается специализированным
-        и идёт в preference только когда его уже выбрали явно (через
-        education с явной геодезией). Здесь мы этого не знаем, поэтому
-        просто де-приоритезируем такие позиции.
+    Алгоритм выбора (Pack 61):
+      1. Собираем всех активных Position для (specialty_id, level).
+      2. Если hint_tokens непустой — скорим каждого кандидата как
+            score = |hint_tokens ∩ tokens(title_ru | tags | profile_description[:240])|
+         и делим на strong (>=2) / weak (=1) / neutral (=0). Берём первую
+         непустую группу.
+      3. Если hint_tokens пустой ИЛИ pool вышел neutral
+         (ничего не совпало) — применяем старый де-приоритет
+         узкоспециализированных позиций (геодезия/сметы/камералка):
+         generic кандидаты в pool, иначе specific.
+         Старая семантика сохранена для backward compatibility.
+      4. Внутри финального pool — сорт по len(duties) DESC, rng.choice
+         среди тех, у кого duties максимально.
 
     Возвращает None если для (specialty, level) нет ни одной активной Position.
     """
@@ -347,32 +447,70 @@ def _pick_position_for_level(
     if not candidates:
         return None
 
-    # Эвристика "специализированности": Position считается узкоспециализированной
-    # если её title или tags содержат уникальные профессиональные квалификаторы.
-    # Такие Position'ы попадают в "second tier" — выбираются только если
-    # generic кандидатов нет.
-    SPECIFIC_KEYWORDS = (
-        "геодезист", "геодезия", "камеральщик", "топограф",
-        "сметчик", "крановщик",
-    )
+    # ── Pack 61: alignment with current position hint ────────────────────────
+    def _candidate_tokens(p: Position) -> frozenset[str]:
+        parts: list[str] = []
+        if p.title_ru:
+            parts.append(p.title_ru)
+        for t in (p.tags or []):
+            parts.append(str(t))
+        if p.profile_description:
+            parts.append(p.profile_description[:240])
+        return _tokenize_hint(" ".join(parts))
 
-    def _is_specific(p: Position) -> bool:
-        t = (p.title_ru or "").lower()
-        tags = [str(x).lower() for x in (p.tags or [])]
-        for kw in SPECIFIC_KEYWORDS:
-            if kw in t:
-                return True
-            for tag in tags:
-                if kw in tag:
+    pool: list[Position]
+    used_hint = False
+    if hint_tokens:
+        scored = [(p, len(hint_tokens & _candidate_tokens(p))) for p in candidates]
+        strong = [p for p, s in scored if s >= 2]
+        weak = [p for p, s in scored if s == 1]
+        if strong:
+            pool = strong
+            used_hint = True
+            log.info(
+                "work_history generator [Pack 61]: aligned by hint (strong, "
+                "%d candidates) specialty=%s level=%d",
+                len(strong), specialty.code, level,
+            )
+        elif weak:
+            pool = weak
+            used_hint = True
+            log.info(
+                "work_history generator [Pack 61]: aligned by hint (weak, "
+                "%d candidates) specialty=%s level=%d",
+                len(weak), specialty.code, level,
+            )
+        else:
+            pool = list(candidates)
+            log.info(
+                "work_history generator [Pack 61]: no hint alignment "
+                "(all neutral) specialty=%s level=%d — falling back to "
+                "narrow-specific de-prioritization",
+                specialty.code, level,
+            )
+    else:
+        pool = list(candidates)
+
+    # ── Старый де-приоритет узкоспециализированных Position ──────────────────
+    # Применяется только когда hint не помог (или его не было) —
+    # обратная совместимость с поведением до Pack 61.
+    if not used_hint:
+        def _is_narrow_specific(p: Position) -> bool:
+            t = (p.title_ru or "").lower()
+            tags_l = [str(x).lower() for x in (p.tags or [])]
+            for kw in _NARROW_SPECIFIC_KEYWORDS:
+                if kw in t:
                     return True
-        return False
+                for tag in tags_l:
+                    if kw in tag:
+                        return True
+            return False
 
-    generic = [p for p in candidates if not _is_specific(p)]
-    specific = [p for p in candidates if _is_specific(p)]
+        generic = [p for p in pool if not _is_narrow_specific(p)]
+        specific = [p for p in pool if _is_narrow_specific(p)]
+        pool = generic if generic else specific
 
-    pool = generic if generic else specific
-
-    # Внутри pool — preference более полным duties
+    # ── Финальный пик: max duties, rng.choice среди top ──────────────────────
     pool.sort(key=lambda p: -len(p.duties or []))
     top_count = len(pool[0].duties or [])
     top_candidates = [p for p in pool if len(p.duties or []) == top_count]
@@ -386,18 +524,23 @@ def _pick_title_and_duties_for_level(
     level: int,
     session: Session,
     rng: random.Random,
+    hint_tokens: Optional[frozenset[str]] = None,  # Pack 61
 ) -> tuple[Optional[str], list[str]]:
     """
-    Pack 20.3: возвращает (title_ru, duties[]) для записи work_history.
+    Pack 20.3 + Pack 61: возвращает (title_ru, duties[]) для записи work_history.
 
     Алгоритм:
       1. Position лучше всего — берём title + duties снапшотом
       2. Position для соседних уровней (level-1, level+1) — если на точном уровне нет
       3. CareerTrack fallback — если нигде нет Position (для специальностей без Pack 20.2 разметки)
       4. Если совсем ничего — возвращаем (None, [])
+
+    Pack 61: при наличии hint_tokens пробрасывает их в _pick_position_for_level
+    на каждом шаге Position-фоллбэков (career_track-фоллбэки hint не учитывают,
+    у них тоже нет tags/description).
     """
     # 1. Точное совпадение (specialty, level)
-    pos = _pick_position_for_level(specialty, level, session, rng)
+    pos = _pick_position_for_level(specialty, level, session, rng, hint_tokens=hint_tokens)
     if pos:
         log.info(
             "work_history generator: matched Position id=%s '%s' "
@@ -410,7 +553,7 @@ def _pick_title_and_duties_for_level(
     for fallback_level in (level - 1, level + 1, 1, 2, 3, 4):
         if fallback_level < 1 or fallback_level > 4 or fallback_level == level:
             continue
-        pos = _pick_position_for_level(specialty, fallback_level, session, rng)
+        pos = _pick_position_for_level(specialty, fallback_level, session, rng, hint_tokens=hint_tokens)
         if pos:
             log.warning(
                 "work_history generator: no Position for specialty=%s level=%d, "
@@ -610,10 +753,29 @@ def suggest_work_history(
         )
         levels = levels[:actual_count]
 
-    # 5. Pack 20.3: titles + duties для каждой записи
+    # 5. Pack 20.3 + Pack 61: titles + duties для каждой записи
+    #    с alignment по текущей должности заявителя.
+    current_position_hint = _get_position_for_matching(applicant, session)
+    hint_tokens = _tokenize_hint(current_position_hint) if current_position_hint else None
+    if hint_tokens:
+        log.info(
+            "work_history generator [Pack 61]: hint position=%r → tokens=%s "
+            "(applicant_id=%s)",
+            current_position_hint, sorted(hint_tokens), applicant.id,
+        )
+    else:
+        log.info(
+            "work_history generator [Pack 61]: no hint tokens (position=%r) "
+            "— Pack 61 alignment disabled, falling back to legacy pick "
+            "(applicant_id=%s)",
+            current_position_hint, applicant.id,
+        )
+
     titles_and_duties: list[tuple[str, list[str]]] = []
     for level in levels:
-        title, duties = _pick_title_and_duties_for_level(specialty, level, session, rng)
+        title, duties = _pick_title_and_duties_for_level(
+            specialty, level, session, rng, hint_tokens=hint_tokens,
+        )
         if title is None:
             log.warning(
                 "work_history generator: no title for specialty=%s level=%d "
