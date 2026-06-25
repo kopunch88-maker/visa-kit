@@ -12,9 +12,10 @@ import io
 import logging
 import time
 from datetime import datetime
+from pathlib import Path as PathLib  # Pack 71
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 from sqlalchemy import text as _sa_text, bindparam as _sa_bindparam  # Pack 50.41
 from pydantic import BaseModel as _PydBaseModel  # Pack 50.41
@@ -725,6 +726,197 @@ async def admin_recognize_document(
     if tasa_result is not None:
         enriched["tasa_apply"] = tasa_result  # Pack 70
     return enriched
+
+
+# =============================================================================
+# Pack 71 — drag&drop загрузка квитанции Tasa прямо на карточку «Подача»
+# =============================================================================
+
+_TASA_SUPPORTED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+_TASA_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
+
+
+@router.post("/{application_id}/upload-tasa")
+async def admin_upload_tasa(
+    application_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """
+    Pack 71 — приём одной квитанции Tasa Modelo 790 без классификатора:
+    тип жёстко TASA_038, PDF-страница по умолчанию = 1.
+
+    После сохранения файла запускается синхронно OCR + auto-apply →
+    NRC попадает в Application.tasa_nrc через _apply_tasa_to_application
+    (Pack 70). Возвращает enrichment документа + tasa_apply + краткий
+    срез application — фронт сразу показывает обновлённую карточку.
+
+    NRC НЕ перезаписывается, если он уже стоит и отличается (Pack 70 поведение).
+    """
+    application = session.get(Application, application_id)
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(422, "Empty file")
+    if len(file_bytes) > _TASA_MAX_FILE_SIZE:
+        raise HTTPException(
+            413,
+            f"Файл слишком большой ({len(file_bytes) // 1024 // 1024} МБ, "
+            f"максимум {_TASA_MAX_FILE_SIZE // 1024 // 1024} МБ)",
+        )
+
+    filename = file.filename or "tasa.pdf"
+    content_type = file.content_type or "application/octet-stream"
+    ext = PathLib(filename).suffix.lower()
+    if ext not in _TASA_SUPPORTED_EXT:
+        raise HTTPException(
+            422,
+            f"Неподдерживаемое расширение: {ext}. "
+            f"Поддерживаются: PDF, JPG, PNG, WebP, HEIC.",
+        )
+    is_pdf = (ext == ".pdf") or (content_type == "application/pdf")
+
+    storage = get_storage()
+    timestamp = int(time.time())
+    doc_type_str = ApplicantDocumentType.TASA_038.value
+
+    # === Сохранение файла + (для PDF) рендер страницы 1 в JPEG ===
+    if is_pdf:
+        original_key = (
+            f"applications/{application_id}/documents/"
+            f"{doc_type_str}_{timestamp}_original.pdf"
+        )
+        try:
+            storage.save(original_key, file_bytes, content_type="application/pdf")
+        except Exception as e:
+            log.error(f"Pack 71: failed to save tasa PDF: {e}")
+            raise HTTPException(500, "Не удалось сохранить файл")
+
+        try:
+            jpeg_bytes = _pdf_page_to_jpeg(file_bytes, page_num=1)
+        except Exception as e:
+            log.error(f"Pack 71: PDF→JPEG conversion failed: {e}")
+            jpeg_bytes = None
+
+        if jpeg_bytes:
+            primary_key = (
+                f"applications/{application_id}/documents/"
+                f"{doc_type_str}_{timestamp}_p1.jpg"
+            )
+            try:
+                storage.save(primary_key, jpeg_bytes, content_type="image/jpeg")
+            except Exception as e:
+                log.error(f"Pack 71: failed to save JPEG: {e}")
+                try:
+                    storage.delete(original_key)
+                except Exception:
+                    pass
+                raise HTTPException(500, "Не удалось сохранить изображение")
+
+            doc = ApplicantDocument(
+                application_id=application_id,
+                doc_type=ApplicantDocumentType.TASA_038,
+                storage_key=primary_key,
+                original_storage_key=original_key,
+                file_name=filename.replace(".pdf", "").replace(".PDF", "") + "_page1.jpg",
+                file_size=len(jpeg_bytes),
+                content_type="image/jpeg",
+                original_file_name=filename,
+                original_file_size=len(file_bytes),
+                original_content_type="application/pdf",
+                status=ApplicantDocumentStatus.UPLOADED,
+                parsed_data={},
+            )
+        else:
+            # Конвертация упала — оставляем PDF, OCR недоступен
+            doc = ApplicantDocument(
+                application_id=application_id,
+                doc_type=ApplicantDocumentType.TASA_038,
+                storage_key=original_key,
+                file_name=filename,
+                file_size=len(file_bytes),
+                content_type="application/pdf",
+                status=ApplicantDocumentStatus.OCR_FAILED,
+                ocr_error="PDF→JPEG conversion failed",
+                parsed_data={},
+            )
+    else:
+        primary_key = (
+            f"applications/{application_id}/documents/"
+            f"{doc_type_str}_{timestamp}{ext}"
+        )
+        try:
+            storage.save(primary_key, file_bytes, content_type=content_type)
+        except Exception as e:
+            log.error(f"Pack 71: failed to save tasa image: {e}")
+            raise HTTPException(500, "Не удалось сохранить файл")
+
+        doc = ApplicantDocument(
+            application_id=application_id,
+            doc_type=ApplicantDocumentType.TASA_038,
+            storage_key=primary_key,
+            file_name=filename,
+            file_size=len(file_bytes),
+            content_type=content_type,
+            status=ApplicantDocumentStatus.UPLOADED,
+            parsed_data={},
+        )
+
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    # === Синхронный OCR + auto-apply (NRC → Application.tasa_nrc) ===
+    tasa_result = None
+    if doc.status != ApplicantDocumentStatus.OCR_FAILED:
+        try:
+            image_bytes = storage.read(doc.storage_key)
+            parsed = await recognize_document(
+                doc_type=doc.doc_type.value,
+                image_bytes=image_bytes,
+                content_type=doc.content_type,
+            )
+            doc.status = ApplicantDocumentStatus.OCR_DONE
+            doc.parsed_data = parsed
+            doc.ocr_completed_at = datetime.utcnow()
+            doc.applied_to_applicant = False
+            session.add(doc)
+            session.commit()
+            session.refresh(doc)
+
+            # Запись NRC + сверка имени (Pack 70)
+            tasa_result = _auto_apply_ocr_to_applicant(application_id)
+            session.refresh(doc)
+        except OCRError as e:
+            log.warning(f"Pack 71: tasa OCR failed for doc {doc.id}: {e}")
+            doc.status = ApplicantDocumentStatus.OCR_FAILED
+            doc.ocr_error = str(e)[:500]
+            session.add(doc)
+            session.commit()
+            session.refresh(doc)
+        except Exception as e:
+            log.error(f"Pack 71: unexpected error for doc {doc.id}: {e}", exc_info=True)
+            doc.status = ApplicantDocumentStatus.OCR_FAILED
+            doc.ocr_error = f"Unexpected error: {str(e)[:200]}"
+            session.add(doc)
+            session.commit()
+            session.refresh(doc)
+
+    # Перечитываем application — tasa_nrc мог обновиться через _apply_tasa
+    session.refresh(application)
+
+    return {
+        "document": _enrich_document(doc),
+        "tasa_apply": tasa_result,
+        "application": {
+            "id": application.id,
+            "tasa_nrc": application.tasa_nrc,
+        },
+    }
+
+
 # =============================================================================
 # Pack 42.1 — удаление документа клиента
 # =============================================================================

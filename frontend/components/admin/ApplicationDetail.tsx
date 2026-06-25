@@ -517,6 +517,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           representative={representative}
           address={address}
           onEdit={() => setShowSubmissionDrawer(true)}
+          onUpdated={loadAll}/* Pack 71 — onUpdated */
         />
         {/* Pack 36.1 — карточка TIE с NIE и датой отпечатков */}
         <TieCard
