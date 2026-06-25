@@ -73,12 +73,11 @@ export function SubmissionCard({ application, representative, address, onEdit }:
               <div className="text-sm text-primary">{address.label}</div>
             </div>
           )}
-          {application.tasa_nrc && (
-            <div>
-              <div className="text-[11px] text-tertiary">NRC квитанции</div>
-              <div className="text-sm text-primary font-mono">{application.tasa_nrc}</div>
-            </div>
-          )}
+          {/* NRC квитанции (Pack 69.1) */}
+          <div>
+            <div className="text-[11px] text-tertiary">NRC квитанции</div>
+            <div className="text-sm text-primary font-mono">{application.tasa_nrc || "—"}</div>
+          </div>
         </div>
       )}
     </div>
