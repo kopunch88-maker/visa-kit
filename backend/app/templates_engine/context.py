@@ -2340,6 +2340,72 @@ def _cv_pick_n_deterministic(items, n, seed):
     return [item for _, item in indexed[:n]]
 
 
+# Pack 63: clamp year to issuer's founding year — нельзя получить сертификат
+# до основания платформы. Расчёт year = edu_year + year_offset без проверки
+# исторической достоверности генерирует невозможные сочетания (Skillbox 2012
+# и т.п.), что инспектор UGE ловит за 30 секунд гугления.
+_ISSUER_MIN_YEAR = {
+    # Russian EdTech
+    "skillbox": 2016,
+    "yandex practicum": 2018,
+    "яндекс практикум": 2018,
+    "практикум": 2018,
+    "geekbrains": 2010,
+    "skillfactory": 2016,
+    "stepik": 2013,
+    "stepik.org": 2013,
+    "otus": 2014,
+    "хекслет": 2014,
+    "hexlet": 2014,
+    "нетология": 2011,
+    "netology": 2011,
+    # Western EdTech
+    "coursera": 2012,
+    "edx": 2012,
+    "udemy": 2010,
+    "udacity": 2011,
+    "linkedin learning": 2015,
+    "pluralsight": 2004,
+    "datacamp": 2014,
+    # Vendor / certification bodies
+    "microsoft learn": 2018,
+    "uipath academy": 2017,
+    "uipath": 2017,
+    "google cloud skills boost": 2019,
+    "aws training": 2014,
+    "aws skill builder": 2021,
+    "atlassian university": 2015,
+    "scrum alliance": 2002,
+    "pmi": 1969,
+    "iiba": 2003,
+    "iassc": 2009,
+    "isc²": 1989,
+    "isc2": 1989,
+    "the open group": 1996,
+    "buildingsmart": 1995,
+    "oracle university": 1999,
+    "cisco networking academy": 1997,
+    "autodesk authorized training center": 1982,
+    "autodesk": 1982,
+}
+
+
+def _issuer_min_year(issuer):
+    """Возвращает год основания эмитента, или None. Case-insensitive,
+    с матчингом по подстроке для распространённых вариаций названий."""
+    if not issuer:
+        return None
+    s = str(issuer).strip().lower()
+    if not s:
+        return None
+    if s in _ISSUER_MIN_YEAR:
+        return _ISSUER_MIN_YEAR[s]
+    for key, year in _ISSUER_MIN_YEAR.items():
+        if key in s:
+            return year
+    return None
+
+
 def _cv_pick_certificates(pool, applicant_id, edu_year, n=2):
     """Из пула сертификатов берёт n штук + считает реальный год.
     year = edu_year + year_offset, не больше текущего года."""
@@ -2350,13 +2416,18 @@ def _cv_pick_certificates(pool, applicant_id, edu_year, n=2):
     result = []
     for cert in picked:
         offset = int(cert.get("year_offset", 0)) if isinstance(cert, dict) else 0
+        issuer = cert.get("issuer", "") if isinstance(cert, dict) else ""
         base = edu_year or (this_year - 3)
         year = base + offset
+        # Pack 63: clamp year to issuer's founding year
+        issuer_min = _issuer_min_year(issuer)
+        if issuer_min is not None and year < issuer_min:
+            year = issuer_min
         if year > this_year:
             year = this_year
         result.append({
             "name": cert.get("name", "") if isinstance(cert, dict) else str(cert),
-            "issuer": cert.get("issuer", "") if isinstance(cert, dict) else "",
+            "issuer": issuer,
             "year": year,
         })
     return result

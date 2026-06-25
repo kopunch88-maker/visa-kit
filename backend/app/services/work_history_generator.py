@@ -700,6 +700,115 @@ def _pick_levels(count: int, rng: random.Random, is_solo: bool = False) -> list[
     return rng.choice(options)
 
 
+# ============================================================================
+# === Pack 64: stretch earliest record to fill education gap ===
+# ============================================================================
+
+# Допустимый gap между окончанием вуза и первой работой (в годах).
+# Стандартный сценарий «учился, потом год искал работу» — gap=1.
+MAX_GAP_FROM_EDUCATION_YEARS = 2
+
+# Максимальная длительность самой ранней записи (в годах) при растягивании.
+# Длиннее — выглядит подозрительно (вечный junior 10+ лет в одной компании).
+MAX_EARLIEST_RECORD_LENGTH_YEARS = 8.0
+
+
+def _parse_ru_period_label(label):
+    """'Январь 2020' → date(2020, 1, 1). None если не распарсилось."""
+    if not label:
+        return None
+    parts = str(label).strip().split()
+    if len(parts) != 2:
+        return None
+    month_ru, year_str = parts
+    try:
+        month_idx = RU_MONTHS.index(month_ru)
+    except ValueError:
+        return None
+    try:
+        return date(int(year_str), month_idx + 1, 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_education_end_year(applicant):
+    """Берёт max graduation_year из applicant.education (если есть)."""
+    edu = getattr(applicant, "education", None) or []
+    years = []
+    for e in edu:
+        if isinstance(e, dict):
+            y = e.get("graduation_year")
+        else:
+            y = getattr(e, "graduation_year", None)
+        try:
+            years.append(int(y))
+        except (TypeError, ValueError):
+            continue
+    return max(years) if years else None
+
+
+def _stretch_earliest_record_for_education_gap(records, applicant):
+    """Pack 64: растягивает самую раннюю запись назад чтобы закрыть gap до диплома.
+
+    Если applicant.education содержит graduation_year и gap между earliest.start
+    и (graduation_year + 1) > MAX_GAP_FROM_EDUCATION_YEARS — двигаем
+    earliest.period_start назад, но не дальше чем (graduation_year + 1) И не так,
+    чтобы общая длительность записи превысила MAX_EARLIEST_RECORD_LENGTH_YEARS.
+
+    Срабатывает только при len(records) >= 2 — чтобы не двигать единственную
+    запись (она будет переписана work_history_sync.py на DN-работодателя).
+    """
+    if len(records) < 2:
+        return
+    edu_year = _extract_education_end_year(applicant)
+    if not edu_year:
+        return
+
+    earliest = records[-1]  # records сортированы от новых к старым
+    start_date = _parse_ru_period_label(earliest.period_start)
+    if start_date is None:
+        return
+    end_label = earliest.period_end
+    if not end_label or "настоящее" in str(end_label).lower():
+        end_date = date.today()
+    else:
+        end_date = _parse_ru_period_label(end_label)
+        if end_date is None:
+            return
+
+    target_start_year = edu_year + 1  # +1 год на поиск работы после диплома
+    gap_years = start_date.year - target_start_year
+    if gap_years <= MAX_GAP_FROM_EDUCATION_YEARS:
+        return  # gap приемлемый, ничего не делаем
+
+    # Сколько максимум можем растянуть назад
+    current_length_days = (end_date - start_date).days
+    max_total_length_days = int(MAX_EARLIEST_RECORD_LENGTH_YEARS * 365.25)
+    max_extension_days = max(0, max_total_length_days - current_length_days)
+    if max_extension_days <= 0:
+        return
+
+    # Желаемое смещение — до target_start_year (того же месяца, что у start_date)
+    try:
+        target_start_date = date(target_start_year, start_date.month, 1)
+    except ValueError:
+        return
+    desired_extension_days = (start_date - target_start_date).days
+    extension_days = min(desired_extension_days, max_extension_days)
+    if extension_days <= 0:
+        return
+
+    new_start_date = start_date - timedelta(days=extension_days)
+    old_label = earliest.period_start
+    earliest.period_start = _format_period_start(new_start_date)
+    log.info(
+        "work_history generator [Pack 64]: stretched earliest record "
+        "from %r to %r (edu_year=%d, gap was %d years, extension %.1f years)",
+        old_label, earliest.period_start, edu_year, gap_years,
+        extension_days / 365.25,
+    )
+
+
 def suggest_work_history(
     applicant: Applicant,
     session: Session,
@@ -878,6 +987,9 @@ def suggest_work_history(
             position=title2,
             duties=duties2,  # Pack 20.3
         ))
+
+    # Pack 64: stretch earliest record to fill education gap
+    _stretch_earliest_record_for_education_gap(records, applicant)
 
     total_duties = sum(len(r.duties) for r in records)
     log.info(
