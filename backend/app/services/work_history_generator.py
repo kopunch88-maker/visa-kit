@@ -753,22 +753,61 @@ def suggest_work_history(
         )
         levels = levels[:actual_count]
 
-    # 5. Pack 20.3 + Pack 61: titles + duties для каждой записи
+    # 5. Pack 20.3 + Pack 61 + Pack 61.1: extended hint resolution
     #    с alignment по текущей должности заявителя.
+    #    Pack 61.1: extended hint resolution — конкатенируем title_ru +
+    #    tags + profile_description из реального Position объекта,
+    #    если он резолвится через application.position_id.
     current_position_hint = _get_position_for_matching(applicant, session)
-    hint_tokens = _tokenize_hint(current_position_hint) if current_position_hint else None
+    hint_source = "title_only"  # для логов
+    hint_text = current_position_hint or ""
+
+    # Пытаемся найти Position объект, чтобы расширить hint
+    try:
+        from datetime import datetime as _dt
+        _apps = list(applicant.applications or [])
+        _active = [a for a in _apps if not getattr(a, "is_archived", False)]
+        _active.sort(key=lambda a: a.created_at or _dt.min, reverse=True)
+        for _app in _active:
+            if _app.position_id is None:
+                continue
+            _pos = session.get(Position, _app.position_id)
+            if _pos is None:
+                continue
+            _parts = []
+            if _pos.title_ru:
+                _parts.append(_pos.title_ru)
+            for _t in (_pos.tags or []):
+                _parts.append(str(_t))
+            if _pos.profile_description:
+                _parts.append(_pos.profile_description[:400])
+            if _parts:
+                hint_text = " ".join(_parts)
+                hint_source = (
+                    f"position_id={_pos.id} (title+{len(_pos.tags or [])} tags"
+                    f"+profile_desc)"
+                )
+                break
+    except Exception as _e:
+        log.warning(
+            "work_history generator [Pack 61.1]: error expanding hint "
+            "(applicant_id=%s): %r — falling back to title-only",
+            applicant.id, _e,
+        )
+
+    hint_tokens = _tokenize_hint(hint_text) if hint_text else None
     if hint_tokens:
         log.info(
-            "work_history generator [Pack 61]: hint position=%r → tokens=%s "
+            "work_history generator [Pack 61 / 61.1]: hint source=%s → tokens=%s "
             "(applicant_id=%s)",
-            current_position_hint, sorted(hint_tokens), applicant.id,
+            hint_source, sorted(hint_tokens), applicant.id,
         )
     else:
         log.info(
-            "work_history generator [Pack 61]: no hint tokens (position=%r) "
-            "— Pack 61 alignment disabled, falling back to legacy pick "
+            "work_history generator [Pack 61]: no hint tokens (source=%s, "
+            "position=%r) — alignment disabled, falling back to legacy pick "
             "(applicant_id=%s)",
-            current_position_hint, applicant.id,
+            hint_source, current_position_hint, applicant.id,
         )
 
     titles_and_duties: list[tuple[str, list[str]]] = []
