@@ -387,7 +387,11 @@ def _apply_tasa_to_application(session: Session, application_id: int) -> Optiona
             application.tasa_nrc = nrc[:64]
             session.add(application)
             result["nrc_set"] = True
-        elif application.tasa_nrc.strip() != nrc:
+        elif application.tasa_nrc.strip().upper() != nrc.strip().upper():
+            # Pack 71.2 — конфликт только если действительно разные (без учёта регистра/whitespace)
+            log.warning(
+                f"Pack 70: NRC conflict — existing={application.tasa_nrc!r}, new={nrc!r}"
+            )
             result["nrc_conflict"] = True
 
     # Сверка имени

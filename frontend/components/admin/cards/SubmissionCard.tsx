@@ -16,9 +16,11 @@ interface Props {
   onEdit: () => void;
   /** Pack 71 — родитель перечитывает application после успешной загрузки Tasa */
   onUpdated?: () => void;
+  /** Pack 71.2 — родитель перечитывает список «Документы клиента» */
+  onDocumentsChanged?: () => void;
 }
 
-export function SubmissionCard({ application, representative, address, onEdit, onUpdated }: Props) {
+export function SubmissionCard({ application, representative, address, onEdit, onUpdated, onDocumentsChanged }: Props) {
   const hasData =
     application.submission_date || representative || address || application.tasa_nrc;
 
@@ -62,6 +64,7 @@ export function SubmissionCard({ application, representative, address, onEdit, o
     try {
       const result = await adminUploadTasa(application.id, file);
       try { onUpdated?.(); } catch {}
+      try { onDocumentsChanged?.(); } catch {} // Pack 71.2
       const t = result.tasa_apply;
       const lines: string[] = [];
       let kind: "success" | "warning" | "error" = "success";

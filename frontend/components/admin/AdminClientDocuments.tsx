@@ -26,6 +26,8 @@ import { ImportPackageDialog } from "./ImportPackageDialog";  // Pack 42.3
 
 interface Props {
   applicationId: number;
+  /** Pack 71.2 — счётчик от родителя; меняется → load() перечитывает документы */
+  refreshKey?: number;
 }
 
 const SEX_LABELS: Record<string, string> = { H: "Мужской", M: "Женский" };
@@ -58,7 +60,7 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   ocr_failed: { bg: "var(--color-bg-danger)", text: "var(--color-text-danger)" },
 };
 
-export function AdminClientDocuments({ applicationId }: Props) {
+export function AdminClientDocuments({ applicationId, refreshKey }: Props) {
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   // Pack 50.41 — «просмотрено» для сканов (ключ scan:{id}), общее на команду
   const [seenKeys, setSeenKeys] = useState<Set<string>>(new Set());
@@ -104,7 +106,7 @@ export function AdminClientDocuments({ applicationId }: Props) {
     setLoading(true);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applicationId]);
+  }, [applicationId, refreshKey]);/* Pack 71.2 */
 
   // Pack 42.3 — загружаем applications один раз для ImportPackageDialog
   useEffect(() => {

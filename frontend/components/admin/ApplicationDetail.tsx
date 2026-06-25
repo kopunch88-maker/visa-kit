@@ -96,6 +96,8 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
   const [addresses, setAddresses] = useState<SpainAddressResponse[]>([]);
 
   const [loading, setLoading] = useState(true);
+  // Pack 71.2 — счётчик для refresh списка «Документы клиента» из карточки «Подача»
+  const [clientDocsRefreshKey, setClientDocsRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showCompanyDrawer, setShowCompanyDrawer] = useState(false);
@@ -518,6 +520,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
           address={address}
           onEdit={() => setShowSubmissionDrawer(true)}
           onUpdated={loadAll}/* Pack 71 — onUpdated */
+          onDocumentsChanged={() => setClientDocsRefreshKey((k) => k + 1)}/* Pack 71.2 */
         />
         {/* Pack 36.1 — карточка TIE с NIE и датой отпечатков */}
         <TieCard
@@ -541,7 +544,7 @@ export function ApplicationDetail({ applicationId, onUpdated }: Props) {
         applicant={applicant}
         company={company}
       />
-      <AdminClientDocuments applicationId={application.id} />
+      <AdminClientDocuments applicationId={application.id} refreshKey={clientDocsRefreshKey} />
       {isAssigned && <DocumentsGrid applicationId={application.id} companyId={application.company_id} applicationType={application.application_type} />}
       {isAssigned && <TranslationPanel applicationId={application.id} />}
 
