@@ -28,7 +28,7 @@ from app.models.applicant_document import (
     ApplicantDocumentStatus,
 )
 from app.services.storage import get_storage
-from app.services.ocr import recognize_document, OCRError
+from app.services.ocr import recognize_document, classify_document, OCRError
 from app.services.transliteration import transliterate_name
 from app.services.applicant_passports import (
     upsert_by_number,
@@ -416,6 +416,105 @@ def _apply_tasa_to_application(session: Session, application_id: int) -> Optiona
     return result
 
 
+# Pack 72 — испанские IATA коды (для определения «прилёт в Испанию»)
+_SPAIN_IATA_CODES = {
+    "BCN", "MAD", "AGP", "VLC", "SVQ", "PMI", "IBZ", "TFS", "TFN", "LPA",
+    "BIO", "SCQ", "ALC", "MJV", "REU", "GRO", "XRY", "OVD", "VGO", "LCG",
+    "MAH", "ZAZ", "EAS", "FUE", "ACE", "MLN", "BJZ", "JCU", "VDE", "VIT",
+    "ODB", "BCV", "ILD", "RJL", "RGS", "SDR", "VLL", "GMZ",
+}
+_SPAIN_COUNTRY_CODES = {"ESP", "ES", "SPAIN", "ESPAÑA", "ESPANA", "ИСПАНИЯ"}
+
+
+def _apply_boarding_to_application(session: Session, application_id: int) -> Optional[dict]:
+    """
+    Pack 72 — обработка boarding pass для извлечения arrival_date.
+
+    Берёт ПОСЛЕДНИЙ OCR_DONE документ типа BOARDING_PASS и:
+      - если destination — испанский аэропорт → пишет arrival_date в Application;
+      - сверяет имя пассажира с applicant.{first,last}_name_latin.
+
+    Возвращает dict с результатом для UI либо None если документа нет.
+    Не перезаписывает существующий arrival_date.
+    """
+    import re as _re
+    from datetime import date as _date
+
+    boarding_doc = session.exec(
+        select(ApplicantDocument)
+        .where(ApplicantDocument.application_id == application_id)
+        .where(ApplicantDocument.doc_type == ApplicantDocumentType.BOARDING_PASS)
+        .where(ApplicantDocument.status == ApplicantDocumentStatus.OCR_DONE)
+        .order_by(ApplicantDocument.created_at.desc())
+    ).first()
+    if not boarding_doc or not boarding_doc.parsed_data:
+        return None
+
+    p = boarding_doc.parsed_data or {}
+    arrival_str = (p.get("arrival_date") or "").strip()
+    iata = (p.get("flight_destination_iata") or "").strip().upper()
+    country = (p.get("flight_destination_country") or "").strip().upper()
+    passenger = (p.get("passenger_name") or "").strip()
+
+    parsed_arrival: Optional[_date] = None
+    if arrival_str:
+        try:
+            parsed_arrival = _date.fromisoformat(arrival_str)
+        except Exception:
+            log.warning(f"Pack 72: cannot parse arrival_date {arrival_str!r}")
+
+    application = session.get(Application, application_id)
+    if not application:
+        return None
+
+    is_spain = (iata in _SPAIN_IATA_CODES) or (country in _SPAIN_COUNTRY_CODES)
+
+    result = {
+        "doc_id": boarding_doc.id,
+        "arrival_date_set": False,
+        "arrival_date_conflict": False,
+        "arrival_date_from_document": arrival_str or None,
+        "arrival_date_existing": (
+            application.arrival_date.isoformat() if application.arrival_date else None
+        ),
+        "flight_destination": (iata or country) or None,
+        "is_spain": is_spain,
+        "name_mismatch": False,
+        "document_name": passenger or None,
+        "applicant_name": None,
+    }
+
+    # Запись arrival_date — только если destination = Spain И поле пустое
+    if parsed_arrival and is_spain:
+        if not application.arrival_date:
+            application.arrival_date = parsed_arrival
+            session.add(application)
+            result["arrival_date_set"] = True
+        elif application.arrival_date != parsed_arrival:
+            log.warning(
+                f"Pack 72: arrival_date conflict — "
+                f"existing={application.arrival_date}, new={parsed_arrival}"
+            )
+            result["arrival_date_conflict"] = True
+
+    # Сверка имени пассажира
+    if application.applicant_id:
+        applicant = session.get(Applicant, application.applicant_id)
+        if applicant:
+            expected = " ".join(filter(None, [
+                (applicant.first_name_latin or "").strip(),
+                (applicant.last_name_latin or "").strip(),
+            ])).strip()
+            result["applicant_name"] = expected or None
+            if passenger and expected:
+                doc_words = {w for w in _re.findall(r"\w+", passenger.upper())}
+                exp_words = {w for w in _re.findall(r"\w+", expected.upper())}
+                if exp_words and not exp_words.issubset(doc_words):
+                    result["name_mismatch"] = True
+
+    return result
+
+
 def _auto_apply_ocr_to_applicant(application_id: int) -> Optional[dict]:
     """
     Применяет OCR данные ко всем документам заявки → Applicant.
@@ -533,6 +632,8 @@ def _auto_apply_ocr_to_applicant(application_id: int) -> Optional[dict]:
 
         # Pack 70 — TASA: записать NRC + сверить имя
         tasa_result = _apply_tasa_to_application(session, application_id)
+        # Pack 72 — BOARDING: записать arrival_date + сверить имя
+        _apply_boarding_to_application(session, application_id)
 
         session.commit()
         return tasa_result
@@ -917,6 +1018,249 @@ async def admin_upload_tasa(
         "application": {
             "id": application.id,
             "tasa_nrc": application.tasa_nrc,
+        },
+    }
+
+
+# =============================================================================
+# Pack 72 — универсальный drop submission-документа (Tasa или boarding pass)
+# =============================================================================
+
+_SUBMDOC_SUPPORTED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+_SUBMDOC_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
+_SUBMDOC_CLASSIFIABLE = {"tasa_038", "boarding_pass"}
+
+
+@router.post("/{application_id}/upload-submission-doc")
+async def admin_upload_submission_doc(
+    application_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """
+    Pack 72 — приём одного документа подачи (Tasa Modelo 790 ИЛИ
+    авиа boarding pass) с автоматической классификацией.
+
+    Алгоритм:
+      1. Сохранить файл (для PDF — оригинал + страница 1 в JPEG).
+      2. classify_document() на странице 1 → tasa_038 или boarding_pass.
+         Если классификатор вернул другое — fallback на tasa_038.
+      3. Создать ApplicantDocument с определённым типом.
+      4. recognize_document() с соответствующим промптом.
+      5. Применить → tasa_apply / boarding_apply.
+
+    Возвращает: { document, tasa_apply, boarding_apply, application }.
+    """
+    application = session.get(Application, application_id)
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(422, "Empty file")
+    if len(file_bytes) > _SUBMDOC_MAX_FILE_SIZE:
+        raise HTTPException(
+            413,
+            f"Файл слишком большой ({len(file_bytes) // 1024 // 1024} МБ, "
+            f"максимум {_SUBMDOC_MAX_FILE_SIZE // 1024 // 1024} МБ)",
+        )
+
+    filename = file.filename or "submission_doc.pdf"
+    content_type = file.content_type or "application/octet-stream"
+    ext = PathLib(filename).suffix.lower()
+    if ext not in _SUBMDOC_SUPPORTED_EXT:
+        raise HTTPException(
+            422,
+            f"Неподдерживаемое расширение: {ext}. "
+            f"Поддерживаются: PDF, JPG, PNG, WebP, HEIC.",
+        )
+    is_pdf = (ext == ".pdf") or (content_type == "application/pdf")
+
+    storage = get_storage()
+    timestamp = int(time.time())
+
+    # === Этап 1: подготовка JPEG для классификатора и OCR ===
+    primary_jpeg_bytes: Optional[bytes] = None
+    original_key: Optional[str] = None  # ставим только для PDF
+
+    if is_pdf:
+        original_key = (
+            f"applications/{application_id}/documents/"
+            f"submission_doc_{timestamp}_original.pdf"
+        )
+        try:
+            storage.save(original_key, file_bytes, content_type="application/pdf")
+        except Exception as e:
+            log.error(f"Pack 72: failed to save submission PDF: {e}")
+            raise HTTPException(500, "Не удалось сохранить файл")
+
+        try:
+            primary_jpeg_bytes = _pdf_page_to_jpeg(file_bytes, page_num=1)
+        except Exception as e:
+            log.error(f"Pack 72: PDF→JPEG conversion failed: {e}")
+            primary_jpeg_bytes = None
+
+        if not primary_jpeg_bytes:
+            # Конвертация упала — сохраняем PDF как есть, OCR недоступен,
+            # тип ставим tasa_038 (как fallback).
+            doc_fail = ApplicantDocument(
+                application_id=application_id,
+                doc_type=ApplicantDocumentType.TASA_038,
+                storage_key=original_key,
+                file_name=filename,
+                file_size=len(file_bytes),
+                content_type="application/pdf",
+                status=ApplicantDocumentStatus.OCR_FAILED,
+                ocr_error="PDF→JPEG conversion failed",
+                parsed_data={},
+            )
+            session.add(doc_fail)
+            session.commit()
+            session.refresh(doc_fail)
+            session.refresh(application)
+            return {
+                "document": _enrich_document(doc_fail),
+                "tasa_apply": None,
+                "boarding_apply": None,
+                "application": {
+                    "id": application.id,
+                    "tasa_nrc": application.tasa_nrc,
+                    "arrival_date": (
+                        application.arrival_date.isoformat()
+                        if application.arrival_date else None
+                    ),
+                },
+            }
+    else:
+        primary_jpeg_bytes = file_bytes  # это уже image
+        # сохраним позже под правильным doc_type_str
+
+    # === Этап 2: классификация ===
+    classifier_type = "tasa_038"  # fallback
+    try:
+        cls_result = await classify_document(
+            image_bytes=primary_jpeg_bytes,
+            content_type="image/jpeg" if is_pdf else (content_type or "image/jpeg"),
+        )
+        cls_type = (cls_result or {}).get("type")
+        if cls_type in _SUBMDOC_CLASSIFIABLE:
+            classifier_type = cls_type
+        log.info(
+            f"Pack 72: classifier returned {cls_type!r} "
+            f"(conf={cls_result.get('confidence')}) → using {classifier_type}"
+        )
+    except Exception as e:
+        log.warning(f"Pack 72: classifier failed, falling back to tasa_038: {e}")
+
+    doc_type_enum = ApplicantDocumentType(classifier_type)
+    doc_type_str = doc_type_enum.value
+
+    # === Этап 3: сохранение primary файла под правильным doc_type ===
+    if is_pdf:
+        primary_key = (
+            f"applications/{application_id}/documents/"
+            f"{doc_type_str}_{timestamp}_p1.jpg"
+        )
+        try:
+            storage.save(primary_key, primary_jpeg_bytes, content_type="image/jpeg")
+        except Exception as e:
+            log.error(f"Pack 72: failed to save JPEG: {e}")
+            try:
+                storage.delete(original_key)
+            except Exception:
+                pass
+            raise HTTPException(500, "Не удалось сохранить изображение")
+
+        doc = ApplicantDocument(
+            application_id=application_id,
+            doc_type=doc_type_enum,
+            storage_key=primary_key,
+            original_storage_key=original_key,
+            file_name=filename.replace(".pdf", "").replace(".PDF", "") + "_page1.jpg",
+            file_size=len(primary_jpeg_bytes),
+            content_type="image/jpeg",
+            original_file_name=filename,
+            original_file_size=len(file_bytes),
+            original_content_type="application/pdf",
+            status=ApplicantDocumentStatus.UPLOADED,
+            parsed_data={},
+        )
+    else:
+        primary_key = (
+            f"applications/{application_id}/documents/"
+            f"{doc_type_str}_{timestamp}{ext}"
+        )
+        try:
+            storage.save(primary_key, file_bytes, content_type=content_type)
+        except Exception as e:
+            log.error(f"Pack 72: failed to save image: {e}")
+            raise HTTPException(500, "Не удалось сохранить файл")
+
+        doc = ApplicantDocument(
+            application_id=application_id,
+            doc_type=doc_type_enum,
+            storage_key=primary_key,
+            file_name=filename,
+            file_size=len(file_bytes),
+            content_type=content_type,
+            status=ApplicantDocumentStatus.UPLOADED,
+            parsed_data={},
+        )
+
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    # === Этап 4: OCR + apply ===
+    tasa_result = None
+    boarding_result = None
+    try:
+        image_bytes = storage.read(doc.storage_key)
+        parsed = await recognize_document(
+            doc_type=doc.doc_type.value,
+            image_bytes=image_bytes,
+            content_type=doc.content_type,
+        )
+        doc.status = ApplicantDocumentStatus.OCR_DONE
+        doc.parsed_data = parsed
+        doc.ocr_completed_at = datetime.utcnow()
+        doc.applied_to_applicant = False
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+        # Apply — оба хелпера, чтобы получить independent результаты
+        tasa_result = _apply_tasa_to_application(session, application_id)
+        boarding_result = _apply_boarding_to_application(session, application_id)
+        session.commit()
+        session.refresh(doc)
+    except OCRError as e:
+        log.warning(f"Pack 72: OCR failed for doc {doc.id}: {e}")
+        doc.status = ApplicantDocumentStatus.OCR_FAILED
+        doc.ocr_error = str(e)[:500]
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+    except Exception as e:
+        log.error(f"Pack 72: unexpected error for doc {doc.id}: {e}", exc_info=True)
+        doc.status = ApplicantDocumentStatus.OCR_FAILED
+        doc.ocr_error = f"Unexpected error: {str(e)[:200]}"
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+
+    session.refresh(application)
+    return {
+        "document": _enrich_document(doc),
+        "tasa_apply": tasa_result,
+        "boarding_apply": boarding_result,
+        "application": {
+            "id": application.id,
+            "tasa_nrc": application.tasa_nrc,
+            "arrival_date": (
+                application.arrival_date.isoformat()
+                if application.arrival_date else None
+            ),
         },
     }
 

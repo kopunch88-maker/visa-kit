@@ -124,6 +124,7 @@ export type ApplicationResponse = {
   contract_sign_city?: string;
   salary_rub?: number;
   submission_date?: string;
+  arrival_date?: string;           // Pack 72 — дата прилёта в Испанию
   submission_city?: string;        // Pack 50.38-A — город подачи
   submission_province?: string;    // Pack 50.38-A — провинция подачи
   payments_period_months?: number;
@@ -157,6 +158,7 @@ export type ClientDocumentType =
   // Pack 14b — выписка из ЕГРЮЛ (документ компании)
   | "egryl_extract"
   | "tasa_038"
+  | "boarding_pass"
   | "diploma_main"
   | "diploma_apostille"
   | "other";
@@ -3875,6 +3877,66 @@ export async function adminUploadTasa(
   if (!res.ok) {
     const errText = await res.text();
     let msg = `Не удалось загрузить квитанцию (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+
+// ============================================================================
+// Pack 72 — drag&drop submission-документа (Tasa ИЛИ boarding pass)
+// ============================================================================
+
+export type BoardingApplyResult = {
+  doc_id: number;
+  arrival_date_set: boolean;
+  arrival_date_conflict: boolean;
+  arrival_date_from_document: string | null;
+  arrival_date_existing: string | null;
+  flight_destination: string | null;
+  is_spain: boolean;
+  name_mismatch: boolean;
+  document_name: string | null;
+  applicant_name: string | null;
+};
+
+export type SubmissionDocUploadResponse = {
+  document: ClientDocument;
+  tasa_apply: TasaApplyResult | null;
+  boarding_apply: BoardingApplyResult | null;
+  application: {
+    id: number;
+    tasa_nrc: string | null;
+    arrival_date: string | null;
+  };
+};
+
+/**
+ * Pack 72 — загрузить документ подачи (Tasa или boarding pass) с
+ * автоматической классификацией. Используется drop-зоной на SubmissionCard.
+ */
+export async function adminUploadSubmissionDoc(
+  applicationId: number,
+  file: File,
+): Promise<SubmissionDocUploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/upload-submission-doc`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Не удалось загрузить документ (${res.status})`;
     try {
       const errJson = JSON.parse(errText);
       msg = errJson.detail || msg;

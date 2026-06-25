@@ -321,6 +321,7 @@ class ApplicationPatch(BaseModel):
     contract_end_date: Optional[date] = None
     salary_rub: Optional[float] = None
     submission_date: Optional[date] = None
+    arrival_date: Optional[date] = None  # Pack 72
     # Pack 50.38-A — город/провинция подачи
     submission_city: Optional[str] = None
     submission_province: Optional[str] = None

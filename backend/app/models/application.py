@@ -98,6 +98,8 @@ class Application(TimestampMixin, table=True):
     employer_letter_date: Optional[date] = None
     employer_letter_number: Optional[str] = Field(default=None, max_length=32)
     submission_date: Optional[date] = Field(default=None)
+    # Pack 72 — дата прилёта в Испанию (из boarding pass или вручную)
+    arrival_date: Optional[date] = Field(default=None)
     # Pack 50.38-A — город/провинция ПОДАЧИ (≠ адрес проживания)
     submission_city: Optional[str] = Field(default=None, max_length=64)
     submission_province: Optional[str] = Field(default=None, max_length=64)

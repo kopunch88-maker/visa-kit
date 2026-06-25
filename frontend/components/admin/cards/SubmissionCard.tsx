@@ -6,7 +6,7 @@ import {
   ApplicationResponse,
   RepresentativeResponse,
   SpainAddressResponse,
-  adminUploadTasa,
+  adminUploadSubmissionDoc,
 } from "@/lib/api";
 
 interface Props {
@@ -22,7 +22,7 @@ interface Props {
 
 export function SubmissionCard({ application, representative, address, onEdit, onUpdated, onDocumentsChanged }: Props) {
   const hasData =
-    application.submission_date || representative || address || application.tasa_nrc;
+    application.submission_date || representative || address || application.tasa_nrc || (application as any).arrival_date;
 
   // Pack 71 — drag&drop квитанции Tasa
   const TASA_ACCEPTED_EXT = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"];
@@ -62,17 +62,22 @@ export function SubmissionCard({ application, representative, address, onEdit, o
     setIsUploading(true);
     setBanner(null);
     try {
-      const result = await adminUploadTasa(application.id, file);
+      const result = await adminUploadSubmissionDoc(application.id, file);
       try { onUpdated?.(); } catch {}
       try { onDocumentsChanged?.(); } catch {} // Pack 71.2
       const t = result.tasa_apply;
+      const b = result.boarding_apply;
       const lines: string[] = [];
       let kind: "success" | "warning" | "error" = "success";
-      if (!t) {
+
+      if (!t && !b) {
         kind = "error";
         const err = (result.document as any)?.ocr_error || "не удалось распознать";
         lines.push(`Файл загружен, но распознать не получилось: ${err}.`);
-      } else {
+      }
+
+      // TASA результат
+      if (t) {
         if (t.nrc_set && t.nrc_from_document) {
           lines.push(`NRC ${t.nrc_from_document} сохранён.`);
         } else if (t.nrc_conflict) {
@@ -89,6 +94,29 @@ export function SubmissionCard({ application, representative, address, onEdit, o
           lines.push(`⚠️ Имя в квитанции «${t.document_name}» не совпадает с именем клиента «${t.applicant_name}». Проверьте, ту ли квитанцию загрузили.`);
         }
       }
+
+      // BOARDING результат
+      if (b) {
+        if (b.arrival_date_set && b.arrival_date_from_document) {
+          lines.push(`Дата прилёта ${b.arrival_date_from_document} сохранена.`);
+        } else if (b.arrival_date_conflict) {
+          kind = "warning";
+          lines.push(`⚠️ В билете дата прилёта ${b.arrival_date_from_document}, а в карточке уже ${b.arrival_date_existing}. Дата НЕ перезаписана.`);
+        } else if (b.arrival_date_from_document && !b.arrival_date_set && b.is_spain) {
+          lines.push(`Дата прилёта ${b.arrival_date_from_document} уже совпадает с тем, что в карточке.`);
+        } else if (b.arrival_date_from_document && !b.is_spain) {
+          kind = "warning";
+          lines.push(`⚠️ Билет летит в ${b.flight_destination ?? "не Испанию"}, а не в Испанию. Дата прилёта НЕ сохранена.`);
+        } else if (!b.arrival_date_from_document) {
+          kind = "warning";
+          lines.push(`⚠️ В билете не нашлась дата прилёта. Проверьте билет вручную.`);
+        }
+        if (b.name_mismatch) {
+          kind = "warning";
+          lines.push(`⚠️ Имя в билете «${b.document_name}» не совпадает с именем клиента «${b.applicant_name}». Проверьте, тот ли билет загрузили.`);
+        }
+      }
+
       setBanner(lines.length ? { kind, lines } : null);
     } catch (e) {
       setBanner({ kind: "error", lines: [(e as Error).message] });
@@ -163,6 +191,15 @@ export function SubmissionCard({ application, representative, address, onEdit, o
         <div className="text-sm text-tertiary italic py-4">Не назначена</div>
       ) : (
         <div className="space-y-2">
+          {/* Pack 72 — Дата прилёта */}
+          <div>
+            <div className="text-[11px] text-tertiary">Дата прилёта</div>
+            <div className="text-sm text-primary">
+              {(application as any).arrival_date
+                ? new Date((application as any).arrival_date).toLocaleDateString("ru")
+                : "—"}
+            </div>
+          </div>
           <div>
             <div className="text-[11px] text-tertiary">Дата подачи</div>
             <div className="text-sm text-primary">
@@ -209,7 +246,7 @@ export function SubmissionCard({ application, representative, address, onEdit, o
           }}
         >
           <UploadCloud className="w-7 h-7" style={{ color: "var(--color-accent)" }} />
-          <div className="text-sm font-medium" style={{ color: "var(--color-accent)" }}>Бросьте квитанцию Tasa сюда</div>
+          <div className="text-sm font-medium" style={{ color: "var(--color-accent)" }}>Бросьте Tasa или билет сюда</div>
           <div className="text-[11px] text-tertiary">PDF · JPG · PNG · HEIC</div>
         </div>
       )}
@@ -221,7 +258,7 @@ export function SubmissionCard({ application, representative, address, onEdit, o
           style={{ background: "color-mix(in srgb, var(--color-bg-primary) 88%, transparent)" }}
         >
           <Loader2 className="w-6 h-6 animate-spin" style={{ color: "var(--color-accent)" }} />
-          <div className="text-sm font-medium text-primary">Загружаем и распознаём Tasa…</div>
+          <div className="text-sm font-medium text-primary">Загружаем и распознаём документ…</div>
           <div className="text-[11px] text-tertiary">Это занимает 10–30 секунд</div>
         </div>
       )}

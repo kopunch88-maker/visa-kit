@@ -23,6 +23,8 @@ export function SubmissionDrawer({
   const [representativeId, setRepresentativeId] = useState<number | "">(application.representative_id || "");
   const [spainAddressId, setSpainAddressId] = useState<number | "">(application.spain_address_id || "");
   const [submissionDate, setSubmissionDate] = useState(application.submission_date || "");
+  // Pack 72 — дата прилёта в Испанию
+  const [arrivalDate, setArrivalDate] = useState<string>((application as any).arrival_date || "");
   // Pack 50.38-A — город/провинция подачи
   const [submissionCity, setSubmissionCity] = useState(application.submission_city || "");
   const [submissionProvince, setSubmissionProvince] = useState(application.submission_province || "");
@@ -60,6 +62,7 @@ export function SubmissionDrawer({
         representative_id: representativeId as number,
         spain_address_id: spainAddressId as number,
         submission_date: submissionDate || undefined,
+        arrival_date: arrivalDate || undefined,  // Pack 72
         submission_city: submissionCity || undefined,
         submission_province: submissionProvince || undefined,
         tasa_nrc: tasaNrc || undefined,
@@ -119,6 +122,18 @@ export function SubmissionDrawer({
                 <option key={a.id} value={a.id}>{a.label}</option>
               ))}
             </select>
+          </div>
+
+          {/* Pack 72 — Дата прилёта */}
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              Дата прилёта в Испанию
+            </label>
+            <input type="date" value={arrivalDate}
+              onChange={(e) => setArrivalDate(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm rounded-md border bg-primary text-primary focus:outline-none focus:ring-2"
+              style={{ borderColor: "var(--color-border-secondary)", borderWidth: 0.5 }} />
+            <p className="text-xs text-tertiary mt-1">Подставляется автоматически из загруженного boarding pass</p>
           </div>
 
           <div>

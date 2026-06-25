@@ -437,6 +437,32 @@ Rules:
 Return ONLY the JSON object. No markdown, no commentary."""
 
 
+BOARDING_PASS_PROMPT = """You are extracting fields from an airline boarding pass.
+
+Extract these fields and return STRICTLY a JSON object:
+
+{
+  "arrival_date": "<YYYY-MM-DD or empty string if not visible>",
+  "flight_destination_iata": "<3-letter IATA airport code of ARRIVAL airport>",
+  "flight_destination_country": "<ISO 3-letter country code if explicit, else empty>",
+  "passenger_name": "<full name as printed, UPPERCASE preserved>"
+}
+
+Rules:
+- arrival_date: take the "Date" / "Дата" field on the boarding pass. The flight
+  date in YYYY-MM-DD format. If year is abbreviated like "16 Jun '26" — assume
+  21st century (2026, not 1926). If the year is fully missing — leave empty.
+- flight_destination_iata: the ARRIVAL airport (NOT departure). Example: a pass
+  showing "WAW → BCN" has IATA "BCN". The destination is on the RIGHT side of
+  the flight pair on most boarding cards, or under "To"/"Arrival".
+- flight_destination_country: ISO 3-letter code (ESP for Spain, FRA for France,
+  POL for Poland, etc.). Leave empty if not visible on the card.
+- passenger_name: take as printed on the pass (usually under the flight route).
+
+Return empty string "" for any field not clearly visible. Never guess.
+Return ONLY the JSON object. No markdown, no commentary."""
+
+
 DOCUMENT_CLASSIFIER_PROMPT = """You are a document type classifier. Look at the first page of the attached document and determine its type.
 
 Possible types (return one of these exact strings):
@@ -450,6 +476,7 @@ Possible types (return one of these exact strings):
 - "diploma_apostille" — Apostille stamp on a diploma. Has square stamp with "APOSTILLE" or "Apostille (Convention de La Haye)".
 - "egryl_extract" — Russian company registry extract (ЕГРЮЛ / Выписка из ЕГРЮЛ). Contains ОГРН, ИНН, KPP for a legal entity. May be translated to Spanish (Extracto del Registro Estatal Unificado).
 - "tasa_038" — Spanish tax receipt Modelo 790 código 038 (Tasa por expedición de autorizaciones de trabajo a extranjeros). Has logo "MINISTERIO DE INCLUSIÓN, SEGURIDAD SOCIAL Y MIGRACIONES", text "DIRECCIÓN GENERAL DE GESTIÓN MIGRATORIA", "CÓDIGO 038", and either a printed CaixaBank/ATM receipt with "NRC ASIGNADO:" line or the multi-page Modelo 790 form. Country hint: ESP.
+- "boarding_pass" — Airline boarding pass / mobile boarding card. Visual cues: airline logo, "Boarding cards" / "Boarding pass" header, large 2D barcode/QR at top, a flight route with TWO 3-letter IATA airport codes (e.g. "WAW → BCN" or "WAW BCN"), passenger name in uppercase, seat number, fields "Date", "Gate", "Departure" / "Boarding", "PNR", "Sequence". Country hint: leave null or use departure airport country.
 - "other" — Anything else (medical records, contracts, photos of people, etc.)
 
 Confidence levels:
@@ -553,6 +580,7 @@ PROMPT_BY_DOC_TYPE = {
     "criminal_record": CRIMINAL_RECORD_PROMPT,
     "egryl_extract": EGRYL_EXTRACT_PROMPT,
     "tasa_038": TASA_038_PROMPT,
+    "boarding_pass": BOARDING_PASS_PROMPT,
 }
 
 

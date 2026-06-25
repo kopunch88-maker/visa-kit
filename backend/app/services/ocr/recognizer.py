@@ -212,6 +212,7 @@ VALID_CLASSIFIER_TYPES = {
     "diploma_apostille",
     "egryl_extract",
     "tasa_038",
+    "boarding_pass",
     "other",
 }
 

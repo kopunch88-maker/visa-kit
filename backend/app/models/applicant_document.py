@@ -35,6 +35,8 @@ class ApplicantDocumentType(str, Enum):
     EGRYL_EXTRACT = "egryl_extract"
     # Pack 70 — квитанция Tasa Modelo 790, код 038 (пошлина за визу)
     TASA_038 = "tasa_038"
+    # Pack 72 — посадочный талон (boarding pass) для определения даты прилёта
+    BOARDING_PASS = "boarding_pass"
     # Прочее
     OTHER = "other"
 
