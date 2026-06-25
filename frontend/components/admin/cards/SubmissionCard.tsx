@@ -16,7 +16,7 @@ interface Props {
 
 export function SubmissionCard({ application, representative, address, onEdit }: Props) {
   const hasData =
-    application.submission_date || representative || address;
+    application.submission_date || representative || address || application.tasa_nrc;
 
   return (
     <div
@@ -71,6 +71,12 @@ export function SubmissionCard({ application, representative, address, onEdit }:
             <div>
               <div className="text-[11px] text-tertiary">Адрес в Испании</div>
               <div className="text-sm text-primary">{address.label}</div>
+            </div>
+          )}
+          {application.tasa_nrc && (
+            <div>
+              <div className="text-[11px] text-tertiary">NRC квитанции</div>
+              <div className="text-sm text-primary font-mono">{application.tasa_nrc}</div>
             </div>
           )}
         </div>
