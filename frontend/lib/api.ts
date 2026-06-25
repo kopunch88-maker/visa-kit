@@ -156,6 +156,7 @@ export type ClientDocumentType =
   | "criminal_record"
   // Pack 14b — выписка из ЕГРЮЛ (документ компании)
   | "egryl_extract"
+  | "tasa_038"
   | "diploma_main"
   | "diploma_apostille"
   | "other";
@@ -3825,4 +3826,60 @@ export async function markDocsUnseen(applicationId: number, keys: string[]): Pro
     `${API_BASE_URL}/api/admin/applications/${applicationId}/doc-view-state/unseen`,
     { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ keys }) },
   );
+}
+
+
+// ============================================================================
+// Pack 71 — drag&drop квитанции Tasa на карточку «Подача»
+// ============================================================================
+
+export type TasaApplyResult = {
+  doc_id: number;
+  nrc_set: boolean;
+  nrc_conflict: boolean;
+  nrc_from_document: string | null;
+  nrc_existing: string | null;
+  name_mismatch: boolean;
+  document_name: string | null;
+  applicant_name: string | null;
+};
+
+export type TasaUploadResponse = {
+  document: ClientDocument;
+  tasa_apply: TasaApplyResult | null;
+  application: {
+    id: number;
+    tasa_nrc: string | null;
+  };
+};
+
+/**
+ * Pack 71 — загрузить квитанцию Tasa (PDF/JPG/PNG/HEIC) и сразу
+ * распознать + записать NRC. Используется drop-зоной на SubmissionCard.
+ */
+export async function adminUploadTasa(
+  applicationId: number,
+  file: File,
+): Promise<TasaUploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const res = await fetch(
+    `${API_BASE_URL}/api/admin/applications/${applicationId}/upload-tasa`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    let msg = `Не удалось загрузить квитанцию (${res.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      msg = errJson.detail || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
 }
