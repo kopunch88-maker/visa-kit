@@ -78,6 +78,8 @@ export function AdminClientDocuments({ applicationId }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Pack 70 — результат обработки квитанции Tasa (NRC + сверка имени)
+  const [tasaInfo, setTasaInfo] = useState<{ kind: "success" | "warning"; lines: string[] } | null>(null);
   const [recognizingId, setRecognizingId] = useState<number | null>(null);
   const [pageSelectorDoc, setPageSelectorDoc] = useState<ClientDocument | null>(null);
   // Pack 42.3 — drag-and-drop в эту секцию
@@ -143,13 +145,35 @@ export function AdminClientDocuments({ applicationId }: Props) {
     setDroppedFiles(files);
   }
 
+  // Pack 70 — обработка ответа recognize по TASA-квитанции
+  function processTasaApply(updated: any) {
+    const t = updated?.tasa_apply;
+    if (!t) return;
+    const lines: string[] = [];
+    if (t.nrc_set && t.nrc_from_document) {
+      lines.push(`NRC ${t.nrc_from_document} сохранён в карточке «Подача». Откройте/закройте дровер кандидата, чтобы увидеть.`);
+    } else if (t.nrc_conflict) {
+      lines.push(`⚠️ В квитанции NRC ${t.nrc_from_document}, а в карточке уже ${t.nrc_existing}. Проверьте вручную — NRC НЕ перезаписан.`);
+    } else if (t.nrc_from_document && !t.nrc_set) {
+      lines.push(`NRC ${t.nrc_from_document} уже совпадает с тем, что в карточке.`);
+    }
+    if (t.name_mismatch) {
+      lines.push(`⚠️ Имя в квитанции «${t.document_name}» не совпадает с именем клиента «${t.applicant_name}». Проверьте, ту ли квитанцию загрузили.`);
+    }
+    if (lines.length === 0) return;
+    const kind = (t.name_mismatch || t.nrc_conflict) ? "warning" : "success";
+    setTasaInfo({ kind, lines });
+  }
+
   // Простое распознавание (для не-PDF или когда страница не нужна)
   async function handleRecognizeSimple(docId: number) {
     setRecognizingId(docId);
     setError(null);
+    setTasaInfo(null);
     try {
       const updated = await adminRecognizeClientDocument(applicationId, docId);
       setDocuments((prev) => prev.map((d) => (d.id === docId ? updated : d)));
+      processTasaApply(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -161,10 +185,12 @@ export function AdminClientDocuments({ applicationId }: Props) {
   async function handleRecognizeWithPage(docId: number, pageNum: number) {
     setRecognizingId(docId);
     setError(null);
+    setTasaInfo(null);
     try {
       const updated = await adminRecognizeClientDocument(applicationId, docId, pageNum);
       setDocuments((prev) => prev.map((d) => (d.id === docId ? updated : d)));
       setPageSelectorDoc(null);
+      processTasaApply(updated);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -265,6 +291,35 @@ export function AdminClientDocuments({ applicationId }: Props) {
         >
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <span>{error}</span>
+        </div>
+      )}
+      {/* Pack 70 — баннер обработки квитанции Tasa */}
+      {tasaInfo && (
+        <div
+          className="mb-3 p-3 rounded-md text-sm flex gap-2 items-start"
+          style={{
+            background: tasaInfo.kind === "success" ? "var(--color-bg-success)" : "var(--color-bg-warning)",
+            color: tasaInfo.kind === "success" ? "var(--color-text-success)" : "var(--color-text-warning)",
+            border: "0.5px solid " + (tasaInfo.kind === "success" ? "var(--color-border-success)" : "var(--color-border-warning)"),
+          }}
+        >
+          {tasaInfo.kind === "success" ? (
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          )}
+          <div className="flex-1 space-y-1">
+            {tasaInfo.lines.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+          <button
+            onClick={() => setTasaInfo(null)}
+            className="flex-shrink-0 opacity-60 hover:opacity-100"
+            title="Закрыть"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 

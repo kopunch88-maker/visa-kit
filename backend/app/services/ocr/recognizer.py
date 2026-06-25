@@ -211,6 +211,7 @@ VALID_CLASSIFIER_TYPES = {
     "diploma_main",
     "diploma_apostille",
     "egryl_extract",
+    "tasa_038",
     "other",
 }
 

@@ -33,6 +33,8 @@ class ApplicantDocumentType(str, Enum):
     CRIMINAL_RECORD = "criminal_record"
     # Pack 14b — выписка из ЕГРЮЛ для компании-работодателя
     EGRYL_EXTRACT = "egryl_extract"
+    # Pack 70 — квитанция Tasa Modelo 790, код 038 (пошлина за визу)
+    TASA_038 = "tasa_038"
     # Прочее
     OTHER = "other"
 

@@ -405,6 +405,38 @@ Return ONLY the JSON object."""
 # Pack 14c — ИИ-классификатор документа
 # ============================================================================
 
+TASA_038_PROMPT = """You are extracting fields from a Spanish tax receipt
+"Modelo 790, código 038" (Tasa por expedición de autorizaciones de trabajo a
+extranjeros). The document may include both a printed CaixaBank receipt page
+and the official 790 form pages.
+
+Extract these fields and return STRICTLY a JSON object:
+
+{
+  "nrc_asignado": "<NRC code from \"NRC ASIGNADO:\" line on the bank receipt>",
+  "nombre_completo": "<full name of the taxpayer (Nombre + Apellido 1 + Apellido 2 if present)>",
+  "nif_dni_otros": "<NIE/DNI/passport number from N.I.F. / D.N.I. o N.I.E. field>",
+  "importe": "<amount in euros, e.g. \"73,26\">",
+  "ejercicio": "<fiscal year, e.g. \"2026\">"
+}
+
+Rules:
+- nrc_asignado: 17–22 chars, mixed digits and uppercase letters. Look for
+  the line "NRC ASIGNADO:" on the bank receipt page. Example:
+  "790038908243​3YCT4NYF66". If the bank receipt page is missing, fall back
+  to the JUSTIFICANTE number (13 digits) — but mark it incomplete by
+  returning ONLY those 13 digits without padding.
+- nombre_completo: take from "Apellidos y nombre o razón social del
+  obligado al pago" or from the structured Nombre/Apellido1.º/Apellido2.º
+  cells. Return as written, ALL CAPS preserved. Example: "ZOKHID TUYCHIEV".
+- nif_dni_otros: the N.I.E. (starts with X/Y/Z) or DNI (8 digits + letter)
+  or passport number. Example: "Z4052281P".
+- If a field is not visible — return empty string "" for it.
+- Do NOT invent or guess values.
+
+Return ONLY the JSON object. No markdown, no commentary."""
+
+
 DOCUMENT_CLASSIFIER_PROMPT = """You are a document type classifier. Look at the first page of the attached document and determine its type.
 
 Possible types (return one of these exact strings):
@@ -417,6 +449,7 @@ Possible types (return one of these exact strings):
 - "diploma_main" — Higher education diploma main page (institution name, specialty, year)
 - "diploma_apostille" — Apostille stamp on a diploma. Has square stamp with "APOSTILLE" or "Apostille (Convention de La Haye)".
 - "egryl_extract" — Russian company registry extract (ЕГРЮЛ / Выписка из ЕГРЮЛ). Contains ОГРН, ИНН, KPP for a legal entity. May be translated to Spanish (Extracto del Registro Estatal Unificado).
+- "tasa_038" — Spanish tax receipt Modelo 790 código 038 (Tasa por expedición de autorizaciones de trabajo a extranjeros). Has logo "MINISTERIO DE INCLUSIÓN, SEGURIDAD SOCIAL Y MIGRACIONES", text "DIRECCIÓN GENERAL DE GESTIÓN MIGRATORIA", "CÓDIGO 038", and either a printed CaixaBank/ATM receipt with "NRC ASIGNADO:" line or the multi-page Modelo 790 form. Country hint: ESP.
 - "other" — Anything else (medical records, contracts, photos of people, etc.)
 
 Confidence levels:
@@ -519,6 +552,7 @@ PROMPT_BY_DOC_TYPE = {
     "residence_card": RESIDENCE_CARD_PROMPT,
     "criminal_record": CRIMINAL_RECORD_PROMPT,
     "egryl_extract": EGRYL_EXTRACT_PROMPT,
+    "tasa_038": TASA_038_PROMPT,
 }
 
 

@@ -335,11 +335,91 @@ def _build_education_from_diploma(session: Session, application_id: int) -> Opti
     return None
 
 
-def _auto_apply_ocr_to_applicant(application_id: int):
+def _apply_tasa_to_application(session: Session, application_id: int) -> Optional[dict]:
+    """
+    Pack 70 — обработка квитанции Tasa Modelo 790 (код 038).
+
+    Берёт ПОСЛЕДНИЙ OCR_DONE документ типа TASA_038 для заявки и:
+      - записывает NRC ASIGNADO в Application.tasa_nrc (если пусто);
+      - сверяет имя из документа с applicant.{first,last}_name_latin
+        (word-set match, регистр игнорируется).
+
+    Возвращает dict с результатом (для UI) либо None, если документа нет.
+
+    Идемпотентен: повторный вызов на тех же данных вернёт тот же результат
+    (NRC уже стоит — пропуск; имя уже сверено — тот же verdict).
+    """
+    import re as _re
+
+    tasa_doc = session.exec(
+        select(ApplicantDocument)
+        .where(ApplicantDocument.application_id == application_id)
+        .where(ApplicantDocument.doc_type == ApplicantDocumentType.TASA_038)
+        .where(ApplicantDocument.status == ApplicantDocumentStatus.OCR_DONE)
+        .order_by(ApplicantDocument.created_at.desc())
+    ).first()
+    if not tasa_doc or not tasa_doc.parsed_data:
+        return None
+
+    p = tasa_doc.parsed_data or {}
+    nrc = (p.get("nrc_asignado") or "").strip()
+    doc_name = (p.get("nombre_completo") or "").strip()
+
+    application = session.get(Application, application_id)
+    if not application:
+        return None
+
+    result = {
+        "doc_id": tasa_doc.id,
+        "nrc_set": False,
+        "nrc_conflict": False,
+        "nrc_from_document": nrc or None,
+        "nrc_existing": application.tasa_nrc or None,
+        "name_mismatch": False,
+        "document_name": doc_name or None,
+        "applicant_name": None,
+    }
+
+    # NRC: пишем только если поле пустое; конфликт — отмечаем без перезаписи
+    if nrc:
+        if not application.tasa_nrc:
+            application.tasa_nrc = nrc[:64]
+            session.add(application)
+            result["nrc_set"] = True
+        elif application.tasa_nrc.strip() != nrc:
+            result["nrc_conflict"] = True
+
+    # Сверка имени
+    if application.applicant_id:
+        applicant = session.get(Applicant, application.applicant_id)
+        if applicant:
+            expected = " ".join(
+                filter(None, [
+                    (applicant.first_name_latin or "").strip(),
+                    (applicant.last_name_latin or "").strip(),
+                ])
+            ).strip()
+            result["applicant_name"] = expected or None
+            if doc_name and expected:
+                # word-set match: все слова заявителя должны присутствовать
+                # в документном имени (порядок и регистр игнорируем).
+                doc_words = {w for w in _re.findall(r"\w+", doc_name.upper())}
+                exp_words = {w for w in _re.findall(r"\w+", expected.upper())}
+                if exp_words and not exp_words.issubset(doc_words):
+                    result["name_mismatch"] = True
+
+    return result
+
+
+def _auto_apply_ocr_to_applicant(application_id: int) -> Optional[dict]:
     """
     Применяет OCR данные ко всем документам заявки → Applicant.
     Создаёт нового Applicant если не было, обновляет ТОЛЬКО ПУСТЫЕ поля если был.
     Создаёт собственную сессию (для использования из любого endpoint).
+
+    Pack 70: после применения возвращает результат _apply_tasa_to_application
+    (или None, если TASA-документа нет) — чтобы admin_recognize_document
+    мог пробросить warning в response.
     """
     with Session(engine) as session:
         application = session.get(Application, application_id)
@@ -446,7 +526,11 @@ def _auto_apply_ocr_to_applicant(application_id: int):
             reconcile_applicant_passports(applicant)
             session.add(applicant)
 
+        # Pack 70 — TASA: записать NRC + сверить имя
+        tasa_result = _apply_tasa_to_application(session, application_id)
+
         session.commit()
+        return tasa_result
 
 
 # ============================================================================
@@ -582,6 +666,7 @@ async def admin_recognize_document(
         doc.content_type = "image/jpeg"
 
     # === Запускаем OCR ===
+    tasa_result = None  # Pack 70 — заполнится после _auto_apply, если doc=TASA_038
     doc.status = ApplicantDocumentStatus.OCR_PENDING
     doc.ocr_error = None
     session.add(doc)
@@ -628,14 +713,18 @@ async def admin_recognize_document(
 
     # === Автоприменение к Applicant если OCR прошёл ===
     if doc.status == ApplicantDocumentStatus.OCR_DONE:
+        tasa_result = None
         try:
-            _auto_apply_ocr_to_applicant(application_id)
+            tasa_result = _auto_apply_ocr_to_applicant(application_id)
             # Перечитаем документ чтобы applied_to_applicant обновилось
             session.refresh(doc)
         except Exception as e:
             log.error(f"Auto-apply after re-OCR failed: {e}", exc_info=True)
 
-    return _enrich_document(doc)
+    enriched = _enrich_document(doc)
+    if tasa_result is not None:
+        enriched["tasa_apply"] = tasa_result  # Pack 70
+    return enriched
 # =============================================================================
 # Pack 42.1 — удаление документа клиента
 # =============================================================================
