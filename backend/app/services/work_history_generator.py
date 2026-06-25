@@ -462,6 +462,8 @@ def _pick_position_for_level(
     used_hint = False
     if hint_tokens:
         scored = [(p, len(hint_tokens & _candidate_tokens(p))) for p in candidates]
+        # Pack 61.2: rank inside bucket by score
+        score_by_id = {p.id: s for p, s in scored}
         strong = [p for p, s in scored if s >= 2]
         weak = [p for p, s in scored if s == 1]
         if strong:
@@ -490,6 +492,7 @@ def _pick_position_for_level(
             )
     else:
         pool = list(candidates)
+        score_by_id = {}  # Pack 61.2
 
     # ── Старый де-приоритет узкоспециализированных Position ──────────────────
     # Применяется только когда hint не помог (или его не было) —
@@ -511,9 +514,15 @@ def _pick_position_for_level(
         pool = generic if generic else specific
 
     # ── Финальный пик: max duties, rng.choice среди top ──────────────────────
-    pool.sort(key=lambda p: -len(p.duties or []))
-    top_count = len(pool[0].duties or [])
-    top_candidates = [p for p in pool if len(p.duties or []) == top_count]
+    # Pack 61.2: rank by score (primary) then duties (secondary)
+    pool.sort(key=lambda p: (-score_by_id.get(p.id, 0), -len(p.duties or [])))
+    top_score = score_by_id.get(pool[0].id, 0)
+    top_duties = len(pool[0].duties or [])
+    top_candidates = [
+        p for p in pool
+        if score_by_id.get(p.id, 0) == top_score
+        and len(p.duties or []) == top_duties
+    ]
 
     return rng.choice(top_candidates)
 
