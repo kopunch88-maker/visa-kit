@@ -3953,7 +3953,7 @@ export async function adminUploadSubmissionDoc(
 export async function generateCard(
   bank_id: number,
 ): Promise<{ card_number: string }> {
-  const url = `${API_BASE}/admin/applicants/generate-card?bank_id=${bank_id}`;
+  const url = `${API_BASE_URL}/api/admin/applicants/generate-card?bank_id=${bank_id}`;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
