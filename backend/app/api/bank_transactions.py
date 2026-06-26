@@ -136,9 +136,13 @@ def _build_response(application: Application, session: Session) -> BankStatement
 
 
 def _generate_for_app(application: Application, session: Session) -> Optional[dict]:
-    """Генерирует свежий черновик для заявки. None если не хватает данных."""
+    """Генерирует свежий черновик для заявки. None если не хватает данных.
+
+    Pack 73.1.5: submission_date УБРАН из обязательных — он не используется
+    внутри generate_default_transactions, и его отсутствие у клиентов на
+    ранней стадии (до назначения подачи) ломало пересоздание выписки.
+    """
     if not all([
-        application.submission_date,
         application.salary_rub,
         application.contract_number,
         application.contract_sign_date,
