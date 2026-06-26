@@ -3956,8 +3956,7 @@ export async function generateCard(
   const url = `${API_BASE_URL}/api/admin/applicants/generate-card?bank_id=${bank_id}`;
   const res = await fetch(url, {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
