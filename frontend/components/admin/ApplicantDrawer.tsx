@@ -17,6 +17,7 @@ import {
   BankResponse,
   listBanks,
   generateAccount,
+  generateCard,
   // Pack 50.1-F2 — генерация правдоподобного СНИЛС с контрольной суммой
   generateSnils,
   regenerateAddress, // Pack 18.8: перегенерация адреса
@@ -166,6 +167,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   // Pack 16 — банковские поля
   const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
   const [bank_account, setBankAccount] = useState(applicant.bank_account || "");
+  const [card_number, setCardNumber] = useState(applicant.card_number || "");
+  const [cardGenerating, setCardGenerating] = useState(false);
   const [banks, setBanks] = useState<BankResponse[]>([]);
   const [banksLoading, setBanksLoading] = useState(true);
   const [accountGenerating, setAccountGenerating] = useState(false);
@@ -353,6 +356,24 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
       setError(`Не удалось сгенерировать счёт: ${(e as Error).message}`);
     } finally {
       setAccountGenerating(false);
+    }
+  }
+
+  // Pack 73.1: сгенерировать номер карты по выбранному банку (Luhn по BIN)
+  async function handleGenerateCard() {
+    if (!bank_id) {
+      setError("Сначала выберите банк");
+      return;
+    }
+    setCardGenerating(true);
+    setError(null);
+    try {
+      const result = await generateCard(bank_id as number);
+      setCardNumber(result.card_number);
+    } catch (e) {
+      setError(`Не удалось сгенерировать карту: ${(e as Error).message}`);
+    } finally {
+      setCardGenerating(false);
     }
   }
 
@@ -605,6 +626,7 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         snils: snils.trim() || null,
         // Pack 16
         bank_account: bank_account.trim() || null,
+        card_number: card_number.trim() || null,
         ...bankFields,
         // Pack 18.9 — подписант апостиля (пустое = null = бэкенд подставит дефолт)
         apostille_signer_short: apostille_signer_short.trim() || null,
@@ -1117,6 +1139,56 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   : nationality
                   ? `Нерезидент (${nationality}) > префикс 40820`
                   : "Укажите гражданство для правильного префикса (40817 для РФ / 40820 для остальных)"}
+              </p>
+            </div>
+
+            {/* Pack 73.1 — номер карты клиента */}
+            <div>
+              <label className="block text-xs text-tertiary mb-1">
+                Номер карты (16 цифр)
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={card_number}
+                  onChange={(e) => setCardNumber(e.target.value)}
+                  placeholder="2200 1525 0123 8073"
+                  className="flex-1 px-2 py-1.5 rounded-md text-sm border font-mono"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleGenerateCard}
+                  disabled={!bank_id || cardGenerating}
+                  className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1 text-xs"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                  }}
+                  title={
+                    bank_id
+                      ? "Сгенерировать Luhn-валидный номер карты по BIN банка"
+                      : "Сначала выберите банк"
+                  }
+                >
+                  {cardGenerating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-tertiary mt-1">
+                Используется в описаниях карточных операций в банковской выписке.
+                Если пусто — last4 генерится автоматически от номера счёта.
               </p>
             </div>
           </Section>

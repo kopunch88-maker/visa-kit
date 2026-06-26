@@ -224,6 +224,8 @@ class Applicant(TimestampMixin, table=True):
     bank_name: Optional[str] = Field(default=None, max_length=128)
     bank_bic: Optional[str] = Field(default=None, max_length=16)
     bank_correspondent_account: Optional[str] = Field(default=None, max_length=32)
+    # Pack 73.1 — номер карты клиента (формат "2200 1525 0123 8073" или 16 цифр)
+    card_number: Optional[str] = Field(default=None, max_length=19)
 
     # === Адрес ===
     home_address_line1: Optional[str] = Field(default=None, max_length=256)
@@ -365,6 +367,8 @@ class ApplicantCreate(SQLModel):
     bank_name: Optional[str] = None
     bank_bic: Optional[str] = None
     bank_correspondent_account: Optional[str] = None
+    # Pack 73.1 — номер карты клиента
+    card_number: Optional[str] = None
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
@@ -438,6 +442,8 @@ class ApplicantUpdate(SQLModel):
     bank_name: Optional[str] = None
     bank_bic: Optional[str] = None
     bank_correspondent_account: Optional[str] = None
+    # Pack 73.1 — номер карты клиента
+    card_number: Optional[str] = None
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None

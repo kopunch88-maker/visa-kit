@@ -111,9 +111,9 @@ _PATCHABLE_FIELDS = {
     "last_name_native", "first_name_native", "middle_name_native",
     "last_name_latin", "first_name_latin",
     "full_name_accusative",  # Pack 50.7-C-prep — винительный падеж для Т-9
-    # Pack 50.41 — родительный + творительный падеж ФИО (письмо работодателя, найм)
-    "full_name_genitive", "full_name_instrumental",
-    "full_name_dative",  # Pack 50.42 — дательный падеж (разрешает кому?)
+    # Pack 50.41 — родительный + творительный падеж ФИО (письмо работодателя, найм)
+    "full_name_genitive", "full_name_instrumental",
+    "full_name_dative",  # Pack 50.42 — дательный падеж (разрешает кому?)
     "birth_date", "birth_place_latin",
     "birth_country",  # Pack 18.10
     "nationality", "sex", "marital_status",
@@ -129,9 +129,9 @@ _PATCHABLE_FIELDS = {
     "snils",
     "home_address", "home_address_line1", "home_address_line2",
     "home_country",
-    "email", "phone", "phone_ru",  # Pack 50.15-A
-    # Pack 56.0 — поля окна «Ситы» (отдельные от контактов клиента)
-    "cita_fill_type", "cita_cert_owner", "cita_email", "cita_phone", "cita_location",  # Pack 56.1
+    "email", "phone", "phone_ru",  # Pack 50.15-A
+    # Pack 56.0 — поля окна «Ситы» (отдельные от контактов клиента)
+    "cita_fill_type", "cita_cert_owner", "cita_email", "cita_phone", "cita_location",  # Pack 56.1
     "cita_catching",  # Pack 56.4
     # Pack 16.1 — банковские поля
     "bank_id",
@@ -139,6 +139,8 @@ _PATCHABLE_FIELDS = {
     "bank_name",
     "bank_bic",
     "bank_correspondent_account",
+    # Pack 73.1 — номер карты клиента
+    "card_number",
     # Имена родителей для анкеты MI-T (Nombre del padre / Nombre de la madre)
     "father_name_latin",
     "mother_name_latin",
@@ -566,3 +568,92 @@ def generate_snils_endpoint(
     сохраняет его через PATCH /admin/applicants/{id} с полем snils.
     """
     return {"snils": _generate_random_snils()}
+
+
+# ============================================================================
+# Pack 73.1 — генерация правдоподобного номера карты по BIN банка (Luhn)
+# ============================================================================
+#
+# BIN (Bank Identification Number) — первые 6 цифр номера карты, идентифицируют
+# банк. Для каждого банка существует несколько BIN'ов (разные продуктовые линейки).
+# Полная карта = 16 цифр (BIN-6 + 9 случайных + checksum-1 по Luhn).
+#
+# Формат вывода: "XXXX XXXX XXXX XXXX" (16 цифр в 4 группах через пробел) —
+# 19 символов, как в applicant.card_number VARCHAR(19).
+
+import random as _random_card
+
+# BIK банка → список BIN-префиксов (6 цифр). Реальные BIN'ы из открытых источников.
+# Если BIK не в словаре — используется DEFAULT_BIN.
+_BANK_BIN_PREFIXES = {
+    # Альфа-Банк
+    "044525593": ["220015", "415482", "548673", "521178"],
+    # Сбербанк России
+    "044525225": ["427601", "427644", "546900", "548673", "639002"],
+    # ТБанк (Tinkoff)
+    "044525974": ["220070", "553691", "521324", "437772"],
+    # ВТБ
+    "044525411": ["427229", "555916", "528042"],
+    # Райффайзенбанк
+    "044525700": ["422986", "462730", "557807"],
+    # Газпромбанк
+    "044525823": ["408990", "486114", "548375"],
+    # Россельхозбанк
+    "044525111": ["220033", "427900", "548601"],
+    # Открытие
+    "044525297": ["408935", "489307", "529207"],
+    # Совкомбанк
+    "045004763": ["410097", "434144", "511434"],
+}
+_DEFAULT_BIN = "220015"  # Альфа — самый частый
+
+
+def _luhn_check_digit(digits15: str) -> int:
+    """Вычисляет 16-ю цифру (checksum) по алгоритму Luhn для первых 15 цифр."""
+    total = 0
+    # Считаем справа налево, каждую вторую цифру удваиваем
+    for i, d in enumerate(reversed(digits15)):
+        n = int(d)
+        if i % 2 == 0:
+            # Это будет последняя позиция перед checksum — удваивается
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return (10 - total % 10) % 10
+
+
+def _generate_card_number_for_bik(bik: str | None) -> str:
+    """Pack 73.1 — генерирует Luhn-валидный 16-значный номер карты по BIK банка."""
+    bin_choices = _BANK_BIN_PREFIXES.get(bik or "", [_DEFAULT_BIN])
+    bin_prefix = _random_card.choice(bin_choices)
+    middle = "".join(str(_random_card.randint(0, 9)) for _ in range(9))
+    digits15 = bin_prefix + middle
+    check = _luhn_check_digit(digits15)
+    digits16 = digits15 + str(check)
+    # Формат "XXXX XXXX XXXX XXXX"
+    return f"{digits16[0:4]} {digits16[4:8]} {digits16[8:12]} {digits16[12:16]}"
+
+
+@router.post("/generate-card")
+def generate_card_endpoint(
+    bank_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+    _user=Depends(require_manager),
+) -> dict:
+    """Pack 73.1 — генерирует правдоподобный номер карты для указанного банка.
+
+    Параметр bank_id (query) — id записи в таблице Bank. По нему смотрим BIK
+    банка и выбираем подходящий BIN-префикс. Если bank_id не передан или банк
+    не найден — используется дефолтный BIN (Альфа).
+
+    Не привязан к конкретному applicant — фронт после получения значения сам
+    сохраняет его через PATCH /admin/applicants/{id} с полем card_number.
+    """
+    bik: Optional[str] = None
+    if bank_id is not None:
+        from app.models import Bank
+        bank = session.get(Bank, bank_id)
+        if bank is not None:
+            bik = getattr(bank, "bik", None)
+    return {"card_number": _generate_card_number_for_bik(bik)}

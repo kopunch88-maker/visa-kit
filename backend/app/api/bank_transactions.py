@@ -14,6 +14,7 @@ Bank transactions endpoints — менеджер управляет транза
 
 from datetime import date
 from decimal import Decimal
+import re  # Pack 73.1
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -171,6 +172,31 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
            
             _applicant_phone = _applicant.phone
 
+    # Pack 73.1 — пробрасываем applicant.id/card_number/bank_account и bank.bik
+    # в генератор для модели 30/50-65/5-20.
+    _applicant_card_number = None
+    _applicant_bank_account_for_card = None
+    _applicant_city_for_card = None
+    _bank_bik_for_card = None
+    if application.applicant_id:
+        _a_for_card = session.get(Applicant, application.applicant_id)
+        if _a_for_card is not None:
+            _applicant_card_number = getattr(_a_for_card, "card_number", None)
+            _applicant_bank_account_for_card = getattr(_a_for_card, "bank_account", None)
+            # Город — пытаемся вытащить из home_address (первое слово "г. <city>")
+            _addr = (getattr(_a_for_card, "home_address", None) or "").strip()
+            _m = re.search(r"г\.?\s*([А-Яа-яA-Za-z\-]+)", _addr)
+            _applicant_city_for_card = _m.group(1) if _m else "Moscow"
+            # BIK — из связанного банка
+            if _a_for_card.bank_id:
+                from app.models import Bank as _Bank
+                _b = session.get(_Bank, _a_for_card.bank_id)
+                if _b is not None:
+                    _bank_bik_for_card = getattr(_b, "bik", None)
+            # Fallback на legacy bank_bic
+            if not _bank_bik_for_card:
+                _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
+
     return generate_default_transactions(
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
@@ -190,6 +216,12 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
         statement_date_override=getattr(application, "bank_statement_date", None),
         # Pack 50.31 — найм: аванс+зарплата по трудовому договору
         is_employment=str(getattr(application.application_type, "value", application.application_type)) == "EMPLOYMENT",
+        # Pack 73.1 — модель 30/50/15
+        applicant_id_for_savings=application.applicant_id,
+        applicant_card_number=_applicant_card_number,
+        applicant_bank_account=_applicant_bank_account_for_card,
+        bank_bik=_bank_bik_for_card,
+        applicant_city=_applicant_city_for_card,
     )
 
 
@@ -262,6 +294,27 @@ def _append_for_app(
     _seed_str = f"{application.id}|append|{period_from.isoformat()}|{period_to.isoformat()}"
     _seed = int(_hashlib.sha1(_seed_str.encode()).hexdigest()[:8], 16)
 
+    # Pack 73.1 — пробрасываем applicant card/bank/city в append-режиме тоже
+    _applicant_card_number = None
+    _applicant_bank_account_for_card = None
+    _applicant_city_for_card = None
+    _bank_bik_for_card = None
+    if application.applicant_id:
+        _a_for_card = session.get(Applicant, application.applicant_id)
+        if _a_for_card is not None:
+            _applicant_card_number = getattr(_a_for_card, "card_number", None)
+            _applicant_bank_account_for_card = getattr(_a_for_card, "bank_account", None)
+            _addr = (getattr(_a_for_card, "home_address", None) or "").strip()
+            _m = re.search(r"г\.?\s*([А-Яа-яA-Za-z\-]+)", _addr)
+            _applicant_city_for_card = _m.group(1) if _m else "Moscow"
+            if _a_for_card.bank_id:
+                from app.models import Bank as _Bank
+                _b = session.get(_Bank, _a_for_card.bank_id)
+                if _b is not None:
+                    _bank_bik_for_card = getattr(_b, "bik", None)
+            if not _bank_bik_for_card:
+                _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
+
     new_data = generate_default_transactions(
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
@@ -281,6 +334,12 @@ def _append_for_app(
         # Pack 51 — явный период
         period_start_override=period_from,
         period_end_override=period_to,
+        # Pack 73.1
+        applicant_id_for_savings=application.applicant_id,
+        applicant_card_number=_applicant_card_number,
+        applicant_bank_account=_applicant_bank_account_for_card,
+        bank_bik=_bank_bik_for_card,
+        applicant_city=_applicant_city_for_card,
     )
 
     # Загружаем существующее

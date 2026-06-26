@@ -3945,3 +3945,23 @@ export async function adminUploadSubmissionDoc(
   }
   return res.json();
 }
+
+
+// ============================================================================
+// Pack 73.1 — генерация номера карты для клиента по BIN банка (Luhn-валидно)
+// ============================================================================
+export async function generateCard(
+  bank_id: number,
+): Promise<{ card_number: string }> {
+  const url = `${API_BASE}/admin/applicants/generate-card?bank_id=${bank_id}`;
+  const res = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`);
+  }
+  return res.json();
+}
