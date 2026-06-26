@@ -384,15 +384,17 @@ def _make_card_tx_description(
     amount: Decimal,
     tx_date: date,
     mcc: str,
-    seller: str,
-    city: str,
+    bank_short_name: str,
     rng,
 ) -> str:
-    """Формат описания карточной операции в стиле Альфы.
+    """Pack 73.1.3 — формат описания карточной операции.
 
-    Эталон: "Операция по карте: 220015++++++8073, на сумму: 475.00 RUR,
-    дата совершения операции: 31.03.26, место совершения операции:
-    33210835\\RU\\Omsk\\MAGNIT MM LAMBERT MCC5411"
+    ТЗ Кости:
+      "Операция по карте: 220015++++++8073, на сумму: 2535.44 RUR,
+       дата совершения операции: 17.04.26, 00227620\\Alfa Iss MCC5411"
+
+    bank_short_name — "Alfa" / "Sber" / "Tbank" (определяется по BIK банка
+    в _distribute_salary_30_50_15).
     """
     amt_str = f"{amount:.2f}"
     date_str = tx_date.strftime("%d.%m.%y")
@@ -401,7 +403,7 @@ def _make_card_tx_description(
         f"Операция по карте: {bin6}++++++{card_last4}, "
         f"на сумму: {amt_str} RUR, "
         f"дата совершения операции: {date_str}, "
-        f"место совершения операции: {op_code}\\RU\\{city}\\{seller} MCC{mcc}"
+        f"{op_code}\\{bank_short_name} Iss MCC{mcc}"
     )
 
 
@@ -518,6 +520,13 @@ def _distribute_salary_30_50_15(
 
     bin6 = _resolve_card_bin6(card_number, bank_bik)
     card_last4 = _resolve_card_last4(card_number, bank_account)
+    # Pack 73.1.3 — имя банка-эмитента карты для описания "...\\Alfa Iss"
+    if bank_bik == "044525225":
+        bank_short_name = "Sber"
+    elif bank_bik == "044525974":
+        bank_short_name = "Tbank"
+    else:
+        bank_short_name = "Alfa"  # Альфа + дефолт
 
     amounts = _distribute_card_budget(card_budget, rng)
     for amt in amounts:
@@ -528,12 +537,11 @@ def _distribute_salary_30_50_15(
             continue
         cat = _weighted_choice_card_category(rng)
         _, mcc, category_label, sellers, _amt_range = cat
-        seller = rng.choice(sellers)
         out.append({
             "transaction_date": tx_date,
             "code": _gen_payment_code(),
             "description": _make_card_tx_description(
-                bin6, card_last4, amt, tx_date, mcc, seller, city, rng,
+                bin6, card_last4, amt, tx_date, mcc, bank_short_name, rng,
             ),
             "amount": -amt,
             "currency": "RUR",
