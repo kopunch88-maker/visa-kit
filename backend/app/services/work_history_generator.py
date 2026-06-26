@@ -713,6 +713,19 @@ MAX_GAP_FROM_EDUCATION_YEARS = 2
 MAX_EARLIEST_RECORD_LENGTH_YEARS = 8.0
 
 
+# ============================================================================
+# === Pack 69: minimum work start age clamp ===
+# ============================================================================
+
+# Минимальный возраст начала трудового стажа в годах. Все записи work_history
+# с period_start раньше чем applicant.birth_date + MIN_WORK_START_AGE_YEARS
+# обрезаются или удаляются. Применяется после Pack 64 как страховка от
+# «начал работать в 15 лет» — частый артефакт растягивания (Pack 64 без bound
+# по birth_date) или generic count=3 на молодом заявителе (3.5+1.5+1.5 ≈ 6.5 лет
+# вспять от today: для 22-летнего → старт в 15-16).
+MIN_WORK_START_AGE_YEARS = 18
+
+
 def _parse_ru_period_label(label):
     """'Январь 2020' → date(2020, 1, 1). None если не распарсилось."""
     if not label:
@@ -777,6 +790,13 @@ def _stretch_earliest_record_for_education_gap(records, applicant):
             return
 
     target_start_year = edu_year + 1  # +1 год на поиск работы после диплома
+    # Pack 69: не уходим раньше чем applicant исполнилось MIN_WORK_START_AGE_YEARS.
+    # Защита от диплома, выданного несовершеннолетнему (вунд/экстернат/опечатка).
+    birth = getattr(applicant, "birth_date", None)
+    if birth is not None:
+        min_year_by_age = birth.year + MIN_WORK_START_AGE_YEARS
+        if min_year_by_age > target_start_year:
+            target_start_year = min_year_by_age
     gap_years = start_date.year - target_start_year
     if gap_years <= MAX_GAP_FROM_EDUCATION_YEARS:
         return  # gap приемлемый, ничего не делаем
@@ -807,6 +827,95 @@ def _stretch_earliest_record_for_education_gap(records, applicant):
         old_label, earliest.period_start, edu_year, gap_years,
         extension_days / 365.25,
     )
+
+
+def _clamp_records_to_min_work_age(records, applicant):
+    """Pack 69: обрезает части records, попадающие в возраст < MIN_WORK_START_AGE_YEARS.
+
+    Применяется как финальный пост-пасс после Pack 64. Гарантирует что
+    period_start ни одной записи не раньше чем applicant.birth_date + 18 лет.
+
+    Поведение:
+      - applicant.birth_date is None → no-op (возврат исходного списка).
+      - Запись целиком >= min_start → без изменений.
+      - Запись пересекает min_start → period_start = min_start.
+      - Запись целиком до min_start → дропается.
+
+    Edge-case 29 февраля: birth_date = 29.02.YYYY → min_start = 28.02.(YYYY+18)
+    в невисокосный год (стандартная legal-возрастная конвенция).
+
+    Возвращает новый список (может быть короче входа). Сами WorkRecordSuggestion
+    мутируются in-place (для consistency с Pack 64).
+    """
+    birth = getattr(applicant, "birth_date", None)
+    if birth is None:
+        return records
+
+    try:
+        min_start = date(
+            birth.year + MIN_WORK_START_AGE_YEARS,
+            birth.month,
+            birth.day,
+        )
+    except ValueError:
+        # 29 февраля високосного → в невисокосном году берём 28 февраля
+        min_start = date(
+            birth.year + MIN_WORK_START_AGE_YEARS,
+            birth.month,
+            28,
+        )
+
+    out = []
+    dropped = 0
+    clipped = 0
+    for rec in records:
+        start_date_rec = _parse_ru_period_label(rec.period_start)
+        if start_date_rec is None:
+            # Метку не распарсили — оставляем без изменений (страховка)
+            out.append(rec)
+            continue
+
+        end_label = rec.period_end
+        if not end_label or "настоящее" in str(end_label).lower():
+            end_date_rec = date.today()
+        else:
+            end_date_parsed = _parse_ru_period_label(end_label)
+            if end_date_parsed is None:
+                out.append(rec)
+                continue
+            end_date_rec = end_date_parsed
+
+        if start_date_rec >= min_start:
+            out.append(rec)
+            continue
+
+        if end_date_rec > min_start:
+            rec.period_start = _format_period_start(min_start)
+            out.append(rec)
+            clipped += 1
+            continue
+
+        # Запись целиком до min_start — дропаем
+        dropped += 1
+
+    if dropped or clipped:
+        log.info(
+            "work_history generator [Pack 69]: MIN_WORK_START_AGE=%d "
+            "(applicant_id=%s, birth=%r, min_start=%r): "
+            "clipped=%d, dropped=%d",
+            MIN_WORK_START_AGE_YEARS, getattr(applicant, "id", None),
+            birth, min_start, clipped, dropped,
+        )
+
+    if not out:
+        log.warning(
+            "work_history generator [Pack 69]: all records dropped "
+            "(applicant_id=%s) — applicant too young for any work history. "
+            "DN sync will inject the current job as the only record.",
+            getattr(applicant, "id", None),
+        )
+
+    return out
 
 
 def suggest_work_history(
@@ -990,6 +1099,9 @@ def suggest_work_history(
 
     # Pack 64: stretch earliest record to fill education gap
     _stretch_earliest_record_for_education_gap(records, applicant)
+
+    # Pack 69: clamp to MIN_WORK_START_AGE_YEARS = 18 (страховка от «работал с 15»)
+    records = _clamp_records_to_min_work_age(records, applicant)
 
     total_duties = sum(len(r.duties) for r in records)
     log.info(
