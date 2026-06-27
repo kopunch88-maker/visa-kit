@@ -1283,6 +1283,10 @@ def _replace_markers_in_tr(tr_element, tx: dict):
                         _replace_marker_with_multiline(cell, p, marker, value)
                     else:
                         _replace_marker_inline(p, marker, value)
+                    # Pack 73.3 — убираем firstLine у описания транзакции
+                    # чтобы wrap-нутые строки выравнивались по первой букве.
+                    if marker == "__TX_DESCRIPTION__":
+                        _remove_first_line_indent(p)
                     break
 
 
@@ -1291,6 +1295,36 @@ def _replace_marker_inline(p_element, marker: str, value: str):
     for t in p_element.findall('.//w:t', NS):
         if t.text and marker in t.text:
             t.text = t.text.replace(marker, value)
+
+
+def _remove_first_line_indent(p_element):
+    """Pack 73.3 — убирает firstLine indent у параграфа, сдвигая его в left.
+
+    В шаблоне выписки ячейка Описание имеет <w:ind w:left="199" w:firstLine="195"/>.
+    firstLine отступает первую визуальную строку на 195 twips (~3.4мм). Для
+    коротких однострочных описаний этого не видно. Для длинных, которые Word
+    wrap-ит внутри одного параграфа (карточные операции — формат Pack 73.1 без
+    \\n), вторая визуальная строка прижата к left, первая — к left+firstLine,
+    и они визуально не выровнены по первой букве.
+
+    Решение: left += firstLine, удаляем firstLine. Идемпотентно.
+    Аналог Pack 16.5d (фикс для "Назначение платежа"), но безусловный для
+    всех параграфов описания транзакций.
+    """
+    ppr = p_element.find('w:pPr', NS)
+    if ppr is None:
+        return
+    ind = ppr.find('w:ind', NS)
+    if ind is None:
+        return
+    left_attr = f'{W_NS}left'
+    first_attr = f'{W_NS}firstLine'
+    cur_left = int(ind.get(left_attr, '0') or '0')
+    cur_first = int(ind.get(first_attr, '0') or '0')
+    if cur_first > 0:
+        ind.set(left_attr, str(cur_left + cur_first))
+        if first_attr in ind.attrib:
+            del ind.attrib[first_attr]
 
 
 def _force_left_align_paragraph(p_element):
@@ -1342,6 +1376,9 @@ def _replace_marker_with_multiline(cell_element, p_element, marker: str, multili
     _replace_marker_inline(p_element, marker, lines[0])
     # Pack 34.4: страхуем left-align (на случай если когда-то контент перенесётся)
     _force_left_align_paragraph(p_element)
+    # Pack 73.3 — убираем firstLine у первого параграфа описания транзакции
+    if marker == "__TX_DESCRIPTION__":
+        _remove_first_line_indent(p_element)
 
     # Для остальных строк создаём копии параграфа
     parent_of_p = p_element.getparent()
