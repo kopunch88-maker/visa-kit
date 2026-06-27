@@ -1683,6 +1683,72 @@ def render_bank_statement_for_translation(
     return render_bank_statement(application, session, for_translation=True)
 
 
+def _fix_es_footer_page_fields(es_docx_bytes: bytes, ru_docx_bytes: bytes) -> bytes:
+    """Pack 73.6 — восстанавливает PAGE/NUMPAGES field codes в footer ES DOCX.
+
+    LLM (translate_docx) ломает field codes — после перевода в ES footer
+    остаются только закэшированные значения <w:t>2</w:t>, итог
+    "Página 2 de 2" на всех страницах вместо "Página X de N".
+
+    Стратегия: берём footer1.xml из RU DOCX (там Pack 73.4 уже добавил
+    правильные PAGE+NUMPAGES field codes) и переводим только 2 слова:
+      "Страница" → "Página"
+      "из" → "de"
+    Остальное (адреса, телефоны, alfabank.ru) живёт в document.xml в
+    плавающих textbox, footer не трогает.
+
+    Если в ES DOCX нет word/footer1.xml — no-op (возвращаем как было).
+    Если в RU DOCX нет word/footer1.xml — no-op.
+
+    Args:
+        es_docx_bytes: ES DOCX bytes после translate_docx
+        ru_docx_bytes: RU DOCX bytes до translate_docx (исходник)
+
+    Returns:
+        новые ES DOCX bytes с починенным footer1.xml
+    """
+    import zipfile
+
+    # Извлекаем RU footer
+    try:
+        with zipfile.ZipFile(io.BytesIO(ru_docx_bytes), "r") as ru_zip:
+            if "word/footer1.xml" not in ru_zip.namelist():
+                return es_docx_bytes  # no footer in RU — nothing to fix
+            ru_footer = ru_zip.read("word/footer1.xml").decode("utf-8")
+    except Exception:
+        return es_docx_bytes
+
+    # Точечный перевод 2 слов — только в текстовых runs (внутри <w:t>...</w:t>),
+    # field code инструкции (<w:instrText>) и атрибуты остаются как есть.
+    es_footer = ru_footer.replace(
+        "<w:t>Страница</w:t>",
+        "<w:t>Página</w:t>",
+    ).replace(
+        "<w:t>из</w:t>",
+        "<w:t>de</w:t>",
+    )
+
+    # Если оба замены ничего не сделали — структура RU footer изменилась,
+    # лучше не трогать ES (вернуть как есть, может работать само)
+    if es_footer == ru_footer:
+        return es_docx_bytes
+
+    # Перепаковываем ES DOCX с новым footer
+    try:
+        in_buf = io.BytesIO(es_docx_bytes)
+        out_buf = io.BytesIO()
+        with zipfile.ZipFile(in_buf, "r") as z_in:
+            with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as z_out:
+                for item in z_in.infolist():
+                    if item.filename == "word/footer1.xml":
+                        z_out.writestr(item, es_footer.encode("utf-8"))
+                    else:
+                        z_out.writestr(item, z_in.read(item.filename))
+        return out_buf.getvalue()
+    except Exception:
+        return es_docx_bytes
+
+
 def render_bank_statement_combined_to_pdf(
     application: Application,
     session: Session,

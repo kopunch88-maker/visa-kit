@@ -655,6 +655,11 @@ async def _ensure_bank_statement_translation(app, session) -> bytes | None:
 
         es_docx_bytes = await translate_docx(ru_docx_bytes, substitutions=substitutions)
 
+        # Pack 73.6 — восстанавливаем PAGE/NUMPAGES field codes в footer ES
+        # (LLM их ломает, иначе "Página 2 de 2" на всех страницах)
+        from app.templates_engine.docx_renderer import _fix_es_footer_page_fields
+        es_docx_bytes = _fix_es_footer_page_fields(es_docx_bytes, ru_docx_bytes)
+
         new_key = f"translations/bank_statement_{app_id}_{int(time.time())}.docx"
         storage.save(
             new_key,
@@ -1453,6 +1458,11 @@ async def translate_bank_statement(
             substitutions = build_substitution_dict(app, applicant, company)
 
         es_docx_bytes = await translate_docx(ru_docx_bytes, substitutions=substitutions)
+
+        # Pack 73.6 — восстанавливаем PAGE/NUMPAGES field codes в footer ES
+        # (LLM их ломает, иначе "Página 2 de 2" на всех страницах)
+        from app.templates_engine.docx_renderer import _fix_es_footer_page_fields
+        es_docx_bytes = _fix_es_footer_page_fields(es_docx_bytes, ru_docx_bytes)
     except Exception as e:
         import logging
         logging.getLogger(__name__).exception("Pack 53: translate_docx failed")
