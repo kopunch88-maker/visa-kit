@@ -201,7 +201,15 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
             if not _bank_bik_for_card:
                 _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
 
+    # Pack 73.10 — router модели по флагу applicant.is_shengen
+    _use_30_50_15 = False
+    if application.applicant_id:
+        _a_for_shengen = session.get(Applicant, application.applicant_id)
+        if _a_for_shengen is not None:
+            _use_30_50_15 = bool(getattr(_a_for_shengen, "is_shengen", False))
+
     return generate_default_transactions(
+        use_30_50_15=_use_30_50_15,
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
         contract_number=application.contract_number,
@@ -319,7 +327,15 @@ def _append_for_app(
             if not _bank_bik_for_card:
                 _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
 
+    # Pack 73.10 — router модели по флагу applicant.is_shengen
+    _use_30_50_15_append = False
+    if application.applicant_id:
+        _a_for_shengen_append = session.get(Applicant, application.applicant_id)
+        if _a_for_shengen_append is not None:
+            _use_30_50_15_append = bool(getattr(_a_for_shengen_append, "is_shengen", False))
+
     new_data = generate_default_transactions(
+        use_30_50_15=_use_30_50_15_append,
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
         contract_number=application.contract_number,

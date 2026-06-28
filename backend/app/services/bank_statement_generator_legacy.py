@@ -1,3 +1,21 @@
+# -*- coding: utf-8 -*-
+# ============================================================================
+# LEGACY генератор транзакций для банковской выписки.
+#
+# Используется для самозанятых/найма (флаг applicant.is_shengen == False).
+# Полная копия кода до Pack 73.1 — старая модель: зарплата → KWIKPAY-перевод
+# на накопительный счёт, без карточных операций по MCC, без поля card_number.
+#
+# Для шенгенских виз (applicant.is_shengen == True) используется новая
+# модель 30/50-15 в bank_statement_generator.py.
+#
+# Router выбирает legacy или 30/50-15 в bank_statement_generator.py
+# (функция generate_default_transactions).
+#
+# НЕ РЕДАКТИРОВАТЬ — это архив. Любые правки модели должны идти в
+# bank_statement_generator.py (для шенгена) или в новый файл.
+# ============================================================================
+
 """
 Генератор транзакций для банковской выписки.
 
@@ -34,11 +52,6 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from dateutil.relativedelta import relativedelta
-
-# Pack 73.10 — legacy модель (до Pack 73.1) для самозанятых/найма (is_shengen==False)
-from app.services.bank_statement_generator_legacy import (
-    generate_default_transactions as _generate_default_transactions_legacy,
-)
 
 log = logging.getLogger(__name__)
 
@@ -252,310 +265,6 @@ def _resolve_self_phone_for_sbp(applicant_phone: Optional[str]) -> str:
     return _gen_random_ru_mobile()
 
 
-# ============================================================================
-# Pack 73.1 — распределение зарплатной выплаты по правилу 30/50-65/5-20
-# ============================================================================
-#
-# После каждой зарплатной выплаты (НАЙМ: аванс+зарплата; самозанятый: поступление
-# от заказчика) генератор создаёт «дочерние» операции:
-#   1) 30% жёстко → перевод на накопительный счёт (одна операция, +1..3 дня).
-#   2) 50-65% плавающее → N карточных операций (магазины/кафе/АЗС/...) с разными
-#      MCC, описаниями и суммами, распределённые равномерно от salary_date+1
-#      до next_salary_date (или до конца периода если зарплата последняя).
-#   3) Остаток 5-20% копится — не списывается, остаётся на счёте.
-#
-# Карточные операции используют формат описания Альфы:
-#   "Операция по карте: 220015++++++8073, на сумму: 475.00 RUR, дата совершения
-#    операции: 31.03.26, место совершения операции: 33210835\\RU\\Moscow\\
-#    MAGNIT MM ASTRA MCC5411"
-# Для Сбера / ТБанка bank-specific постпроцессоры переформатируют отображение,
-# а category из tx используется как отдельная колонка в шаблоне Сбера.
-
-# Категории карточных трат: (weight_pct, mcc, category_label_sber, sellers, (amt_min, amt_max))
-_CARD_CATEGORIES = [
-    (35, "5411", "Супермаркеты", [
-        "MAGNIT MM", "MAGNIT GM", "MAGNIT KOSMETIK", "PYATEROCHKA",
-        "PEREKRESTOK", "LENTA", "VKUSVILL", "DIXY", "MIRATORG", "FIX PRICE",
-    ], (250, 4500)),
-    (12, "5812", "Кафе и рестораны", [
-        "RESTAURANT CHAYHANA", "CAFE SHOKOLADNITSA", "CAFE TRAVELERS COFFEE",
-        "PIZZERIA DODO", "RESTORAN GRUZIYA", "CAFE COFFEE LIKE",
-    ], (400, 3500)),
-    (8, "5814", "Фастфуд", [
-        "VKUSNO I TOCHKA", "KFC", "BURGER KING", "DODO PIZZA",
-        "STARS COFFEE", "TEREMOK", "SUBWAY",
-    ], (250, 1500)),
-    (12, "5541", "Авто", [
-        "AZS GAZPROMNEFT 142", "AZS LUKOIL 234", "AZS ROSNEFT 112",
-        "AZS TATNEFT 089", "AZS SHELL 56", "AZS NESTE",
-    ], (1500, 4500)),
-    (5, "5912", "Аптеки", [
-        "APTEKA 36.6", "APTEKA RIGLA", "APTEKA STOLICHKI", "APTEKA ASNA", "APTEKA APREL",
-    ], (300, 2500)),
-    (10, "6011", "Снятие наличных", [
-        "ATM 00227620", "ATM 00115221", "ATM 00982341", "ATM 00564382",
-    ], (5000, 30000)),
-    (4, "4900", "Услуги связи", [
-        "BEELINE", "MTS", "MEGAFON", "TELE2",
-    ], (300, 1500)),
-    (4, "5732", "Электроника", [
-        "DNS", "M.VIDEO", "CITILINK", "ELDORADO", "RE-STORE",
-    ], (1500, 25000)),
-    (5, "4121", "Транспорт", [
-        "YANDEX TAXI", "CITYMOBIL", "WHEELY", "METRO MOSCOW", "MOSGORTRANS",
-    ], (200, 1500)),
-    (3, "5499", "Магазины", [
-        "OZON RU", "WILDBERRIES", "DETSKY MIR", "L ETOILE", "AROMA SOMMELYE",
-    ], (500, 8000)),
-    (2, "7997", "Развлечения", [
-        "KINOTEATR FORMULA KINO", "OOO RAZVLECHENIYA", "MTS LIVE",
-        "PARK GORKOGO", "PUSHKINSKY MUZEY",
-    ], (300, 3000)),
-]
-
-
-def _weighted_choice_card_category(rng):
-    """Возвращает одну категорию из _CARD_CATEGORIES по weight."""
-    total_w = sum(c[0] for c in _CARD_CATEGORIES)
-    r = rng.random() * total_w
-    upto = 0.0
-    for cat in _CARD_CATEGORIES:
-        upto += cat[0]
-        if upto >= r:
-            return cat
-    return _CARD_CATEGORIES[-1]
-
-
-def _resolve_card_last4(
-    card_number: Optional[str],
-    bank_account: Optional[str],
-) -> str:
-    """Pack 73.1: 4 цифры карты для описаний.
-
-    Приоритет: applicant.card_number (если задан) → fallback на hash bank_account
-    (детерм., как у ТБанка сейчас). Если оба пусты — "0000".
-    """
-    if card_number:
-        digits = re.sub(r"\D", "", card_number)
-        if len(digits) >= 4:
-            return digits[-4:]
-    if not bank_account:
-        return "0000"
-    import hashlib
-    digest = hashlib.sha1(bank_account.encode("utf-8")).hexdigest()
-    return f"{int(digest[:8], 16) % 10000:04d}"
-
-
-def _resolve_card_bin6(
-    card_number: Optional[str],
-    bank_bik: Optional[str],
-) -> str:
-    """Pack 73.1: 6 цифр BIN карты для описаний (Альфа-формат "220015++++++XXXX").
-
-    Приоритет: первые 6 цифр applicant.card_number → дефолт по BIK банка.
-    """
-    if card_number:
-        digits = re.sub(r"\D", "", card_number)
-        if len(digits) >= 6:
-            return digits[:6]
-    # Дефолты по BIK
-    if bank_bik == "044525225":   # Сбер
-        return "427601"
-    if bank_bik == "044525974":   # ТБанк
-        return "220070"
-    return "220015"  # Альфа / дефолт
-
-
-def _generate_savings_account_last4(
-    applicant_id: Optional[int],
-    bank_bik: Optional[str],
-) -> str:
-    """Pack 73.1: 4 цифры накопительного счёта (детерм. по applicant.id + bik).
-
-    Накопит-счёт не хранится в БД, всегда генерится на лету. Между разными
-    рендерами одной и той же выписки 4 цифры стабильны.
-    """
-    if not applicant_id:
-        return "0000"
-    import hashlib
-    seed = f"savings:{applicant_id}:{bank_bik or ''}".encode("utf-8")
-    digest = hashlib.sha1(seed).hexdigest()
-    return f"{int(digest[:8], 16) % 10000:04d}"
-
-
-def _make_card_tx_description(
-    bin6: str,
-    card_last4: str,
-    amount: Decimal,
-    tx_date: date,
-    mcc: str,
-    bank_short_name: str,
-    rng,
-) -> str:
-    """Pack 73.1.3 — формат описания карточной операции.
-
-    ТЗ Кости:
-      "Операция по карте: 220015++++++8073, на сумму: 2535.44 RUR,
-       дата совершения операции: 17.04.26, 00227620\\Alfa Iss MCC5411"
-
-    bank_short_name — "Alfa" / "Sber" / "Tbank" (определяется по BIK банка
-    в _distribute_salary_30_50_15).
-    """
-    amt_str = f"{amount:.2f}"
-    date_str = tx_date.strftime("%d.%m.%y")
-    op_code = f"{rng.randint(10000000, 99999999)}"
-    return (
-        f"Операция по карте: {bin6}++++++{card_last4}, "
-        f"на сумму: {amt_str} RUR, "
-        f"дата совершения операции: {date_str}, "
-        f"{op_code}\\{bank_short_name} Iss MCC{mcc}"
-    )
-
-
-def _distribute_card_budget(
-    card_budget: Decimal,
-    rng,
-) -> list:
-    """Разбивает бюджет карточных трат на N операций реалистичных сумм.
-
-    N = 10..30 в зависимости от размера бюджета. Каждая операция — случайная
-    доля от оставшегося, ограничена снизу 200 RUR. Последняя tx подгоняет
-    сумму так чтобы Σ == card_budget точно (до копейки).
-    """
-    if card_budget <= 0:
-        return []
-    # Целевое количество операций — из расчёта средней суммы ~1500-2500 RUR
-    avg_tx = Decimal(rng.randint(1500, 2500))
-    target_n = int(card_budget / avg_tx)
-    target_n = max(10, min(35, target_n))
-
-    amounts = []
-    remaining = card_budget
-    for i in range(target_n - 1):
-        # Случайная доля от оставшегося, с разбросом ±60%
-        slots_left = target_n - i
-        avg_slot = remaining / Decimal(slots_left)
-        lo = float(avg_slot) * 0.4
-        hi = float(avg_slot) * 1.6
-        slice_val = Decimal(f"{rng.uniform(max(lo, 200.0), hi):.2f}")
-        if slice_val < Decimal("200"):
-            slice_val = Decimal("200.00")
-        if slice_val > remaining - Decimal("200") * Decimal(slots_left - 1):
-            slice_val = max(Decimal("200.00"), remaining - Decimal("200") * Decimal(slots_left - 1))
-        amounts.append(slice_val)
-        remaining -= slice_val
-        if remaining < Decimal("200"):
-            break
-
-    if remaining > 0:
-        amounts.append(remaining.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
-    return amounts
-
-
-def _distribute_salary_30_50_15(
-    *,
-    salary_date: date,
-    salary_amount: Decimal,
-    next_payout_date: Optional[date],
-    period_start: date,
-    period_end: date,
-    applicant_id: Optional[int],
-    card_number: Optional[str],
-    bank_account: Optional[str],
-    bank_bik: Optional[str],
-    city: str,
-    rng,
-) -> list:
-    """Pack 73.1: распределение зарплатной выплаты по правилу 30/50-65/5-20.
-
-    Возвращает список tx-dict'ов (готовы для transactions.append):
-      - 1 операция: 30% → накопительный счёт (через 1-3 дня)
-      - N операций (10-30): 50-65% → карточные траты (равномерно
-        salary_date+1 .. next_payout_date-1, ограничено period_end)
-      - остаток 5-20% не генерится — копится на счёте.
-
-    Все операции с amount < 0 (расход). Все даты гарантированно внутри
-    [period_start, period_end] — внешние отфильтруются hard-фильтром позже.
-    """
-    out = []
-    if salary_amount <= 0:
-        return out
-
-    # === 30% → накопительный счёт ===
-    savings_amount = (salary_amount * Decimal("0.30")).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    savings_offset = rng.randint(1, 3)
-    try:
-        savings_date = _adjust_to_business_day(
-            salary_date + timedelta(days=savings_offset)
-        )
-    except (ValueError, OverflowError):
-        savings_date = None
-    if savings_date and period_start <= savings_date <= period_end:
-        savings_last4 = _generate_savings_account_last4(applicant_id, bank_bik)
-        out.append({
-            "transaction_date": savings_date,
-            "code": _gen_payment_code(),
-            "description": f"Перевод между своими счетами на накопительный счёт *{savings_last4}",
-            "amount": -savings_amount,
-            "currency": "RUR",
-            "category": "Между своими счетами",
-        })
-
-    # === 50-65% → карточные операции ===
-    card_pct = Decimal(f"{rng.uniform(0.50, 0.65):.4f}")
-    card_budget = (salary_amount * card_pct).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-
-    # Окно распределения дат
-    window_start = max(salary_date + timedelta(days=1), period_start)
-    if next_payout_date is not None:
-        window_end = min(next_payout_date - timedelta(days=1), period_end)
-    else:
-        window_end = period_end
-    # Если окно слишком узкое (< 7 дней) — расширим до period_end
-    if (window_end - window_start).days < 7:
-        window_end = period_end
-    if window_end < window_start:
-        return out  # некуда ставить
-    window_days = (window_end - window_start).days + 1
-
-    bin6 = _resolve_card_bin6(card_number, bank_bik)
-    card_last4 = _resolve_card_last4(card_number, bank_account)
-    # Pack 73.1.3 — имя банка-эмитента карты для описания "...\\Alfa Iss"
-    if bank_bik == "044525225":
-        bank_short_name = "Sber"
-    elif bank_bik == "044525974":
-        bank_short_name = "Tbank"
-    else:
-        bank_short_name = "Alfa"  # Альфа + дефолт
-
-    amounts = _distribute_card_budget(card_budget, rng)
-    for amt in amounts:
-        if amt <= 0:
-            continue
-        tx_date = window_start + timedelta(days=rng.randint(0, window_days - 1))
-        if not (period_start <= tx_date <= period_end):
-            continue
-        cat = _weighted_choice_card_category(rng)
-        _, mcc, category_label, sellers, _amt_range = cat
-        out.append({
-            "transaction_date": tx_date,
-            "code": _gen_payment_code(),
-            "description": _make_card_tx_description(
-                bin6, card_last4, amt, tx_date, mcc, bank_short_name, rng,
-            ),
-            "amount": -amt,
-            "currency": "RUR",
-            "category": category_label,
-        })
-
-    return out
-
-
 def _short_name_for_sbp(full_name_ru: Optional[str]) -> str:
     """'Веда́т Карагёзов Бухарийич' → 'Ведат К.'
     Берём имя + первая буква фамилии."""
@@ -588,7 +297,7 @@ def _split_salary_employment(gross_salary):
     return avans, zarplata
 
 
-def generate_default_transactions_30_50_15(
+def generate_default_transactions(
     *,
     submission_date: date,
     salary_rub: Decimal,
@@ -615,12 +324,6 @@ def generate_default_transactions_30_50_15(
     # суб-периода поверх существующего bank_transactions_override.
     period_start_override: Optional[date] = None,
     period_end_override: Optional[date] = None,
-    # Pack 73.1 — новые опциональные параметры для модели 30/50/15
-    applicant_id_for_savings: Optional[int] = None,
-    applicant_card_number: Optional[str] = None,
-    applicant_bank_account: Optional[str] = None,
-    bank_bik: Optional[str] = None,
-    applicant_city: Optional[str] = None,
 ) -> dict:
     """
     Генерирует черновик списка транзакций для выписки.
@@ -773,22 +476,6 @@ def generate_default_transactions_30_50_15(
                     "currency": "RUR",
                     "category": "Прочие операции",
                 })
-                # Pack 73.1 — распределение аванса 30/50-65/5-20%
-                # next_payout_date = ожидаемая дата зарплаты (5-9 число next month)
-                _av_next_payout = date(next_y, next_m, 7)
-                transactions.extend(_distribute_salary_30_50_15(
-                    salary_date=_av_date,
-                    salary_amount=_avans.quantize(Decimal("0.01")),
-                    next_payout_date=_av_next_payout,
-                    period_start=period_start,
-                    period_end=period_end,
-                    applicant_id=applicant_id_for_savings,
-                    card_number=applicant_card_number,
-                    bank_account=applicant_bank_account,
-                    bank_bik=bank_bik,
-                    city=applicant_city or "Moscow",
-                    rng=random,
-                ))
             # Зарплата — 5-9 число СЛЕДУЮЩЕГО месяца (next_y, next_m)
             _zp_day = random.randint(5, 9)
             try:
@@ -808,27 +495,6 @@ def generate_default_transactions_30_50_15(
                     "currency": "RUR",
                     "category": "Прочие операции",
                 })
-                # Pack 73.1 — распределение зарплаты 30/50-65/5-20%
-                # next_payout_date = ожидаемая дата следующего аванса (20 число next month)
-                _next_m2_y = next_y if next_m < 12 else next_y + 1
-                _next_m2_m = next_m + 1 if next_m < 12 else 1
-                try:
-                    _zp_next_payout = date(_next_m2_y, _next_m2_m, 22)
-                except ValueError:
-                    _zp_next_payout = None
-                transactions.extend(_distribute_salary_30_50_15(
-                    salary_date=_zp_date,
-                    salary_amount=_zarplata.quantize(Decimal("0.01")),
-                    next_payout_date=_zp_next_payout,
-                    period_start=period_start,
-                    period_end=period_end,
-                    applicant_id=applicant_id_for_savings,
-                    card_number=applicant_card_number,
-                    bank_account=applicant_bank_account,
-                    bank_bik=bank_bik,
-                    city=applicant_city or "Moscow",
-                    rng=random,
-                ))
             continue  # найм: пропускаем KWIKPAY/НПД/комиссию
 
         # Pack 57.5 — самозанятый: доход месяца с пропорцией неполного первого/
@@ -876,30 +542,27 @@ def generate_default_transactions_30_50_15(
                 "currency": "RUR",
                 "category": "Прочие операции",
             })
-            # Pack 73.1 — распределение поступления 30/50-65/5-20%
-            # (заменяет KWIKPAY: вместо одного большого расхода — много карточных)
-            # next_payout_date = ~6 число месяца через 1 от next_y/next_m
-            _next_inc_y = next_y if next_m < 12 else next_y + 1
-            _next_inc_m = next_m + 1 if next_m < 12 else 1
-            try:
-                _next_inc_date = date(_next_inc_y, _next_inc_m, 6)
-            except ValueError:
-                _next_inc_date = None
-            transactions.extend(_distribute_salary_30_50_15(
-                salary_date=income_date,
-                salary_amount=_m_income.quantize(Decimal("0.01")),
-                next_payout_date=_next_inc_date,
-                period_start=period_start,
-                period_end=period_end,
-                applicant_id=applicant_id_for_savings,
-                card_number=applicant_card_number,
-                bank_account=applicant_bank_account,
-                bank_bik=bank_bik,
-                city=applicant_city or "Moscow",
-                rng=random,
-            ))
 
-        # Pack 73.1 — блок KWIKPAY УБРАН: заменён на _distribute_salary_30_50_15 выше.
+        # 2. KWIKPAY (~10-15 числа того же месяца, в котором пришла зарплата)
+        kwikpay_day = random.randint(10, 15)
+        try:
+            kwikpay_date = _adjust_to_business_day(date(next_y, next_m, kwikpay_day))
+        except ValueError:
+            kwikpay_date = None
+        if kwikpay_date and period_start <= kwikpay_date <= period_end:
+            # ±10% вариация
+            kwikpay_variation = Decimal(random.randint(-10000, 10000))
+            kwikpay_amount = (_m_kwikpay + kwikpay_variation).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            transactions.append({
+                "transaction_date": kwikpay_date,
+                "code": _gen_payment_code(),
+                "description": "Перевод   JSC*KWIKPAY online.",
+                "amount": -kwikpay_amount,
+                "currency": "RUR",
+                "category": "Прочие операции",
+            })
 
         # 3. НПД — Pack 35.0: диапазон 17-22 (плательщики НПД успевают «до 22 числа»),
         # сдвиг на ПРЕДЫДУЩИЙ рабочий день если 22-е выходной (налоговая логика:
@@ -1032,14 +695,10 @@ def generate_default_transactions_30_50_15(
     #
     # Бюджет настраиваемый через ENV var BANK_STATEMENT_MAX_WEIGHT.
     import os as _os
-    # Pack 73.1 — поднят бюджет страниц с 38 до 200, потому что новая модель
-    # распределения зарплаты (30% накопит + 50-65% карточных) создаёт намного
-    # больше транзакций (15-30 карточных на каждую зарплату). 2 страницы стали
-    # тесными, целимся в 3-4 страницы как у реальных Сбер/Альфа-выписок.
     try:
-        _max_weight = int(_os.environ.get("BANK_STATEMENT_MAX_WEIGHT", "200"))
+        _max_weight = int(_os.environ.get("BANK_STATEMENT_MAX_WEIGHT", "38"))
     except (ValueError, TypeError):
-        _max_weight = 200
+        _max_weight = 38
 
     def _tx_weight(t: dict) -> float:
         desc = t.get("description") or ""
@@ -1147,31 +806,6 @@ def generate_default_transactions_30_50_15(
         "total_expense": total_expense,
         "transactions": transactions,
     }
-
-
-def generate_default_transactions(*, use_30_50_15: bool = False, **kwargs):
-    """Pack 73.10 — router: legacy (default) или 30/50-15 (шенген).
-
-    Args:
-        use_30_50_15: если True — новая модель Pack 73.1 (карточные операции
-            по MCC + накопительный счёт + 30/50/15 разбивка). Если False —
-            старая модель до Pack 73.1 (KWIKPAY-перевод, без карточных).
-        **kwargs: остальные параметры функции (одинаковые для обоих
-            режимов, кроме Pack 73.1-специфичных — они игнорируются в legacy).
-    """
-    if use_30_50_15:
-        return generate_default_transactions_30_50_15(**kwargs)
-
-    # Legacy функция не принимает Pack 73.1-специфичные параметры — отфильтруем
-    _PACK_73_1_ONLY = {
-        "applicant_id_for_savings",
-        "applicant_card_number",
-        "applicant_bank_account",
-        "bank_bik",
-        "applicant_city",
-    }
-    legacy_kwargs = {k: v for k, v in kwargs.items() if k not in _PACK_73_1_ONLY}
-    return _generate_default_transactions_legacy(**legacy_kwargs)
 
 
 def serialize_for_storage(generated: dict) -> dict:

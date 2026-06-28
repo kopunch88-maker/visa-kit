@@ -227,6 +227,11 @@ class Applicant(TimestampMixin, table=True):
     # Pack 73.1 — номер карты клиента (формат "2200 1525 0123 8073" или 16 цифр)
     card_number: Optional[str] = Field(default=None, max_length=19)
 
+    # Pack 73.10 — флаг шенген-визы: переключает модель генерации выписки.
+    # False (default) → legacy модель (KWIKPAY, без карточных MCC).
+    # True → модель Pack 73.1 (30% накопит / 50-65% карточные / 5-20% остаток).
+    is_shengen: bool = Field(default=False)
+
     # === Адрес ===
     home_address_line1: Optional[str] = Field(default=None, max_length=256)
     home_address_line2: Optional[str] = Field(default=None, max_length=256)
@@ -369,6 +374,8 @@ class ApplicantCreate(SQLModel):
     bank_correspondent_account: Optional[str] = None
     # Pack 73.1 — номер карты клиента
     card_number: Optional[str] = None
+    # Pack 73.10 — флаг шенген-визы
+    is_shengen: bool = False
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
@@ -444,6 +451,8 @@ class ApplicantUpdate(SQLModel):
     bank_correspondent_account: Optional[str] = None
     # Pack 73.1 — номер карты клиента
     card_number: Optional[str] = None
+    # Pack 73.10 — флаг шенген-визы
+    is_shengen: bool = False
     home_address: Optional[str] = None
     home_country: Optional[CountryCode] = None
     email: Optional[str] = None
