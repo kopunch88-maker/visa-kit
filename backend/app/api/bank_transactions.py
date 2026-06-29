@@ -201,15 +201,18 @@ def _generate_for_app(application: Application, session: Session) -> Optional[di
             if not _bank_bik_for_card:
                 _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
 
-    # Pack 73.10 — router модели по флагу applicant.is_shengen
+    # Pack 73.10/73.11 — router модели + target_closing_balance
     _use_30_50_15 = False
+    _target_closing_balance = None
     if application.applicant_id:
         _a_for_shengen = session.get(Applicant, application.applicant_id)
         if _a_for_shengen is not None:
             _use_30_50_15 = bool(getattr(_a_for_shengen, "is_shengen", False))
+            _target_closing_balance = getattr(_a_for_shengen, "target_closing_balance_rub", None)
 
     return generate_default_transactions(
         use_30_50_15=_use_30_50_15,
+        target_closing_balance=_target_closing_balance,
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
         contract_number=application.contract_number,
@@ -327,15 +330,18 @@ def _append_for_app(
             if not _bank_bik_for_card:
                 _bank_bik_for_card = getattr(_a_for_card, "bank_bic", None)
 
-    # Pack 73.10 — router модели по флагу applicant.is_shengen
+    # Pack 73.10/73.11 — router модели + target_closing_balance
     _use_30_50_15_append = False
+    _target_closing_balance_append = None
     if application.applicant_id:
         _a_for_shengen_append = session.get(Applicant, application.applicant_id)
         if _a_for_shengen_append is not None:
             _use_30_50_15_append = bool(getattr(_a_for_shengen_append, "is_shengen", False))
+            _target_closing_balance_append = getattr(_a_for_shengen_append, "target_closing_balance_rub", None)
 
     new_data = generate_default_transactions(
         use_30_50_15=_use_30_50_15_append,
+        target_closing_balance=_target_closing_balance_append,
         submission_date=application.submission_date,
         salary_rub=application.salary_rub,
         contract_number=application.contract_number,

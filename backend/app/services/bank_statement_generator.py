@@ -588,6 +588,100 @@ def _split_salary_employment(gross_salary):
     return avans, zarplata
 
 
+def _adjust_to_target_closing_balance(
+    transactions: list,
+    target_closing_balance: "Decimal",
+    opening_balance: "Decimal",
+    total_income: "Decimal",
+    total_expense: "Decimal",
+    rng: random.Random,
+) -> tuple:
+    """Pack 73.11 — подгоняет балансы под желаемый исходящий остаток.
+
+    Стратегия:
+      1. Сначала пытаемся подогнать opening_balance (без изменения транзакций):
+         desired_opening = target + total_expense - total_income
+         Если в диапазоне 50_000..400_000 — используем это.
+      2. Иначе скейлим карточные расходы (C01xxx с amount<0) пропорционально:
+         delta = target - current_closing
+         scale = (card_total + delta) / card_total  (где card_total отрицательное)
+         каждый карточный расход: amount *= scale, description обновляется.
+
+    Returns: (new_opening_balance, new_closing_balance, new_total_income, new_total_expense)
+    """
+    DEFAULT_OPENING_MIN = Decimal("50000.00")
+    DEFAULT_OPENING_MAX = Decimal("400000.00")
+
+    target = Decimal(str(target_closing_balance)).quantize(Decimal("0.01"))
+
+    # Стратегия A: меняем opening
+    desired_opening = (target + total_expense - total_income).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if DEFAULT_OPENING_MIN <= desired_opening <= DEFAULT_OPENING_MAX:
+        log.info(
+            "[Pack 73.11] Подгонка через opening_balance: %.2f → %.2f, closing %.2f → %.2f",
+            float(opening_balance), float(desired_opening),
+            float(opening_balance + total_income - total_expense), float(target),
+        )
+        return (desired_opening, target, total_income, total_expense)
+
+    # Стратегия B: скейлим карточные расходы
+    card_indices = [
+        i for i, t in enumerate(transactions)
+        if t.get("code", "").startswith("C01") and t["amount"] < 0
+    ]
+    if not card_indices:
+        log.warning(
+            "[Pack 73.11] Нет карточных операций для подгонки. target=%.2f, current=%.2f. Skip.",
+            float(target), float(opening_balance + total_income - total_expense),
+        )
+        return (opening_balance, opening_balance + total_income - total_expense, total_income, total_expense)
+
+    current_closing = opening_balance + total_income - total_expense
+    delta = target - current_closing
+    card_total = sum((transactions[i]["amount"] for i in card_indices), Decimal("0.00"))
+    new_card_total = card_total + delta
+
+    if new_card_total >= Decimal("-100.00"):
+        # Карточных расходов не хватит чтобы достичь target. Минимизируем расходы.
+        log.warning(
+            "[Pack 73.11] Target %.2f недостижим (нужно почти 0 карточных). Применяем минимум.",
+            float(target),
+        )
+        new_card_total = Decimal("-100.00") * len(card_indices)
+
+    scale = new_card_total / card_total  # 0..1+ зависимо от delta
+    log.info(
+        "[Pack 73.11] Подгонка через scale карточных: delta=%.2f, scale=%.4f, card_total %.2f → %.2f",
+        float(delta), float(scale), float(card_total), float(new_card_total),
+    )
+
+    import re as _re
+    for i in card_indices:
+        old_amt = transactions[i]["amount"]
+        new_amt = (old_amt * scale).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        transactions[i]["amount"] = new_amt
+        # Обновляем сумму в описании "на сумму: 4861.31 RUR"
+        desc = transactions[i].get("description", "")
+        if "на сумму:" in desc:
+            new_desc_amt = f"{abs(new_amt):.2f}"
+            transactions[i]["description"] = _re.sub(
+                r"на сумму: [\d.]+ RUR",
+                f"на сумму: {new_desc_amt} RUR",
+                desc,
+            )
+
+    # Пересчёт total_expense
+    new_total_expense = sum(
+        (-t["amount"] for t in transactions if t["amount"] < 0), Decimal("0.00")
+    )
+    new_closing = (opening_balance + total_income - new_total_expense).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    return (opening_balance, new_closing, total_income, new_total_expense)
+
+
 def generate_default_transactions_30_50_15(
     *,
     submission_date: date,
@@ -621,6 +715,7 @@ def generate_default_transactions_30_50_15(
     applicant_bank_account: Optional[str] = None,
     bank_bik: Optional[str] = None,
     applicant_city: Optional[str] = None,
+    target_closing_balance: Optional[Decimal] = None,  # Pack 73.11
 ) -> dict:
     """
     Генерирует черновик списка транзакций для выписки.
@@ -1137,6 +1232,15 @@ def generate_default_transactions_30_50_15(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
 
+    # Pack 73.11 — подгонка под желаемый закрывающий остаток
+    if target_closing_balance is not None:
+        opening_balance, closing_balance, total_income, total_expense = (
+            _adjust_to_target_closing_balance(
+                transactions, target_closing_balance,
+                opening_balance, total_income, total_expense, rng_bal,
+            )
+        )
+
     return {
         "statement_date": statement_date,   # Pack 25.8
         "period_start": period_start,
@@ -1162,15 +1266,16 @@ def generate_default_transactions(*, use_30_50_15: bool = False, **kwargs):
     if use_30_50_15:
         return generate_default_transactions_30_50_15(**kwargs)
 
-    # Legacy функция не принимает Pack 73.1-специфичные параметры — отфильтруем
-    _PACK_73_1_ONLY = {
+    # Legacy функция не принимает Pack 73.1/73.11-специфичные параметры — отфильтруем
+    _SHENGEN_ONLY = {
         "applicant_id_for_savings",
         "applicant_card_number",
         "applicant_bank_account",
         "bank_bik",
         "applicant_city",
+        "target_closing_balance",  # Pack 73.11
     }
-    legacy_kwargs = {k: v for k, v in kwargs.items() if k not in _PACK_73_1_ONLY}
+    legacy_kwargs = {k: v for k, v in kwargs.items() if k not in _SHENGEN_ONLY}
     return _generate_default_transactions_legacy(**legacy_kwargs)
 
 

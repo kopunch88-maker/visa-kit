@@ -168,6 +168,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
   const [bank_account, setBankAccount] = useState(applicant.bank_account || "");
   const [card_number, setCardNumber] = useState(applicant.card_number || "");
+  // Pack 73.10/73.11 — шенген-флаг + желаемый остаток
+  const [is_shengen, setIsShengen] = useState<boolean>(applicant.is_shengen || false);
+  const [target_closing_balance_rub, setTargetClosingBalance] = useState<string>(
+    applicant.target_closing_balance_rub != null
+      ? String(applicant.target_closing_balance_rub)
+      : ""
+  );
   const [cardGenerating, setCardGenerating] = useState(false);
   const [banks, setBanks] = useState<BankResponse[]>([]);
   const [banksLoading, setBanksLoading] = useState(true);
@@ -627,6 +634,10 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         // Pack 16
         bank_account: bank_account.trim() || null,
         card_number: card_number.trim() || null,
+        is_shengen,
+        target_closing_balance_rub: target_closing_balance_rub.trim()
+          ? Number(target_closing_balance_rub.trim().replace(/\s/g, ""))
+          : null,
         ...bankFields,
         // Pack 18.9 — подписант апостиля (пустое = null = бэкенд подставит дефолт)
         apostille_signer_short: apostille_signer_short.trim() || null,
@@ -1191,6 +1202,51 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                 Если пусто — last4 генерится автоматически от номера счёта.
               </p>
             </div>
+
+            {/* Pack 73.10/73.11 — Шенген-флаг + желаемый остаток */}
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={is_shengen}
+                  onChange={(e) => setIsShengen(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm text-primary">
+                  Шенгенская виза (модель 30/50-15: карточные операции, накопительный счёт)
+                </span>
+              </label>
+              <p className="text-[11px] text-tertiary mt-1 ml-6">
+                При выключенной галке — старая модель выписки (для самозанятых/найма).
+              </p>
+            </div>
+
+            {is_shengen && (
+              <div>
+                <label className="block text-xs text-tertiary mb-1">
+                  Желаемый остаток на счету, ₽ (опционально)
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={target_closing_balance_rub}
+                  onChange={(e) => setTargetClosingBalance(e.target.value)}
+                  placeholder="например, 250000"
+                  className="w-full px-2 py-1.5 rounded-md text-sm border"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <p className="text-[11px] text-tertiary mt-1">
+                  Если задано — генератор подгонит карточные расходы или начальный остаток
+                  так, чтобы исходящий остаток в выписке был ≈ этому значению. Если пусто —
+                  автогенерация (рандомный закрывающий остаток).
+                </p>
+              </div>
+            )}
           </Section>
 
           {/* Pack 25.10 — Банковская выписка (показывается только если передан application) */}
