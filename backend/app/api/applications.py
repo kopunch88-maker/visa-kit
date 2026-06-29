@@ -616,6 +616,18 @@ async def _ensure_bank_statement_translation(app, session) -> bytes | None:
     if bool(getattr(app, "bank_template_legacy_v1", True)):
         return None
 
+    # Pack 73.11.4 — для шенген-клиентов перевод выключен (только русская выписка)
+    if app.applicant_id:
+        from app.models import Applicant
+        _a_shengen = session.get(Applicant, app.applicant_id)
+        if _a_shengen and bool(getattr(_a_shengen, "is_shengen", False)):
+            import logging
+            logging.getLogger(__name__).info(
+                "Pack 73.11.4: skip auto-translate for shengen client (applicant_id=%s)",
+                app.applicant_id,
+            )
+            return None
+
     app_id = app.id
     lock = _BANK_TRANSLATE_LOCKS.setdefault(app_id, asyncio.Lock())
 
@@ -1435,6 +1447,16 @@ async def translate_bank_statement(
             400,
             "Перевод доступен только для v2-выписок (bank_template_legacy_v1=False).",
         )
+
+    # Pack 73.11.4 — для шенген-клиентов перевод временно отключён
+    if app.applicant_id:
+        from app.models import Applicant
+        _a_shengen = session.get(Applicant, app.applicant_id)
+        if _a_shengen and bool(getattr(_a_shengen, "is_shengen", False)):
+            raise HTTPException(
+                400,
+                "Перевод выписки временно отключён для шенгенских заявок (Pack 73.11.4).",
+            )
 
     # Этап 1: render RU docx без печатей (но с лейблами для перевода)
     try:

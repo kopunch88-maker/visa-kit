@@ -1387,7 +1387,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
               </div>
 
               {/* Pack 53 — перевод выписки на испанский (только для v2 шаблона) */}
-              {isV2Bank && (
+              {/* Pack 73.11.4 — для шенген-клиентов перевод временно отключён */}
+              {isV2Bank && !is_shengen && (
                 <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--color-border-tertiary)" }}>
                   <button
                     type="button"
