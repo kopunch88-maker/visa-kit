@@ -609,8 +609,11 @@ def _adjust_to_target_closing_balance(
 
     Returns: (new_opening_balance, new_closing_balance, new_total_income, new_total_expense)
     """
+    # Pack 73.11.3 — диапазон расширен с 50k..400k до 50k..2_000_000
+    # для шенгена, чтобы strategy A покрывала больший диапазон target
+    # без перехода в strategy B (где closing получается лишь приближённо).
     DEFAULT_OPENING_MIN = Decimal("50000.00")
-    DEFAULT_OPENING_MAX = Decimal("400000.00")
+    DEFAULT_OPENING_MAX = Decimal("2000000.00")
 
     target = Decimal(str(target_closing_balance)).quantize(Decimal("0.01"))
 
