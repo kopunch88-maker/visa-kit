@@ -693,6 +693,11 @@ def _resolve_bank_statement_template_path(
     # (Sber v2 = bank_statement_template_044525225_v2.docx — Ч/Б + подпись Кирьянова + печать)
     use_v2 = not bool(getattr(application, "bank_template_legacy_v1", True))
     if use_v2:
+        # Pack 73.12 — для шенген-клиентов сначала ищем -shengen.docx копию
+        if bool(getattr(applicant, "is_shengen", False)):
+            candidate_shengen = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}_v2-shengen.docx"
+            if candidate_shengen.exists():
+                return candidate_shengen
         candidate_v2 = TEMPLATES_DIR / f"bank_statement_template_{bank.bik}_v2.docx"
         if candidate_v2.exists():
             return candidate_v2
@@ -830,15 +835,18 @@ def render_bank_statement(
     # Pack 52/54: диспетчер по template name — Альфа vs Сбер.
     # mode="markers_only" при подготовке к переводу (без PNG, только чистка маркеров).
     _v2_name = template_path.name
-    _v2_mode = "markers_only" if for_translation else "full"
-    if _v2_name == "bank_statement_template_v2.docx":
-        # Pack 52 — Альфа v2
+    # Pack 73.12 — для шенген-шаблона штампы не вставляются (markers_only)
+    _is_shengen_template = "-shengen.docx" in _v2_name
+    _v2_mode = "markers_only" if (for_translation or _is_shengen_template) else "full"
+    # Pack 73.12 — расширили проверки чтобы они работали и для -shengen.docx копий
+    if _v2_name in ("bank_statement_template_v2.docx", "bank_statement_template_v2-shengen.docx"):
+        # Pack 52 — Альфа v2 (включая shengen-копию)
         _insert_v2_signature_images(doc, mode=_v2_mode)
-    elif _v2_name.endswith("_v2.docx") and "044525225" in _v2_name:
-        # Pack 54 — Sber v2 (BIK 044525225)
+    elif (_v2_name.endswith("_v2.docx") or _v2_name.endswith("_v2-shengen.docx")) and "044525225" in _v2_name:
+        # Pack 54 — Sber v2 (BIK 044525225, включая shengen-копию)
         _insert_v2_sber_signatures(doc, mode=_v2_mode)
-    elif _v2_name.endswith("_v2.docx") and "044525974" in _v2_name:
-        # Pack 57.4 — ТБанк v2 (BIK 044525974), восстановлено после неудачного Pack 56.0
+    elif (_v2_name.endswith("_v2.docx") or _v2_name.endswith("_v2-shengen.docx")) and "044525974" in _v2_name:
+        # Pack 57.4 — ТБанк v2 (BIK 044525974, включая shengen-копию)
         _insert_v2_tbank_signatures(doc, mode=_v2_mode)
 
     # Pack 47.19: ФАЗА 4 — гарантия что каждая <w:tc> заканчивается на <w:p>.
