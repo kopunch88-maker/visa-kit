@@ -635,9 +635,13 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         bank_account: bank_account.trim() || null,
         card_number: card_number.trim() || null,
         is_shengen,
-        target_closing_balance_rub: target_closing_balance_rub.trim()
-          ? Number(target_closing_balance_rub.trim().replace(/\s/g, ""))
-          : null,
+        target_closing_balance_rub: (() => {
+          // Pack 73.11.1 — поддержка запятой как десятичного разделителя
+          const raw = target_closing_balance_rub.trim().replace(/\s/g, "").replace(",", ".");
+          if (!raw) return null;
+          const n = Number(raw);
+          return Number.isFinite(n) ? n : null;
+        })(),
         ...bankFields,
         // Pack 18.9 — подписант апостиля (пустое = null = бэкенд подставит дефолт)
         apostille_signer_short: apostille_signer_short.trim() || null,
