@@ -629,7 +629,7 @@ def _adjust_to_target_closing_balance(
     # Стратегия B: скейлим карточные расходы
     card_indices = [
         i for i, t in enumerate(transactions)
-        if t.get("code", "").startswith("C01") and t["amount"] < 0
+        if t.get("code", "").startswith("С01") and t["amount"] < 0  # Pack 73.11.2: кириллическая С (см. _gen_payment_code)
     ]
     if not card_indices:
         log.warning(
