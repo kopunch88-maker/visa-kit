@@ -1,4 +1,3 @@
-import re
 """
 Pack 19.1 — генератор work_history для applicant'а.
 
@@ -33,6 +32,7 @@ Tie-breaker для дубликатов уровня (например 08.03.01 
 Минимум 3.5 года в последней работе — для DN-визы нужно ≥3 года стажа.
 """
 from __future__ import annotations
+import re
 
 import logging
 import random
