@@ -1,3 +1,4 @@
+import re
 """
 Pack 19.1 — генератор work_history для applicant'а.
 
