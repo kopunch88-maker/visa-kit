@@ -713,6 +713,42 @@ MAX_GAP_FROM_EDUCATION_YEARS = 2
 MAX_EARLIEST_RECORD_LENGTH_YEARS = 8.0
 
 
+
+# ============================================================================
+# === Pack 75: junior stretch cap ===
+# ============================================================================
+
+# Максимальная длительность самой ранней записи если она Junior-грейда.
+# Junior-роль (стажёр, помощник, младший специалист) в отрасли длится 1–3 года,
+# 8 лет в одной юниорской позиции читается инспектором UGE как ложь.
+MAX_JUNIOR_STRETCH_YEARS = 3.0
+
+# Паттерн для распознавания Junior-грейда по названию должности или первой
+# фразе обязанностей. Case-insensitive. Русская морфология покрыта корнями.
+_JUNIOR_TITLE_PATTERN = re.compile(
+    r"\b(?:junior|jr\.?|"
+    r"младш|стажёр|стажер|помощ|ассистент|начинающ|"
+    r"участи|под\s+руководств|под\s+супервизи)",
+    re.IGNORECASE,
+)
+
+
+def _is_junior_record(record) -> bool:
+    """Pack 75: True если запись Junior-грейда.
+
+    Проверяет title и duties[0] на regex-паттерн. Field names безопасны через
+    getattr — совместимо со всеми ревизиями WorkRecordSuggestion.
+    """
+    title = getattr(record, "title", None) or getattr(record, "position_title", None) or ""
+    if _JUNIOR_TITLE_PATTERN.search(str(title)):
+        return True
+    duties = getattr(record, "duties", None) or []
+    if duties and _JUNIOR_TITLE_PATTERN.search(str(duties[0])):
+        return True
+    return False
+
+
+
 # ============================================================================
 # === Pack 69: minimum work start age clamp ===
 # ============================================================================
@@ -803,7 +839,12 @@ def _stretch_earliest_record_for_education_gap(records, applicant):
 
     # Сколько максимум можем растянуть назад
     current_length_days = (end_date - start_date).days
-    max_total_length_days = int(MAX_EARLIEST_RECORD_LENGTH_YEARS * 365.25)
+    # Pack 75: cap ниже если earliest — Junior-грейд
+    if _is_junior_record(earliest):
+        max_length_years = MAX_JUNIOR_STRETCH_YEARS
+    else:
+        max_length_years = MAX_EARLIEST_RECORD_LENGTH_YEARS
+    max_total_length_days = int(max_length_years * 365.25)
     max_extension_days = max(0, max_total_length_days - current_length_days)
     if max_extension_days <= 0:
         return
