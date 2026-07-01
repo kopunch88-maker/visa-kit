@@ -2406,6 +2406,127 @@ def _issuer_min_year(issuer):
     return None
 
 
+# Pack 74 — clamp по продукту/стандарту в названии курса
+_COURSE_MIN_YEAR = {
+    # BIM / AEC — стандарты
+    "iso 19650-1": 2018,
+    "iso 19650-2": 2018,
+    "iso 19650-3": 2020,
+    "iso 19650-5": 2020,
+    "iso 19650": 2018,        # родовой матч на любую часть 19650
+    "iso 12006": 2007,
+    "iso 16739": 2013,        # IFC-стандарт
+    "pas 1192": 2013,         # предшественник ISO 19650
+    "cobie": 2007,
+    "ifc": 1997,
+    "bcf": 2010,
+    # BIM / AEC — продукты Autodesk
+    "navisworks": 2007,       # Autodesk купил Navisworks Ltd в июне 2007
+    "revit": 2002,            # Autodesk купил Revit Technology в апреле 2002
+    "revit mep": 2006,
+    "revit structure": 2005,
+    "autodesk construction cloud": 2019,
+    " acc ": 2019,            # с пробелами чтобы не ловить «access» и т.п.
+    "bim 360 docs": 2016,
+    "bim 360 glue": 2014,
+    "bim 360 field": 2012,
+    "bim 360": 2012,
+    "autodesk vault": 2003,
+    "civil 3d": 2004,
+    "infraworks": 2013,
+    "dynamo": 2011,
+    "fusion 360": 2013,
+    # BIM / AEC — прочие вендоры
+    "archicad": 1984,
+    "tekla structures": 2004,
+    "solibri": 1999,
+    "allplan": 1998,
+    "microstation": 1984,
+    "openbuildings": 2018,
+    "openroads": 2013,
+    "trimble connect": 2015,
+    # PM / методология
+    "primavera p6": 2008,
+    "pmbok 7": 2021,
+    "pmbok 6": 2017,
+    "prince2 agile": 2015,
+    "safe": 2011,             # Scaled Agile Framework
+    "less": 2005,
+    "ipd": 2007,              # Integrated Project Delivery
+    # 1C
+    "1c:enterprise 8.3": 2013,
+    "1с:предприятие 8.3": 2013,
+    "1c:erp": 2013,
+    "1с:erp": 2013,
+    # DevOps / инфра
+    "docker": 2013,
+    "kubernetes": 2014,
+    "k8s": 2014,
+    "terraform": 2014,
+    "ansible": 2012,
+    "prometheus": 2012,
+    "grafana": 2014,
+    "helm": 2015,
+    "gitlab ci": 2015,
+    "github actions": 2019,
+    # Frontend
+    "react": 2013,
+    "next.js": 2016,
+    "nextjs": 2016,
+    "vue": 2014,
+    "vue.js": 2014,
+    "svelte": 2016,
+    "angular": 2016,          # Angular 2+ (полностью новый; AngularJS отдельно)
+    "angularjs": 2010,
+    "tailwind": 2017,
+    # Data / ML
+    "tensorflow": 2015,
+    "pytorch": 2016,
+    "chatgpt": 2022,
+    "gpt-4": 2023,
+    "gpt-3": 2020,
+    "llm": 2020,
+    "langchain": 2022,
+    "hugging face": 2016,
+    "huggingface": 2016,
+    "power bi": 2015,
+    "looker": 2012,
+    # Cloud
+    "aws": 2006,
+    "azure": 2010,
+    "google cloud platform": 2008,
+    "gcp": 2008,
+    # Дизайн / product
+    "figma": 2016,
+    "notion": 2016,
+    "miro": 2011,
+    # Collab
+    "slack": 2013,
+    "confluence": 2004,
+    "jira": 2002,
+    "trello": 2011,
+    "asana": 2012,
+    "microsoft teams": 2017,
+}
+
+
+def _course_min_year(title):
+    """Pack 74: минимальный год существования темы курса по названию.
+
+    Матчит все подстроки из _COURSE_MIN_YEAR по названию (case-insensitive) и
+    возвращает MAX найденных значений. Курс с упоминанием Revit(2002)+ACC(2019)
+    не может быть раньше 2019. Возвращает None если ни одного совпадения нет.
+    """
+    if not title:
+        return None
+    s = " " + str(title).lower() + " "  # padding под ключи с пробелами (" acc ")
+    hits = []
+    for key, year in _COURSE_MIN_YEAR.items():
+        if key in s:
+            hits.append(year)
+    return max(hits) if hits else None
+
+
 def _cv_pick_certificates(pool, applicant_id, edu_year, n=2):
     """Из пула сертификатов берёт n штук + считает реальный год.
     year = edu_year + year_offset, не больше текущего года."""
@@ -2423,6 +2544,10 @@ def _cv_pick_certificates(pool, applicant_id, edu_year, n=2):
         issuer_min = _issuer_min_year(issuer)
         if issuer_min is not None and year < issuer_min:
             year = issuer_min
+        # Pack 74: clamp по названию курса (продукт/стандарт)
+        course_min = _course_min_year(cert.get('title') if isinstance(cert, dict) else '')
+        if course_min is not None and year < course_min:
+            year = course_min
         if year > this_year:
             year = this_year
         result.append({
