@@ -73,6 +73,8 @@ export type ApplicantData = {
   bank_name?: string | null;
   bank_bic?: string | null;
   bank_correspondent_account?: string | null;
+  // Pack 73.2 — дата открытия расчётного счёта (ISO YYYY-MM-DD)
+  bank_account_open_date?: string | null;
   // /Pack 16
   home_address?: string;
   home_country?: string;

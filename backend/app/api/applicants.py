@@ -141,6 +141,8 @@ _PATCHABLE_FIELDS = {
     "bank_correspondent_account",
     # Pack 73.1 — номер карты клиента
     "card_number",
+    # Pack 73.2 — дата открытия расчётного счёта
+    "bank_account_open_date",
     # Pack 73.10/73.11 — шенген-флаг и желаемый остаток на счету
     "is_shengen",
     "target_closing_balance_rub",

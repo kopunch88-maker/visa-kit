@@ -168,6 +168,12 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
   const [bank_id, setBankId] = useState<number | "">(applicant.bank_id ?? "");
   const [bank_account, setBankAccount] = useState(applicant.bank_account || "");
   const [card_number, setCardNumber] = useState(applicant.card_number || "");
+  // Pack 73.2 — дата открытия расчётного счёта (ISO YYYY-MM-DD).
+  // Пусто = сгенерируется на бэке в момент рендера выписки.
+  const [bank_account_open_date, setBankAccountOpenDate] = useState<string>(
+    applicant.bank_account_open_date || ""
+  );
+  const [openDateGenerating, setOpenDateGenerating] = useState(false);
   // Pack 73.10/73.11 — шенген-флаг + желаемый остаток
   const [is_shengen, setIsShengen] = useState<boolean>(applicant.is_shengen || false);
   const [target_closing_balance_rub, setTargetClosingBalance] = useState<string>(
@@ -381,6 +387,23 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
       setError(`Не удалось сгенерировать карту: ${(e as Error).message}`);
     } finally {
       setCardGenerating(false);
+    }
+  }
+
+  // Pack 73.2: сгенерировать случайную дату открытия счёта (1-5 лет назад).
+  // Реалистично для физлица, который открыл счёт до подачи документов на визу.
+  function handleGenerateOpenDate() {
+    setOpenDateGenerating(true);
+    try {
+      const now = new Date();
+      const yearsAgo = 1 + Math.random() * 4; // 1-5 лет
+      const dt = new Date(now.getTime() - yearsAgo * 365.25 * 24 * 3600 * 1000);
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      const d = String(dt.getDate()).padStart(2, "0");
+      setBankAccountOpenDate(`${y}-${m}-${d}`);
+    } finally {
+      setOpenDateGenerating(false);
     }
   }
 
@@ -634,6 +657,8 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
         // Pack 16
         bank_account: bank_account.trim() || null,
         card_number: card_number.trim() || null,
+        // Pack 73.2 — дата открытия расчётного счёта (пусто = автогенерация на бэке)
+        bank_account_open_date: bank_account_open_date || null,
         is_shengen,
         target_closing_balance_rub: (() => {
           // Pack 73.11.1 — поддержка запятой как десятичного разделителя
@@ -1154,6 +1179,51 @@ export function ApplicantDrawer({ applicant, application, onApplicationSaved, on
                   : nationality
                   ? `Нерезидент (${nationality}) > префикс 40820`
                   : "Укажите гражданство для правильного префикса (40817 для РФ / 40820 для остальных)"}
+              </p>
+            </div>
+
+            {/* Pack 73.2 — дата открытия расчётного счёта */}
+            <div>
+              <label className="block text-xs text-tertiary mb-1">
+                Дата открытия счёта
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type="date"
+                  value={bank_account_open_date}
+                  onChange={(e) => setBankAccountOpenDate(e.target.value)}
+                  className="flex-1 px-2 py-1.5 rounded-md text-sm border font-mono"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                    background: "var(--color-bg-primary)",
+                    color: "var(--color-text-primary)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleGenerateOpenDate}
+                  disabled={openDateGenerating}
+                  className="px-2 py-1.5 rounded-md border text-tertiary hover:bg-secondary disabled:opacity-50 transition-colors flex items-center gap-1 text-xs"
+                  style={{
+                    borderColor: "var(--color-border-tertiary)",
+                    borderWidth: 0.5,
+                  }}
+                  title="Случайная дата 1-5 лет назад"
+                >
+                  {openDateGenerating ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Сгенерировать
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-tertiary mt-1">
+                Если задано вручную — будет использовано это значение.
+                Пусто = автоматически при генерации выписки.
               </p>
             </div>
 

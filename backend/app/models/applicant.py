@@ -228,6 +228,11 @@ class Applicant(TimestampMixin, table=True):
     # Pack 73.1 — номер карты клиента (формат "2200 1525 0123 8073" или 16 цифр)
     card_number: Optional[str] = Field(default=None, max_length=19)
 
+    # Pack 73.2 — дата открытия расчётного счёта (для шапки банковской выписки).
+    # Если None — генератор выписки использует случайную дату 1-5 лет назад.
+    # Если задано вручную менеджером — берётся это значение.
+    bank_account_open_date: Optional[date] = Field(default=None)
+
     # Pack 73.10 — флаг шенген-визы: переключает модель генерации выписки.
     # False (default) → legacy модель (KWIKPAY, без карточных MCC).
     # True → модель Pack 73.1 (30% накопит / 50-65% карточные / 5-20% остаток).
@@ -383,6 +388,8 @@ class ApplicantCreate(SQLModel):
     bank_correspondent_account: Optional[str] = None
     # Pack 73.1 — номер карты клиента
     card_number: Optional[str] = None
+    # Pack 73.2 — дата открытия расчётного счёта
+    bank_account_open_date: Optional[date] = None
     # Pack 73.10 — флаг шенген-визы
     is_shengen: bool = False
     # Pack 73.11 — желаемый остаток на счету
@@ -462,6 +469,8 @@ class ApplicantUpdate(SQLModel):
     bank_correspondent_account: Optional[str] = None
     # Pack 73.1 — номер карты клиента
     card_number: Optional[str] = None
+    # Pack 73.2 — дата открытия расчётного счёта
+    bank_account_open_date: Optional[date] = None
     # Pack 73.10 — флаг шенген-визы
     is_shengen: bool = False
     # Pack 73.11 — желаемый остаток на счету
