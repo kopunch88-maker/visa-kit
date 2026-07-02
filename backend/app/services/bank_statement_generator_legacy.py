@@ -766,8 +766,15 @@ def generate_default_transactions(
             )
     # === конец Pack 32.3 ===
 
-    # Сортируем от новой к старой (как в реальной выписке Альфы — последняя сверху)
-    transactions.sort(key=lambda t: t["transaction_date"], reverse=True)
+    # Pack 73.3 — сортировка от новой к старой БЕЗ противоречия внутри дня.
+    # Раньше был один ключ (transaction_date, reverse=True) → Python stable sort
+    # сохранял исходный порядок генерации внутри дня (утренние сверху). В итоге:
+    # дни шли DESC, но внутри дня ASC → баланс скакал через границу дней.
+    # Фикс: двухпроходная стабильная сортировка. ASC по дате сохраняет исходный
+    # вложенный порядок; reverse инвертирует и даты, и вложенный порядок разом.
+    # Результат: вечер N сверху → утро N → вечер N-1 → утро N-1 → ...
+    transactions.sort(key=lambda t: t["transaction_date"])
+    transactions.reverse()
 
     # Балансы
     total_income = sum(
