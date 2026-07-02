@@ -1212,8 +1212,7 @@ def generate_default_transactions_30_50_15(
     # Фикс: двухпроходная стабильная сортировка. ASC по дате сохраняет исходный
     # вложенный порядок; reverse инвертирует и даты, и вложенный порядок разом.
     # Результат: вечер N сверху → утро N → вечер N-1 → утро N-1 → ...
-    transactions.sort(key=lambda t: t["transaction_date"])
-    transactions.reverse()
+    transactions.sort(key=lambda t: t["transaction_date"], reverse=True)
 
     # Балансы
     total_income = sum(
